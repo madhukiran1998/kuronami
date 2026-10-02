@@ -176,24 +176,36 @@ extension SessionStore {
 }
 
 /// Recent hook payloads in ~/.hyperterm/hooks.log, for diagnosing status detection. Capped.
+/// Hooks fire on every tool call, so all formatting and I/O happens on a background queue
+/// with one long-lived file handle.
 enum HookLog {
     private static let url = ControlPaths.supportDirectory.appendingPathComponent("hooks.log")
     private static let queue = DispatchQueue(label: "dev.hyperterm.hooklog", qos: .background)
+    private static let maxBytes: UInt64 = 2_000_000
+    nonisolated(unsafe) private static var handle: FileHandle?
+    nonisolated(unsafe) private static let formatter = ISO8601DateFormatter()
 
     static func append(source: String, sessionID: String?, payload: String) {
-        let line = "\(ISO8601DateFormatter().string(from: Date())) \(source) \(sessionID ?? "-") \(payload.replacingOccurrences(of: "\n", with: " ").prefix(2000))\n"
+        let date = Date()
         queue.async {
-            if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-               let size = attributes[.size] as? Int, size > 2_000_000 {
-                try? FileManager.default.removeItem(at: url)
-            }
-            guard let handle = try? FileHandle(forWritingTo: url) else {
-                try? line.write(to: url, atomically: true, encoding: .utf8)
-                return
-            }
-            handle.seekToEndOfFile()
-            handle.write(Data(line.utf8))
-            try? handle.close()
+            let text = payload.prefix(2000).replacingOccurrences(of: "\n", with: " ")
+            let line = "\(formatter.string(from: date)) \(source) \(sessionID ?? "-") \(text)\n"
+            write(Data(line.utf8))
         }
+    }
+
+    /// Runs on `queue` only.
+    private static func write(_ data: Data) {
+        if handle == nil {
+            if !FileManager.default.fileExists(atPath: url.path) {
+                FileManager.default.createFile(atPath: url.path, contents: nil)
+            }
+            handle = try? FileHandle(forWritingTo: url)
+        }
+        guard let handle, let end = try? handle.seekToEnd() else { return }
+        if end > maxBytes {
+            try? handle.truncate(atOffset: 0)
+        }
+        try? handle.write(contentsOf: data)
     }
 }

@@ -33,6 +33,8 @@ final class ProcessInspector: @unchecked Sendable {
     private let lock = NSLock()
     private var rootCache: [pid_t: String] = [:]
     private var argvCache: [ArgvKey: [String]] = [:]
+    /// Parsed registry files keyed by pid, reused while the file's modification date is unchanged.
+    private var registryCache: [pid_t: (modified: Date, entry: RegistryEntry?)] = [:]
     private let shells: Set<String> = ["login", "zsh", "bash", "sh", "fish", "-zsh", "-bash", "-sh", "-fish", "nu"]
     private let responsibleFor: (@convention(c) (pid_t) -> pid_t)? = {
         guard let symbol = dlsym(dlopen(nil, RTLD_NOW), "responsibility_get_pid_responsible_for_pid") else { return nil }
@@ -105,12 +107,12 @@ final class ProcessInspector: @unchecked Sendable {
         let processes = listProcesses()
         let children = Dictionary(grouping: processes, by: \.ppid)
         let roots = sessionRoots(children: children)
-        let registry = claudeRegistry()
         pruneArgvCache(alive: Set(processes.map(\.pid)))
+        let trees = roots.mapValues { rootPids in rootPids.flatMap { descendants(of: $0, children: children) } }
+        let registry = claudeRegistry(pids: Set(trees.values.joined().map(\.pid)))
 
         var result: [String: ProcessSnapshot] = [:]
-        for (sessionID, rootPids) in roots {
-            let tree = rootPids.flatMap { descendants(of: $0, children: children) }
+        for (sessionID, tree) in trees {
             let pids = Set(tree.map(\.pid))
             var snapshot = ProcessSnapshot()
             snapshot.ports = Array(Set(tree.flatMap { listeningPorts(pid: $0.pid) })).sorted()
@@ -301,16 +303,43 @@ final class ProcessInspector: @unchecked Sendable {
         let sessionId: String?
     }
 
-    /// ~/.claude/sessions/<pid>.json, maintained by Claude Code for cross-session messaging.
-    private func claudeRegistry() -> [RegistryEntry] {
-        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/sessions")
-        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return [] }
-        return files.filter { $0.pathExtension == "json" }.compactMap { url in
-            guard let data = try? Data(contentsOf: url),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let pid = json["pid"] as? Int else { return nil }
-            return RegistryEntry(pid: pid_t(pid), status: json["status"] as? String ?? "", sessionId: json["sessionId"] as? String)
+    private static let registryDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/sessions")
+
+    /// ~/.claude/sessions/<pid>.json, maintained by Claude Code for cross-session messaging. The
+    /// directory holds every Claude on the machine; only files named for `pids` (processes in our
+    /// sessions) are read, and only when they changed since the last poll.
+    private func claudeRegistry(pids: Set<pid_t>) -> [RegistryEntry] {
+        var entries: [RegistryEntry] = []
+        var seen = Set<pid_t>()
+        for pid in pids {
+            let url = Self.registryDirectory.appendingPathComponent("\(pid).json")
+            guard let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date else { continue }
+            seen.insert(pid)
+            lock.lock()
+            let cached = registryCache[pid]
+            lock.unlock()
+            let entry: RegistryEntry?
+            if let cached, cached.modified == modified {
+                entry = cached.entry
+            } else {
+                entry = Self.parseRegistry(url)
+                lock.lock()
+                registryCache[pid] = (modified, entry)
+                lock.unlock()
+            }
+            if let entry { entries.append(entry) }
         }
+        lock.lock()
+        registryCache = registryCache.filter { seen.contains($0.key) }
+        lock.unlock()
+        return entries
+    }
+
+    private static func parseRegistry(_ url: URL) -> RegistryEntry? {
+        guard let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let pid = json["pid"] as? Int else { return nil }
+        return RegistryEntry(pid: pid_t(pid), status: json["status"] as? String ?? "", sessionId: json["sessionId"] as? String)
     }
 }
 

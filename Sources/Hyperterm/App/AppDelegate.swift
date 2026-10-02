@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController?
     private var pollCount = 0
     private var lastRegistryStatus: [UUID: String] = [:]
+    private var diffStatsInFlight = false
+    private var gitInFlight = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // As a unit-test host, don't spawn terminals or take over the live control socket.
@@ -109,7 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func apply(_ snapshots: [String: ProcessSnapshot]) {
         pollCount += 1
         refreshGit()
-        if pollCount % 4 == 0 { refreshDiffStats() }
+        // Working agents and the one on screen every ~10s; everything else once a minute (idle
+        // agents also refresh on their Stop hook).
+        if pollCount % 4 == 0 { refreshDiffStats(all: pollCount % 24 == 0) }
         for session in store.sessions {
             correctStaleWorking(session)
             session.retryPendingMessages()
@@ -139,13 +143,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if lastRegistryStatus[session.id] == "idle" { session.apply(.processStarted, source: "claude registry", force: .idle) }
     }
 
-    private func refreshDiffStats() {
-        let agents = store.sessions.filter { $0.kind.isAgent }
+    private func refreshDiffStats(all: Bool) {
+        guard !diffStatsInFlight else { return }
+        let agents = store.sessions.filter { session in
+            session.kind.isAgent && (all || session.state == .working || session.id == store.selectedID)
+        }
+        guard !agents.isEmpty else { return }
+        diffStatsInFlight = true
         let jobs = agents.map { ($0.id, $0.spec.workPath, $0.spec.baseBranch) }
         DispatchQueue.global(qos: .utility).async {
             let stats = jobs.map { ($0.0, Review.diffStat(at: $0.1, base: $0.2)) }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    self.diffStatsInFlight = false
                     for (id, stat) in stats {
                         guard let session = self.store.sessions.first(where: { $0.id == id }), session.diffStat != stat else { continue }
                         session.diffStat = stat
@@ -156,12 +166,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshGit() {
+        guard !gitInFlight, !store.sessions.isEmpty else { return }
+        gitInFlight = true
         let dirs = Dictionary(uniqueKeysWithValues: store.sessions.map { ($0.id, $0.spec.workPath) })
         let git = gitInspector
         DispatchQueue.global(qos: .utility).async {
             let infos = dirs.mapValues { git.info(for: $0) }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    self.gitInFlight = false
                     for session in self.store.sessions {
                         if let info = infos[session.id], session.git != info { session.git = info }
                     }
