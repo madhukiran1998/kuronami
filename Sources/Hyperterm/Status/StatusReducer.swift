@@ -97,7 +97,8 @@ private func reduceRegistry(_ state: AgentState, status: String) -> AgentState {
 
 /// First meaningful line of an agent's last message, used as the row summary.
 func summarize(_ text: String, limit: Int = 140) -> String? {
-    let lines = text.split(whereSeparator: \.isNewline)
+    let plain = text.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+    let lines = plain.split(whereSeparator: \.isNewline)
         .map { $0.trimmingCharacters(in: .whitespaces) }
         .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "#*`>-• ")) }
         .filter { !$0.isEmpty }

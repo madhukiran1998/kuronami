@@ -170,7 +170,7 @@ struct AgentRow: View {
             Button { actions.review(session) } label: {
                 HStack(spacing: 3) {
                     Image(systemName: "eye").font(.system(size: 8.5, weight: .bold))
-                    Text("+\(stat.added) −\(stat.removed)")
+                    Text(stat.added + stat.removed == 0 ? "\(stat.files) file\(stat.files == 1 ? "" : "s")" : "+\(stat.added) −\(stat.removed)")
                 }
                 .font(.caption2.monospacedDigit().weight(.semibold))
                 .padding(.horizontal, 6)
