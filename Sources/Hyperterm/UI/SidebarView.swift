@@ -378,14 +378,15 @@ private struct UtilityRow: View {
     @ObservedObject var session: TerminalSession
 
     var body: some View {
-        HStack(spacing: 6) {
-            StatusDot(state: session.state, size: 7)
+        HStack(spacing: 8) {
             Image(systemName: session.kind.symbol)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
+                .frame(width: 16)
             Text(session.label)
-                .font(.system(.body, design: .monospaced))
+                .font(.system(size: 13))
                 .lineLimit(1)
+            StatusDot(state: session.state, size: 6)
             Spacer(minLength: 4)
             PortChips(ports: session.ports, compact: true)
         }
