@@ -12,6 +12,9 @@ final class SessionStore: ObservableObject {
     var onSurfaceChange: ((TerminalSession) -> Void)?
     /// Called whenever the visible set, layout, or focused session changes.
     var onArrangementChange: (() -> Void)?
+    /// Called when a session's status changes. It can change which tiles show (grid hides exited
+    /// sessions) and their chrome, but must not pull keyboard focus away from where the user is.
+    var onStatusChange: (() -> Void)?
     var onRemove: ((TerminalSession) -> Void)?
     var onSearchUpdate: ((TerminalSession, Int?, Int?, Bool) -> Void)?
 
@@ -360,7 +363,7 @@ final class SessionStore: ObservableObject {
 
     func sessionStateChanged(_ session: TerminalSession, from previous: AgentState) {
         notifier.updateBadge(count: attentionCount)
-        onArrangementChange?()
+        onStatusChange?()
         let isVisible = visibleIDs.contains(session.id) && NSApp.isActive
         switch session.state {
         case .needsInput(let reason):

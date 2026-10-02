@@ -150,7 +150,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         terminalArea.serverStrip = strip
         store.onSurfaceChange = { [weak self] session in self?.terminalArea.mount(session) }
         store.onRemove = { [weak self] session in self?.terminalArea.unmount(session) }
-        store.onArrangementChange = { [weak self] in self?.arrange() }
+        store.onArrangementChange = { [weak self] in self?.arrange(takeFocus: true) }
+        store.onStatusChange = { [weak self] in self?.arrange(takeFocus: false) }
         store.confirmHandler = { [weak self] title, message, completion in
             guard let window = self?.window else { completion(false); return }
             let alert = NSAlert()
@@ -172,17 +173,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func arrange() {
-        terminalArea.apply(mode: store.layout, visible: store.visibleIDs, focused: store.selectedID)
-        terminalArea.showsServerStrip = store.layout != .focus && store.sessions.contains { $0.kind == .server && !$0.pinnedToGrid }
+    private func arrange(takeFocus: Bool) {
+        terminalArea.apply(mode: store.layout, visible: store.visibleIDs, focused: store.selectedID, takeFocus: takeFocus)
+        let showsStrip = store.layout != .focus && store.sessions.contains { $0.kind == .server && !$0.pinnedToGrid }
+        if terminalArea.showsServerStrip != showsStrip { terminalArea.showsServerStrip = showsStrip }
         terminalArea.refreshAttention()
+        let title: String, subtitle: String
         if let session = store.selected {
-            window?.title = session.label
-            window?.subtitle = [session.git?.project, session.git?.branch].compactMap { $0 }.joined(separator: " · ")
+            title = session.label
+            subtitle = [session.git?.project, session.git?.branch].compactMap { $0 }.joined(separator: " · ")
         } else {
-            window?.title = "Hyperterm"
-            window?.subtitle = store.windowSubtitle
+            title = "Hyperterm"
+            subtitle = store.windowSubtitle
         }
+        // Setting these relayouts the titlebar even when unchanged.
+        if window?.title != title { window?.title = title }
+        if window?.subtitle != subtitle { window?.subtitle = subtitle }
         toolbarController.refresh()
     }
 

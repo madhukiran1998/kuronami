@@ -70,8 +70,9 @@ final class TerminalAreaView: NSView {
         visibleOrder.removeAll { $0 == session.id }
     }
 
-    /// Shows `visible` in `mode`, focusing `focused`.
-    func apply(mode: LayoutMode, visible: [UUID], focused: UUID?) {
+    /// Shows `visible` in `mode`, focusing `focused`. `takeFocus` moves keyboard focus into the
+    /// focused terminal; status-driven refreshes pass false so they never steal it from a field.
+    func apply(mode: LayoutMode, visible: [UUID], focused: UUID?, takeFocus: Bool = true) {
         let changed = mode != self.mode || visible != visibleOrder
         self.mode = mode
         visibleOrder = visible.filter { tiles[$0] != nil }
@@ -87,7 +88,8 @@ final class TerminalAreaView: NSView {
         }
         emptyState.isHidden = !tiles.isEmpty
         if changed { needsLayout = true; layoutSubtreeIfNeeded() }
-        if let focused, let surface = tiles[focused]?.session.surface, window?.firstResponder !== surface {
+        if takeFocus || focused != lastFocused, let focused, let surface = tiles[focused]?.session.surface,
+           window?.firstResponder !== surface {
             window?.makeFirstResponder(surface)
             if focused != lastFocused { tiles[focused]?.showRecapIfNeeded() }
         }
