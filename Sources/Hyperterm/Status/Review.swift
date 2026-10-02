@@ -105,10 +105,31 @@ enum Review {
             _ = runGit(["-C", path, "-c", "commit.gpgsign=false", "commit", "-m", "Hyperterm snapshot before archiving"])
         }
         let branch = currentBranch(at: path) ?? "?"
+        // Claude locks its worktrees while a session uses them; a lock whose process is gone is
+        // stale. A live session keeps its lock, and removal is refused.
+        if let reason = lockReason(path: path, mainRoot: mainRoot) {
+            if let pid = reason.split(separator: " ").firstIndex(of: "(pid").flatMap({ index -> Int32? in
+                let parts = reason.split(separator: " ")
+                return index + 1 < parts.count ? Int32(parts[index + 1]) : nil
+            }), kill(pid, 0) == 0 {
+                return .failure(.git("a Claude session (pid \(pid)) is still using this worktree"))
+            }
+            _ = runGit(["-C", mainRoot, "worktree", "unlock", path])
+        }
         guard runGit(["-C", mainRoot, "worktree", "remove", "--force", path]) != nil else {
             return .failure(.git("git worktree remove failed"))
         }
         return .success("archived; work kept on branch \(branch)")
+    }
+
+    private static func lockReason(path: String, mainRoot: String) -> String? {
+        let listing = runGit(["-C", mainRoot, "worktree", "list", "--porcelain"]) ?? ""
+        for block in listing.components(separatedBy: "\n\n") where block.contains("worktree \(path)") {
+            if let line = block.split(separator: "\n").first(where: { $0.hasPrefix("locked") }) {
+                return String(line.dropFirst("locked".count)).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return nil
     }
 
     static func mainRoot(of path: String) -> String? {
