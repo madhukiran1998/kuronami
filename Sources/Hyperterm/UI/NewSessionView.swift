@@ -19,8 +19,8 @@ struct NewSessionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("New terminal")
-                .font(.system(size: 15, weight: .semibold))
+            Text("New Terminal")
+                .font(.title3.weight(.semibold))
 
             HStack(spacing: 8) {
                 ForEach(SessionKind.allCases) { kind in
@@ -99,7 +99,6 @@ struct NewSessionView: View {
         }
         .padding(22)
         .frame(width: 500)
-        .background(ChromeColors.chrome)
         .onAppear { focus = draft.kind == .server ? .command : .label }
     }
 
@@ -153,18 +152,16 @@ private struct KindCard: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: 7) {
-                Image(systemName: kind.symbol)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(kind.tint)
+                AgentAvatar(kind: kind, state: kind.isAgent ? .idle : .running)
                 Text(kind.displayName)
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(selected ? Color.primary : Color.secondary)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 66)
+            .frame(height: 76)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Color.primary.opacity(selected ? 0.09 : hovering ? 0.05 : 0.03))
+                    .fill(selected ? AnyShapeStyle(kind.tint.opacity(0.14)) : AnyShapeStyle(.quaternary.opacity(hovering ? 0.8 : 0.5)))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)

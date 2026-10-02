@@ -142,42 +142,44 @@ struct AgentRow: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 15)) { context in
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    StatusDot(state: session.state, size: 7)
-                    Text(session.label)
-                        .font(.system(.body, design: .monospaced).weight(.medium))
-                        .lineLimit(1)
-                        .layoutPriority(1)
-                    Image(systemName: session.kind.symbol)
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(session.kind.tint)
-                    if session.unread { Circle().fill(Palette.working).frame(width: 6, height: 6) }
-                    Spacer(minLength: 4)
-                    trailing(now: context.date)
-                }
-                if session.state.needsAttention {
-                    ApprovalStrip(session: session, store: store)
-                } else {
-                    detailLines
+            HStack(alignment: .top, spacing: 10) {
+                AgentAvatar(kind: session.kind, state: session.state)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(session.label)
+                            .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                            .lineLimit(1)
+                            .layoutPriority(1)
+                        if session.unread { Circle().fill(Palette.working).frame(width: 6, height: 6) }
+                        Spacer(minLength: 4)
+                        trailing(now: context.date)
+                    }
+                    if session.state.needsAttention {
+                        ApprovalStrip(session: session, store: store)
+                    } else {
+                        detailLines
+                    }
                 }
             }
-            .padding(.vertical, 3)
+            .padding(.vertical, 5)
         }
     }
 
     @ViewBuilder private func trailing(now: Date) -> some View {
         if session.readyForReview, let stat = session.diffStat {
             Button { actions.review(session) } label: {
-                Text("+\(stat.added) −\(stat.removed)")
-                    .font(.caption.monospacedDigit().weight(.medium))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(Palette.running.opacity(0.18)))
-                    .foregroundStyle(Palette.running)
+                HStack(spacing: 3) {
+                    Image(systemName: "eye").font(.system(size: 8.5, weight: .bold))
+                    Text("+\(stat.added) −\(stat.removed)")
+                }
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Palette.running.opacity(0.2)))
+                .foregroundStyle(Palette.running)
             }
             .buttonStyle(.plain)
-            .help("Ready for review: open the changes")
+            .help("Ready for review: open the changes (⌥⌘R)")
         } else {
             Text(stateText(now: now))
                 .font(.caption.monospacedDigit())
@@ -191,14 +193,15 @@ struct AgentRow: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
         if session.state == .working, let activity = session.activity {
-            Label(activity, systemImage: "arrow.right")
-                .labelStyle(.titleAndIcon)
-                .font(.caption.monospaced())
-                .foregroundStyle(Palette.working)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 10, height: 10)
+                Text(activity).lineLimit(1).truncationMode(.middle)
+            }
+            .font(.caption.monospaced())
+            .foregroundStyle(Palette.working)
         }
         let progress = session.tasks
         if progress.total > 0 && progress.done < progress.total {
@@ -213,23 +216,39 @@ struct AgentRow: View {
                     .lineLimit(1)
             }
         }
-        HStack(spacing: 8) {
-            if let branch = session.spec.worktreeBranch ?? (session.git?.isWorktree == true ? session.git?.branch : nil) {
-                Label(branch, systemImage: "arrow.triangle.branch")
-                    .lineLimit(1)
+        let meta = metaItems
+        if !meta.isEmpty {
+            HStack(spacing: 9) {
+                ForEach(meta, id: \.text) { item in
+                    Label(item.text, systemImage: item.symbol)
+                        .foregroundStyle(item.color ?? Color.secondary.opacity(0.75))
+                        .lineLimit(1)
+                }
             }
-            if let evidence = session.testEvidence {
-                Label(evidence.passed ? "tests pass" : "tests fail", systemImage: evidence.passed ? "checkmark.circle" : "xmark.circle")
-                    .foregroundStyle(evidence.passed ? Palette.running : Palette.failed)
-                    .help(evidence.summary)
-            }
-            if let cost = session.usage.costUSD {
-                Text(String(format: "$%.2f", cost)).monospacedDigit()
-            }
+            .font(.caption)
+            .labelStyle(CompactLabelStyle())
         }
-        .font(.caption)
-        .foregroundStyle(.tertiary)
-        .labelStyle(.titleAndIcon)
+    }
+
+    private struct MetaItem {
+        let text: String
+        let symbol: String
+        let color: Color?
+    }
+
+    private var metaItems: [MetaItem] {
+        var items: [MetaItem] = []
+        if let branch = session.spec.worktreeBranch ?? (session.git?.isWorktree == true ? session.git?.branch : nil) {
+            items.append(MetaItem(text: branch, symbol: "arrow.triangle.branch", color: nil))
+        }
+        if let evidence = session.testEvidence {
+            items.append(MetaItem(text: evidence.passed ? "passing" : "failing", symbol: evidence.passed ? "checkmark.circle.fill" : "xmark.circle.fill",
+                                  color: evidence.passed ? Palette.running : Palette.failed))
+        }
+        if let cost = session.usage.costUSD, cost > 0 {
+            items.append(MetaItem(text: String(format: "$%.2f", cost), symbol: "dollarsign.circle", color: nil))
+        }
+        return items
     }
 
     private var headline: String? {
@@ -246,10 +265,42 @@ struct AgentRow: View {
         case .working: return time
         case .needsInput: return "waiting \(time)"
         case .idle: return session.summary == nil ? "ready" : "done"
-        case .starting: return "…"
+        case .starting: return "starting"
         case .failed: return "failed"
         case .exited: return "exited"
         case .running: return ""
+        }
+    }
+}
+
+/// The agent's mark in a tinted tile, with its state as a badge.
+struct AgentAvatar: View {
+    let kind: SessionKind
+    let state: AgentState
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(kind.tint.gradient.opacity(0.22))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(kind.tint.opacity(0.25), lineWidth: 0.5))
+                .frame(width: 26, height: 26)
+                .overlay(Image(systemName: kind.symbol).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(kind.tint))
+            StatusDot(state: state, size: 8)
+                .padding(2)
+                .background(Circle().fill(.background))
+                .offset(x: 4, y: 4)
+        }
+        .padding(.top, 1)
+        .padding(.trailing, 2)
+    }
+}
+
+/// Icon tight against its title, as in Finder's status bars.
+struct CompactLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 3) {
+            configuration.icon.imageScale(.small)
+            configuration.title
         }
     }
 }
@@ -261,26 +312,38 @@ private struct ApprovalStrip: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(session.pendingRequest ?? session.state.detail ?? "Waiting for you")
-                .font(.caption.monospaced())
-                .foregroundStyle(.primary)
-                .lineLimit(3)
-                .padding(6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.attention.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+        VStack(alignment: .leading, spacing: 7) {
+            Label(session.hasHookApproval || session.pendingRequest != nil ? "Wants to run" : (session.state.detail ?? "Waiting for you"),
+                  systemImage: "hand.raised.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Palette.attention)
+            if let request = session.pendingRequest {
+                Text(request)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .lineLimit(4)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
             HStack(spacing: 6) {
-                Button("Allow") { answer(.approve) }
-                    .keyboardShortcut(.defaultAction)
-                Button("Always") { answer(.always) }
+                Button { answer(.approve) } label: { Text("Allow").frame(maxWidth: .infinity) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Palette.attention)
+                Button { answer(.always) } label: { Text("Always").frame(maxWidth: .infinity) }
                     .help(store.alwaysRuleText(for: session).map { "Always allow \($0)" } ?? "Allow and don't ask again for this")
-                Button("Deny") { answer(.deny) }
+                Button { answer(.deny) } label: { Text("Deny").frame(maxWidth: .infinity) }
             }
             .controlSize(.small)
             if let error {
                 Text(error).font(.caption).foregroundStyle(.secondary)
             }
         }
+        .padding(8)
+        .background(Palette.attention.opacity(0.1), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Palette.attention.opacity(0.35), lineWidth: 0.5))
     }
 
     private func answer(_ choice: PromptAnswer) {

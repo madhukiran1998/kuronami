@@ -52,7 +52,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// activity, and session info.
     private func makeSplitController() -> NSSplitViewController {
         let split = NSSplitViewController()
-        let sidebarItem = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: SidebarView(store: store, actions: actions)))
+        // Hosting controllers must not drive the window size from SwiftUI's ideal size.
+        let sidebarHost = NSHostingController(rootView: SidebarView(store: store, actions: actions))
+        sidebarHost.sizingOptions = []
+        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarHost)
         sidebarItem.minimumThickness = 280
         sidebarItem.maximumThickness = 460
         sidebarItem.canCollapse = true
@@ -74,7 +77,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         detailItem.minimumThickness = 420
         split.addSplitViewItem(detailItem)
 
-        let inspector = NSSplitViewItem(inspectorWithViewController: NSHostingController(rootView: InspectorView(store: store, actions: actions)))
+        let inspectorHost = NSHostingController(rootView: InspectorView(store: store, actions: actions))
+        inspectorHost.sizingOptions = []
+        let inspector = NSSplitViewItem(inspectorWithViewController: inspectorHost)
         inspector.minimumThickness = 340
         inspector.maximumThickness = 640
         inspector.canCollapse = true

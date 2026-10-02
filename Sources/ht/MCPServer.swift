@@ -90,7 +90,7 @@ private let toolDefinitions: [[String: Any]] = [
     ],
     [
         "name": "read_terminal",
-        "description": "Read the most recent output of any terminal by label: dev server logs, test output, or another agent's screen.",
+        "description": "Read the most recent output of an agent or server terminal by label: dev server logs, test output, or another agent's screen. Shells are private to the user.",
         "inputSchema": [
             "type": "object",
             "properties": [
@@ -129,7 +129,7 @@ private let toolDefinitions: [[String: Any]] = [
     ],
     [
         "name": "start_server",
-        "description": "Start a long-running command (dev server, watcher, worker) in a new labeled Hyperterm terminal instead of in the background of your own shell, so the user can see it and its ports.",
+        "description": "Start a long-running command (dev server, watcher, worker) in a new labeled Hyperterm terminal instead of in the background of your own shell, so the user can see it and its ports. The user is asked to approve it in Hyperterm first.",
         "inputSchema": [
             "type": "object",
             "properties": [

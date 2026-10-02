@@ -1,87 +1,151 @@
 # Hyperterm
 
-A native macOS terminal for running many Claude Code and Codex sessions, shells, and dev servers at once. Every terminal has a label like `@api`. The sidebar shows what each one is doing and which ones need you. Agents can message each other by label.
+**A native macOS terminal for running many coding agents at once.** Claude Code, Codex, shells and dev servers each get a labeled terminal (`@api`, `@landing-page`). Hyperterm shows what every agent is doing, brings you the ones that need you, lets you approve and review their work without switching terminals, and lets agents message each other by label.
 
-Terminal rendering is [libghostty](https://github.com/ghostty-org/ghostty), Ghostty's own GPU (Metal) engine. It reads your `~/.config/ghostty/config`, so your fonts, theme, and keybinds carry over.
+![Hyperterm with an agent waiting on approval](docs/screenshot.png)
 
-## What it does
+Terminals render with **libghostty**, Ghostty's own GPU (Metal) engine. Your `~/.config/ghostty/config` (fonts, theme, keybinds) applies as-is. The app chrome is native AppKit and SwiftUI: a translucent sidebar, a unified toolbar, and a system inspector.
 
-- **Labeled terminals.** Each one is a Claude Code agent, a Codex agent, a shell, or a server. The label is the name you see, the name `ht` uses, and the name agents use. Claude sessions start as `claude --name <label>`, so Claude's built-in `SendMessage` / `@mentions` resolve to the same label.
-- **Live status.** Each terminal shows one of: working, needs you (with the actual question), idle with a one-line summary of the last reply, failed, or exited. "Needs you" rows float to the top and turn orange. You also get a macOS notification and a Dock badge. ⌘⇧U jumps to the session that has been waiting longest.
-- **Servers and ports.** Listening ports are found per terminal from its process tree. Click a port chip to open it. A server that crashes turns red and notifies you.
-- **Layouts.** Focus (one terminal), Split (the last two), or Grid (every live terminal as a tile with its own header). ⌘⌥1/2/3 switch layouts, and ⌘⏎ zooms a tile in and out.
-- **Agents talk to each other.** Each agent gets a `hyperterm` MCP server with these tools: `list_terminals`, `send_message`, `read_terminal`, `restart_server`, and `start_server`. Messages arrive as "Message from @ui (Claude Code, via Hyperterm): …". If the target agent is blocked on a permission prompt, the message waits until it unblocks.
-- **Agents name their own terminals.** If you don't name a terminal, it starts with a placeholder (the folder name). The agent calls `rename_terminal` when it starts a task, and again when its focus changes, e.g. `@auth-refactor` then `@fix-login`. Old names keep working as aliases. Claude Code is told to `/rename` at its next idle prompt, so its native name stays in sync. A name you set yourself is never overridden; choose "Let Agent Name It" in the row's menu to hand naming back.
-- **Resume.** Terminals are restored when you reopen the app. Claude conversations come back with `--resume` and Codex threads with `codex resume`.
-- **⌘P switcher.** Jump to a terminal, run an action, or type `@api fix the failing test` to send that message.
+## Why
+
+Running several agents in parallel moves the bottleneck from typing to **attention and review**. You need to know which agent is blocked on an approval, which one finished with a diff to look at, and which one is burning your rate limit. Hyperterm is built around those questions instead of around tabs.
+
+## Features
+
+### See every agent at a glance
+- **Sidebar of agents, grouped by repository.** Each card shows the agent's state (working, waiting on you, done, failed), what it's doing right now (`Bash: pnpm test`, `Edit: src/auth.ts`), its own status line, Claude's todo progress (`3/5 · Writing migration`), branch, test result, and cost.
+- **Stable positions.** Cards never reorder when states change, so ⌘1–9 and muscle memory keep working. Attention is shown, not sorted.
+- **Grid, split, or focus.** Every live terminal as a tile (⌘⌥3), the last two side by side (⌘⌥2), or one (⌘⌥1). ⌘⏎ zooms a tile. Unfocused tiles dim slightly.
+- **Since you left.** Come back to an agent and a banner sums up what happened: edits, commands, approvals, tests, and the final answer.
+
+### Answer approvals from anywhere
+- **Real approvals, not keystrokes.** Hyperterm installs Claude's `PermissionRequest` hook (per launch, never in your global settings). The moment an agent asks, its card shows the exact command with **Allow / Always / Deny**. Always saves the rule Claude suggested, and Deny can carry a reason the agent sees. Claude's own dialog still works in the terminal, and whichever answer comes first wins.
+- **From the notification banner.** Allow or Deny straight from macOS notifications. The menu bar shows the waiting count.
+- **Codex:** approvals from Hyperterm work after you enable the hook once (App menu → *Enable Codex Approvals in Hyperterm…*). Until then, Codex prompts are answered by choosing the numbered option on screen.
+
+### Review the work
+- **Ready for review.** When an agent finishes with changes, its card shows `+128 −41`. The inspector (⌥⌘R) shows the diff against the branch it started from.
+- **Comment on lines.** Double-click a diff line to comment; *Send comments* delivers them to the agent as one message.
+- **Finish it.** Commit, open a PR (via `gh`), merge into the base branch (refused if the main checkout is dirty or on another branch), or archive the worktree. Archiving commits leftover work to the branch first, so nothing is lost.
+
+### Isolated workspaces
+- **Quick dispatch.** Type a task in the sidebar's *Ask a new agent…* field and press Return. A new agent starts on it, auto-named from the task, in its own git worktree.
+- **Claude's native worktrees** (`claude --worktree`) for Claude sessions: Claude blocks writes back into the main checkout and copies `.worktreeinclude` files (like `.env`). Codex gets a worktree under `~/.hyperterm/worktrees` with the same files copied in.
+- **Per-project dev setup.** Add `.hyperterm.json` to a repo:
+  ```json
+  { "setup": "pnpm i", "dev": "pnpm dev --port $PORT", "ports": [4100, 4199] }
+  ```
+  Each new workspace gets its own port (`$PORT` and `$HT_PORT` in the agent's environment), and a labeled dev-server terminal starts next to it.
+- **Clean up** (Terminal → *Clean Up Worktrees…*) lists agent worktrees with merged/unmerged status and archives the leftovers.
+
+### Agents that talk to each other
+Every agent started in Hyperterm gets a `hyperterm` MCP server:
+
+| Tool | What it does |
+|---|---|
+| `list_terminals` | Who's doing what: state, summary, ports, branch |
+| `send_message` | Message another agent by `@label` |
+| `read_terminal` | Read an agent's or server's output, e.g. dev-server logs |
+| `set_status` | Post a one-line status to its card |
+| `rename_terminal` | Rename itself as the work changes (`@auth-refactor` → `@fix-login`); old names keep working |
+| `start_server` / `restart_server` | Run dev servers in their own labeled terminals. Starting one asks you first |
+
+Claude sessions are launched as `claude --name <label>`, so Claude's built-in cross-session messaging (`SendMessage`, `@mentions`) uses the same names. Messages wait until the receiving agent is at an empty prompt. They're never typed into a dialog or into something you're halfway through writing. Optional (App menu): deliver messages through Claude's **channels** API instead of typing.
+
+### Usage
+The sidebar shows your 5-hour and weekly usage with reset times, taken from Claude's statusLine data (your own statusline still prints unchanged). Each card shows cost and the inspector shows context use. When an agent hits a rate limit, its card says when the limit resets, not just "failed".
+
+## Security model
+
+Hyperterm types into terminals on your behalf, so who may ask for what matters. The control socket (`~/.hyperterm/control.sock`, user-only) identifies every caller from **kernel facts** (peer PID, process ancestry, and macOS's *responsible process*), never from anything the caller claims:
+
+- **You:** processes outside Hyperterm, or inside your own shell/server terminals.
+- **Agents:** anything traced to an agent terminal. Agents can message other agents, read agents and servers (not shell scrollback), restart servers, start servers with your OK, set their own status, and rename only themselves (never over a name you chose).
+- **Untrusted:** anything that came from inside Hyperterm but escaped its session (backgrounded, double-forked, reparented to launchd). Read-only.
+
+Only you can press keys, answer prompts, type raw text, open shells, or close terminals. That stops one agent from approving another's permission prompt or running commands outside its own checks. Session IDs and tasks typed into shells are validated and shell-quoted, peer messages are stripped of control and escape sequences, and git runs with repo hooks and fsmonitor disabled.
+
+**Limit:** this is a boundary between agents and Hyperterm, not an OS sandbox. An agent you allow to drive other apps (for example via `osascript`) could act outside it. Claude's sandbox mode closes that gap.
+
+## Nothing global is modified
+
+Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.hyperterm/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Two opt-in menu items write config, and each asks first: channels (`claude mcp add --scope user hyperterm`) and Codex approvals (`~/.codex/hooks.json`).
+
+## `ht` CLI
+
+Add `export PATH="$HOME/.hyperterm/bin:$PATH"` to `~/.zshrc` (App menu → *Use ht in Your Shell…*).
+
+```sh
+ht ls                                           # label · kind · state · ports · summary
+ht new claude --cwd ~/Code/app --worktree --task "fix the flaky auth test"
+ht new server @web -- pnpm dev                  # also: codex, shell
+ht send @api "users.name is now display_name"   # message an agent
+ht approve @api   ·   ht always @api   ·   ht deny @api "use a migration instead"
+ht read @web -n 50                              # recent output
+ht key @api down enter                          # press keys
+ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api backend   ·   ht close @scratch
+```
+
+## Keyboard
+
+| | |
+|---|---|
+| ⌘N / ⌘T / ⇧⌘C / ⇧⌘X | New terminal / shell here / Claude here / Codex here |
+| ⌘P | Go to a terminal, run an action, or `@label message` |
+| ⇧⌘U | Jump to the agent waiting longest |
+| ⌥⌘R / ⌥⌘I | Review changes / toggle inspector |
+| ⌘⌥1 · 2 · 3, ⌘⏎ | Focus · split · grid, zoom tile |
+| ⌘F, ⌘G | Find in terminal (scrollback included) |
+| ⇧⌘O | Open the selected server's port in a preview window |
 
 ## How status is detected
 
 | Signal | Used for |
 |---|---|
-| Claude hooks (`UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `StopFailure`, `SessionEnd`) | Precise turn state, permission prompts, last-message summary |
-| Codex `notify` + TUI OSC 9 notifications | Turn complete (with summary and thread id), approval requests |
-| `~/.claude/sessions/<pid>.json` | Corrects drift (busy vs. idle) |
-| Process tree + `lsof` | Ports, foreground command, agent quit back to its shell |
-| Return pressed in the terminal | Provisional "working" until the next hook |
+| Claude hooks: `UserPromptSubmit`, `PreToolUse`, `PostToolUse(Failure)`, `PermissionRequest`, `Notification`, `Stop`, `StopFailure`, `TaskCreated/Completed` | Turn state, the exact request being approved, activity, tests, todo progress, failure reasons |
+| Claude statusLine | Cost, context, 5-hour/weekly usage |
+| Codex `notify` + OSC 9 | Turn complete (summary, thread id), approval requests |
+| `~/.claude/sessions/<pid>.json` | Corrects a stale "working" after an interrupt |
+| Process tree + libproc sockets | Ports, foreground command, an agent quitting back to its shell, server crashes |
 
-The state machine is a pure function (`Sources/Hyperterm/Status/StatusReducer.swift`) with unit tests.
-
-## Nothing global is modified
-
-Hooks and the MCP server are attached per launch through wrappers in `~/.hyperterm/bin`:
-
-- `claude` runs the real Claude Code with `--settings ~/.hyperterm/claude-settings.json --mcp-config ~/.hyperterm/mcp.json`. These merge with your own settings, and your existing hooks still run.
-- `codex` runs the real Codex with `-c notify=…`, OSC 9 notifications, and the MCP server.
-
-Your `~/.claude/settings.json` and `~/.codex/config.toml` are never written.
-
-## Security model
-
-The control socket (`~/.hyperterm/control.sock`, mode 0600) identifies callers by **kernel peer PID and process ancestry**, never by what the caller claims. A command run by an agent is attributed to that agent's terminal, and agents can:
-
-- message other agents, read any terminal, and start or restart servers.
-
-Agents can't:
-
-- type into shells or servers, press keys, or close terminals. That would let one agent answer another's permission prompt, or run commands outside its own permission checks.
-
-Peer messages are framed as coming from another agent, so they can't grant permissions.
-
-## `ht` CLI
-
-Add `export PATH="$HOME/.hyperterm/bin:$PATH"` to `~/.zshrc`.
-
-```
-ht ls                                  # label · kind · state · ports · summary
-ht new claude @api --cwd ~/Code/app    # also: codex, shell, server -- pnpm dev
-ht send @api "the schema changed: users.name is now display_name"
-ht read @web -n 50                     # recent output
-ht key @api down enter                 # answer a prompt
-ht layout grid                         # focus | split | grid
-ht restart @web · ht focus @ui · ht rename @api backend · ht close @scratch
-```
+Hook events are stamped and ordered, so a slow hook can't roll state back. The state machine (`Sources/Hyperterm/Status/StatusReducer.swift`) is a pure function with unit tests.
 
 ## Build
 
-Requires Xcode 16+, XcodeGen, and Zig 0.15.2 (`brew install xcodegen zig@0.15`).
+Requires macOS 15+, Xcode 16+, XcodeGen and Zig 0.15.2 (`brew install xcodegen zig@0.15`).
 
 ```sh
-scripts/build-ghosttykit.sh   # once: builds libghostty (Ghostty v1.3.1, ReleaseFast) into GhosttyKit.xcframework
-scripts/run.sh                # build + launch (CONFIG=Release for an optimized build)
+scripts/build-ghosttykit.sh   # once: builds libghostty (Ghostty v1.3.1, ReleaseFast) → GhosttyKit.xcframework
+scripts/run.sh                # build + launch the debug app
+scripts/install.sh            # optimized build → /Applications/Hyperterm.app
 xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -derivedDataPath build/DerivedData test
 ```
 
-## Layout
+## Project layout
 
 ```
-Sources/Hyperterm/Ghostty   libghostty bridge: runtime callbacks, action router, NSView surface (input/IME/mouse)
-Sources/Hyperterm/Model     LaunchSpec, TerminalSession, SessionStore (labels, layout, persistence, hooks)
-Sources/Hyperterm/Status    StatusReducer (pure), ProcessInspector (ports, ancestry), notifications
-Sources/Hyperterm/IPC       control socket server + request handler/permissions
-Sources/Hyperterm/Launch    agent wrappers, hooks, and MCP config generation
-Sources/Hyperterm/UI        sidebar, toolbar, tiles/grid, quick switcher, new-terminal sheet
-Sources/ht                  CLI + stdio MCP server
+Sources/Hyperterm/Ghostty   libghostty bridge: runtime callbacks, action router, surface view (input/IME/mouse)
+Sources/Hyperterm/Model     LaunchSpec, TerminalSession, SessionStore (+Hooks, +Approvals), insights
+Sources/Hyperterm/Status    StatusReducer, ProcessInspector (identity, ports), Git, Review, Workspaces, notifications
+Sources/Hyperterm/IPC       control socket server and request handler (permissions)
+Sources/Hyperterm/Launch    agent wrappers, per-launch hooks/statusLine/MCP config
+Sources/Hyperterm/UI        sidebar, toolbar, tiles, inspector (changes/activity/info), switcher, sheets
+Sources/ht                  CLI, hook/permission/statusline entry points, stdio MCP server
+Tests/HypertermTests        state machine, layout, naming, safety, diff parsing, recap
 ```
+
+## Status
+
+Working and verified on macOS 26 with Claude Code 2.1.287:
+- labels and messaging
+- hook status
+- approvals from cards, notifications and `ht` (Allow / Always / Deny with reason)
+- review and diffs
+- dispatch into Claude worktrees
+- usage telemetry
+- channels
+- the security boundary, tested against key presses, double-fork escapes, environment stripping, and shell-injection attempts
+
+Codex integration is implemented, but on the development machine Codex itself fails to start (an account error), so its live paths are tested only with simulated signals.
 
 Input handling in `TerminalSurfaceView.swift` and `GhosttyInput.swift` is adapted from Ghostty's macOS app (MIT).
