@@ -196,7 +196,16 @@ private struct ChangesView: View {
         }
         .font(.system(size: 11.5, design: .monospaced))
         .padding(.vertical, 1)
-        .background(line.kind == .added ? Palette.running.opacity(0.14) : line.kind == .removed ? Palette.failed.opacity(0.14) : .clear)
+        .padding(.trailing, 8)
+        .background(alignment: .leading) {
+            if let tint = line.kind.tint {
+                // A soft wash plus an edge bar reads as "changed" without a slab of color.
+                ZStack(alignment: .leading) {
+                    tint.opacity(0.08)
+                    tint.opacity(0.85).frame(width: 2)
+                }
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             guard commentable, let number = line.newNumber else { return }
@@ -351,7 +360,17 @@ private struct CommentBubble: View {
 
 /// One rendered line of a unified diff, with its line number in the new file.
 struct PatchLine: Identifiable {
-    enum Kind { case header, added, removed, context }
+    enum Kind {
+        case header, added, removed, context
+
+        var tint: Color? {
+            switch self {
+            case .added: Palette.running
+            case .removed: Palette.failed
+            case .header, .context: nil
+            }
+        }
+    }
     let id: Int
     let kind: Kind
     let text: String
@@ -362,6 +381,8 @@ struct PatchLine: Identifiable {
         var newLine = 0
         for (index, raw) in patch.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let line = String(raw)
+            // The patch's trailing newline is not a line of the file.
+            if line.isEmpty { continue }
             if line.hasPrefix("@@") {
                 // @@ -a,b +c,d @@
                 if let plus = line.split(separator: " ").first(where: { $0.hasPrefix("+") }),

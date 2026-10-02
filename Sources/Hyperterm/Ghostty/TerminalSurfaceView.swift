@@ -222,10 +222,14 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     /// Hidden sessions keep running; telling libghostty they're occluded stops wasted rendering.
+    /// Arrangement runs on every status change, so only real transitions reach libghostty.
     func setOccluded(_ occluded: Bool) {
-        guard let surface else { return }
+        guard let surface, occluded != isOccluded else { return }
+        isOccluded = occluded
         ghostty_surface_set_occlusion(surface, !occluded)
     }
+
+    private var isOccluded: Bool?
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
@@ -263,6 +267,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     // MARK: - Cursor
 
     func setCursorShape(_ shape: ghostty_action_mouse_shape_e) {
+        let previous = pointerStyle
         switch shape {
         case GHOSTTY_MOUSE_SHAPE_DEFAULT: pointerStyle = .arrow
         case GHOSTTY_MOUSE_SHAPE_TEXT: pointerStyle = .iBeam
@@ -275,6 +280,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         case GHOSTTY_MOUSE_SHAPE_NS_RESIZE, GHOSTTY_MOUSE_SHAPE_ROW_RESIZE: pointerStyle = .resizeUpDown
         default: return
         }
+        guard pointerStyle !== previous else { return }
         window?.invalidateCursorRects(for: self)
     }
 

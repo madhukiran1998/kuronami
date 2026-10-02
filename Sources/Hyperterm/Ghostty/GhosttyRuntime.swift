@@ -1,5 +1,6 @@
 import AppKit
 import GhosttyKit
+import os
 
 /// Owns the libghostty app handle and config, and routes runtime callbacks.
 ///
@@ -12,7 +13,6 @@ final class GhosttyRuntime {
 
     private(set) var app: ghostty_app_t?
     private(set) var config: ghostty_config_t?
-    private var tickScheduled = false
 
     private init() {}
 
@@ -47,14 +47,8 @@ final class GhosttyRuntime {
         return true
     }
 
-    func scheduleTick() {
-        guard !tickScheduled else { return }
-        tickScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.tickScheduled = false
-            if let app = self.app { ghostty_app_tick(app) }
-        }
+    func tick() {
+        if let app { ghostty_app_tick(app) }
     }
 
     // MARK: - Setup
@@ -150,9 +144,20 @@ private func surfaceView(from surface: ghostty_surface_t?) -> TerminalSurfaceVie
     return LiveSurfaces.view(for: ghostty_surface_userdata(surface))
 }
 
+/// Set while a tick is queued on main. libghostty's IO threads wake us for every chunk of
+/// output; coalescing here means a burst costs one main-queue hop and one tick, not one per wakeup.
+private let tickPending = OSAllocatedUnfairLock(initialState: false)
+
 private func ghosttyWakeup(_ userdata: UnsafeMutableRawPointer?) {
+    let alreadyPending = tickPending.withLock { pending in
+        defer { pending = true }
+        return pending
+    }
+    guard !alreadyPending else { return }
     DispatchQueue.main.async {
-        MainActor.assumeIsolated { GhosttyRuntime.shared.scheduleTick() }
+        // Clear before ticking so a wakeup raised during the tick queues another one.
+        tickPending.withLock { $0 = false }
+        MainActor.assumeIsolated { GhosttyRuntime.shared.tick() }
     }
 }
 

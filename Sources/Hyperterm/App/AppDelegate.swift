@@ -111,8 +111,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshGit()
         if pollCount % 4 == 0 { refreshDiffStats() }
         for session in store.sessions {
-            // Previews only matter where they're shown: working agents' cards and the selection.
-            if session.state == .working || session.id == store.selectedID { session.refreshPreview() }
             correctStaleWorking(session)
             session.retryPendingMessages()
             if session.kind.isAgent { trackAgentProcess(session, snapshots[session.id.uuidString]) }

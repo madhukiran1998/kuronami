@@ -16,11 +16,11 @@ final class TerminalSession: ObservableObject, Identifiable {
             store?.persist()
         }
     }
-    @Published var title: String = ""
+    /// Not published: agent TUIs animate their title many times a second and no view shows it.
+    private(set) var title: String = ""
     @Published var ports: [Int] = []
     @Published var foregroundProcess: String?
     @Published var unread = false
-    @Published var progressActive = false
     /// What the agent is doing this moment ("Bash: pnpm test"), from tool-use hooks.
     @Published var activity: String?
     /// The agent's own one-line status, posted with the set_status tool.
@@ -29,8 +29,6 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var pendingRequest: String?
     /// True while a PermissionRequest hook is held open, so approvals go through the CLI's API.
     @Published var hasHookApproval = false
-    /// Last few meaningful lines on screen, for the card preview.
-    @Published var preview: [String] = []
     @Published var git: GitInfo?
     @Published var timeline: [TimelineEvent] = []
     @Published var usage = UsageSnapshot()
@@ -202,13 +200,6 @@ final class TerminalSession: ObservableObject, Identifiable {
         }
     }
 
-    /// Recomputes the card preview from what's on screen.
-    func refreshPreview() {
-        guard kind.isAgent else { return }
-        let next = AgentText.preview(from: surface.readViewport())
-        if next != preview { preview = next }
-    }
-
     // MARK: - Naming
 
     func syncNativeName() {
@@ -295,8 +286,10 @@ extension TerminalSession: TerminalSurfaceEvents {
         // Titles that are just a path (shells, Claude at rest) or the label say nothing new.
         let meaningless = cleaned.contains("/") || cleaned.hasPrefix("~") || cleaned.lowercased() == label
             || cleaned.lowercased() == kind.rawValue || cleaned.count < 3
-        self.title = meaningless ? "" : cleaned
-        if kind.isAgent, summary == nil, !self.title.isEmpty { summary = self.title }
+        let next = meaningless ? "" : cleaned
+        guard next != self.title else { return }
+        self.title = next
+        if kind.isAgent, summary == nil, !next.isEmpty { summary = next }
     }
 
     func surfacePwdChanged(_ pwd: String) {
@@ -323,9 +316,8 @@ extension TerminalSession: TerminalSurfaceEvents {
         apply(.childExited(code), source: "process")
     }
 
-    func surfaceProgress(active: Bool, percent: Int) {
-        progressActive = active
-    }
+    /// OSC 9;4 progress isn't shown anywhere yet.
+    func surfaceProgress(active: Bool, percent: Int) {}
 
     /// A server's command returning means the server stopped; non-zero means it crashed.
     func surfaceCommandFinished(exitCode: Int) {

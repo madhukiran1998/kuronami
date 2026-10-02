@@ -84,6 +84,8 @@ final class SessionStore: ObservableObject {
     var confirmHandler: ((String, String, @escaping (Bool) -> Void) -> Void)?
 
     private var childCancellables: [UUID: AnyCancellable] = [:]
+    private var childChangeQueued = false
+    private var lastOutline: [SessionOutline] = []
     private var persistWork: DispatchWorkItem?
     let notifier = AttentionNotifier()
 
@@ -170,6 +172,27 @@ final class SessionStore: ObservableObject {
 
     var utilities: [TerminalSession] { sessions.filter { !$0.kind.isAgent } }
 
+    // MARK: - Child changes
+
+    /// Rows observe their own session, so the store only re-publishes when something its own
+    /// views read (grouping, ordering, counts, the attention queue) actually changed. Coalesced:
+    /// a poll that touches every session costs one comparison, not one re-render per property.
+    private func childWillChange() {
+        guard !childChangeQueued else { return }
+        childChangeQueued = true
+        // objectWillChange fires before the value lands; compare once it has.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.childChangeQueued = false
+                let outline = self.sessions.map(SessionOutline.init)
+                guard outline != self.lastOutline else { return }
+                self.lastOutline = outline
+                self.objectWillChange.send()
+            }
+        }
+    }
+
     // MARK: - Lifecycle
 
     @discardableResult
@@ -192,9 +215,8 @@ final class SessionStore: ObservableObject {
         if let task, !task.isEmpty { session.record(.prompt, task) }
         session.store = self
         sessions.append(session)
-        // Re-publish child changes so SwiftUI lists refresh when any row's state changes.
         childCancellables[session.id] = session.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
+            self?.childWillChange()
         }
         onSurfaceChange?(session)
         if select { self.select(session) }
@@ -425,3 +447,30 @@ final class SessionStore: ObservableObject {
     }
 }
 
+/// The parts of a session that views observing the store (not the session) depend on.
+@MainActor
+private struct SessionOutline: Equatable {
+    let id: UUID
+    let label: String
+    let state: AgentState
+    let stateChangedAt: Date
+    let summary: String?
+    let cwd: String
+    let git: GitInfo?
+    let pinnedToGrid: Bool
+    let readyForReview: Bool
+    let port: Int?
+
+    init(_ session: TerminalSession) {
+        id = session.id
+        label = session.label
+        state = session.state
+        stateChangedAt = session.stateChangedAt
+        summary = session.summary
+        cwd = session.spec.cwd
+        git = session.git
+        pinnedToGrid = session.pinnedToGrid
+        readyForReview = session.readyForReview
+        port = session.spec.port
+    }
+}
