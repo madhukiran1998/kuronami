@@ -143,31 +143,29 @@ struct AgentRow: View {
     let actions: SessionActions
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 15)) { context in
-            HStack(alignment: .top, spacing: 10) {
-                AgentAvatar(kind: session.kind, state: session.state)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(session.label)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .layoutPriority(1)
-                        Spacer(minLength: 4)
-                        trailing(now: context.date)
-                    }
-                    if session.state.needsAttention {
-                        ApprovalStrip(session: session, store: store)
-                    } else {
-                        detailLines
-                    }
+        HStack(alignment: .top, spacing: 10) {
+            AgentAvatar(kind: session.kind, state: session.state)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(session.label)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                    Spacer(minLength: 4)
+                    trailing
+                }
+                if session.state.needsAttention {
+                    ApprovalStrip(session: session, store: store)
+                } else {
+                    detailLines
                 }
             }
-            .padding(.vertical, 5)
         }
+        .padding(.vertical, 5)
     }
 
-    @ViewBuilder private func trailing(now: Date) -> some View {
+    @ViewBuilder private var trailing: some View {
         if session.readyForReview, let stat = session.diffStat, stat.files > 0 {
             Button { actions.review(session) } label: {
                 Text("\(stat.files) changed")
@@ -180,9 +178,12 @@ struct AgentRow: View {
             .buttonStyle(.plain)
             .help("Review the changes (⌥⌘R)")
         } else {
-            Text(elapsedLabel(now: now))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
+            // Only the clock ticks; the rest of the row re-renders when the session changes.
+            TimelineView(.periodic(from: .now, by: 15)) { context in
+                Text(elapsedLabel(now: context.date))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 

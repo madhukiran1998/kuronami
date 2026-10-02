@@ -23,8 +23,30 @@ final class TileView: NSView {
     private static let headerHeight: CGFloat = 28
     private static let radius: CGFloat = 12
 
-    var showsHeader = false { didSet { header.isHidden = !showsHeader; needsLayout = true; updateChrome() } }
-    var isFocusedTile = false { didSet { model.focused = isFocusedTile; updateChrome() } }
+    var showsHeader = false {
+        didSet {
+            guard showsHeader != oldValue else { return }
+            header.isHidden = !showsHeader
+            needsLayout = true
+            updateChrome()
+        }
+    }
+    var isFocusedTile = false {
+        didSet {
+            guard isFocusedTile != oldValue else { return }
+            model.focused = isFocusedTile
+            updateChrome()
+        }
+    }
+    /// The chrome last drawn, so status refreshes that change nothing visible cost nothing.
+    private var drawnChrome: Chrome?
+
+    private struct Chrome: Equatable {
+        let header: Bool
+        let focused: Bool
+        let attention: Bool
+        let working: Bool
+    }
 
     init(session: TerminalSession, onSelect: @escaping () -> Void, onZoom: @escaping () -> Void) {
         self.session = session
@@ -109,6 +131,10 @@ final class TileView: NSView {
     // MARK: - Chrome
 
     private func updateChrome() {
+        let chrome = Chrome(header: showsHeader, focused: isFocusedTile,
+                            attention: session.state.needsAttention, working: session.state == .working)
+        guard chrome != drawnChrome else { return }
+        drawnChrome = chrome
         // Every pane is a rounded, softly shadowed card on the glass.
         content.layer?.cornerRadius = Self.radius
         border.cornerRadius = Self.radius
