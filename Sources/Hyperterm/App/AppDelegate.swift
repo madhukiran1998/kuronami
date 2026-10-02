@@ -101,12 +101,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startInspector() {
-        inspector.start { [weak self] snapshots in
+        inspector.start(interval: Self.activePollInterval) { [weak self] snapshots in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.apply(snapshots) }
             }
         }
+        // In the background, ports and foreground commands go unseen and "needs you" arrives
+        // through hooks, so the poll can halve its rate and save battery.
+        let center = NotificationCenter.default
+        let inspector = self.inspector
+        center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            inspector.setInterval(Self.activePollInterval)
+        }
+        center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
+            inspector.setInterval(Self.backgroundPollInterval)
+        }
     }
+
+    private static let activePollInterval: TimeInterval = 2.5
+    private static let backgroundPollInterval: TimeInterval = 5
 
     private func apply(_ snapshots: [String: ProcessSnapshot]) {
         pollCount += 1

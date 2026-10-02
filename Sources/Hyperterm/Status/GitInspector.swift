@@ -25,8 +25,11 @@ final class GitInspector: @unchecked Sendable {
         }
         lock.unlock()
         let info = Self.query(directory)
+        let now = Date()
         lock.lock()
-        cache[directory] = (info, Date())
+        // Entries for folders no session polls any more (closed sessions, archived worktrees).
+        cache = cache.filter { now.timeIntervalSince($0.value.at) < 120 }
+        cache[directory] = (info, now)
         lock.unlock()
         return info
     }

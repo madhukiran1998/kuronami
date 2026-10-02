@@ -57,6 +57,11 @@ final class ProcessInspector: @unchecked Sendable {
         self.timer = timer
     }
 
+    /// Reschedules polling; the first poll at the new rate runs right away.
+    func setInterval(_ interval: TimeInterval) {
+        timer?.schedule(deadline: .now(), repeating: interval, leeway: .milliseconds(Int(interval * 200)))
+    }
+
     // MARK: - Caller identity
 
     /// Fail closed: only ancestry proves a session, and only processes Hyperterm did not spawn
