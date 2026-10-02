@@ -72,6 +72,8 @@ private struct ChangesView: View {
     @ObservedObject var session: TerminalSession
     let store: SessionStore
     @State private var files: [Review.FileDiff] = []
+    /// Parsed once per load, off the main thread: the body re-runs on every session change.
+    @State private var parsed: [String: [PatchLine]] = [:]
     @State private var selected: String?
     @State private var loading = false
     @State private var comments: [ReviewComment] = []
@@ -172,7 +174,7 @@ private struct ChangesView: View {
         return ScrollView(.vertical) {
             if let file {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(PatchLine.parse(file.patch)) { line in
+                    ForEach(parsed[file.path] ?? []) { line in
                         patchRow(line, file: file)
                     }
                 }
@@ -275,8 +277,12 @@ private struct ChangesView: View {
     private func load() async {
         loading = true
         let path = self.path, base = session.spec.baseBranch
-        let loaded = await Task.detached { Review.fileDiffs(at: path, base: base) }.value
+        let (loaded, lines) = await Task.detached {
+            let diffs = Review.fileDiffs(at: path, base: base)
+            return (diffs, Dictionary(diffs.map { ($0.path, PatchLine.parse($0.patch)) }, uniquingKeysWith: { first, _ in first }))
+        }.value
         files = loaded
+        parsed = lines
         if selected == nil || !loaded.contains(where: { $0.path == selected }) { selected = loaded.first?.path }
         loading = false
     }

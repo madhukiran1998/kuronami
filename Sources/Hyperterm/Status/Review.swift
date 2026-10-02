@@ -38,21 +38,58 @@ enum Review {
 
     static func fileDiffs(at path: String, base: String?) -> [FileDiff] {
         guard let commit = baseCommit(at: path, base: base) else { return [] }
-        let numstat = runGit(["-C", path, "diff", "--numstat", commit]) ?? ""
+        // Renames off: each side is its own file, so every numstat path names a real file.
+        let diff = ["-c", "core.quotePath=false", "-C", path, "diff", "--no-renames"]
+        let numstat = runGit(diff + ["--numstat", commit]) ?? ""
+        // One process for every patch, split per file, instead of one `git diff` per file.
+        let patches = splitPatch(runGit(diff + [commit]) ?? "")
         var result: [FileDiff] = numstat.split(separator: "\n").compactMap { line in
             let parts = line.split(separator: "\t", maxSplits: 2)
             guard parts.count == 3 else { return nil }
             let file = String(parts[2])
-            let patch = runGit(["-C", path, "diff", commit, "--", file]) ?? ""
+            let patch = patches[file] ?? runGit(diff + [commit, "--", file]) ?? ""
             return FileDiff(path: file, added: Int(parts[0]) ?? 0, removed: Int(parts[1]) ?? 0, patch: patch)
         }
         for file in untrackedFiles(at: path).prefix(200) {
             let full = (path as NSString).appendingPathComponent(file)
-            let content = (try? String(contentsOfFile: full, encoding: .utf8)) ?? "(binary or unreadable file)"
+            let size = (try? FileManager.default.attributesOfItem(atPath: full))?[.size] as? Int ?? 0
+            let content = size > 1_000_000 ? "(file too large to show)"
+                : (try? String(contentsOfFile: full, encoding: .utf8)) ?? "(binary or unreadable file)"
             let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map { "+" + $0 }
             result.append(FileDiff(path: file, added: lines.count, removed: 0, patch: "new file\n@@ -0,0 +1,\(lines.count) @@\n" + lines.joined(separator: "\n")))
         }
         return result
+    }
+
+    /// Splits a multi-file unified diff into per-file patches keyed by path. A path git had to
+    /// quote (tabs, newlines, quotes) is left out; callers fall back to diffing that file alone.
+    static func splitPatch(_ patch: String) -> [String: String] {
+        var result: [String: String] = [:]
+        var current: [Substring] = []
+        func flush() {
+            guard !current.isEmpty else { return }
+            defer { current = [] }
+            guard let file = headerPath(current[0]), !file.hasPrefix("\"") else { return }
+            result[file] = current.joined(separator: "\n")
+        }
+        for line in patch.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("diff --git ") { flush() }
+            current.append(line)
+        }
+        flush()
+        return result
+    }
+
+    /// "diff --git a/P b/P" → P. Without renames both sides are the same path, which makes the
+    /// split unambiguous even when P contains " b/". Covers binary and mode-only entries, which
+    /// have no ---/+++ lines.
+    private static func headerPath(_ line: Substring) -> String? {
+        let rest = line.dropFirst("diff --git ".count)
+        guard rest.hasPrefix("a/"), (rest.count - 5) % 2 == 0, rest.count > 5 else { return nil }
+        let length = (rest.count - 5) / 2
+        let path = rest.dropFirst(2).prefix(length)
+        guard rest.dropFirst(2 + length) == " b/" + path else { return nil }
+        return String(path)
     }
 
     static func currentBranch(at path: String) -> String? {

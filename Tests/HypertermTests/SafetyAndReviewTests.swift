@@ -98,4 +98,28 @@ final class SafetyAndReviewTests: XCTestCase {
     func testDiffStatText() {
         XCTAssertEqual(DiffStat(added: 3, removed: 1, files: 1).text, "+3 −1 · 1 file")
     }
+
+    func testSplitPatchKeysEachFile() {
+        let patch = """
+        diff --git a/src/a b/c.ts b/src/a b/c.ts
+        index 1..2 100644
+        --- a/src/a b/c.ts
+        +++ b/src/a b/c.ts
+        @@ -1 +1 @@
+        -old
+        +new
+        diff --git a/logo.png b/logo.png
+        Binary files a/logo.png and b/logo.png differ
+        diff --git a/gone.txt b/gone.txt
+        deleted file mode 100644
+        --- a/gone.txt
+        +++ /dev/null
+        @@ -1 +0,0 @@
+        -bye
+        """
+        let files = Review.splitPatch(patch)
+        XCTAssertEqual(Set(files.keys), ["src/a b/c.ts", "logo.png", "gone.txt"])
+        XCTAssertTrue(files["src/a b/c.ts"]?.hasSuffix("+new") == true)
+        XCTAssertEqual(PatchLine.parse(files["gone.txt"] ?? "").filter { $0.kind == .removed }.map(\.text), ["bye"])
+    }
 }
