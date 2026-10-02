@@ -69,7 +69,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         let detail = NSViewController()
         let container = NSVisualEffectView()
-        container.material = .underWindowBackground
+        container.material = .sidebar
         container.blendingMode = .behindWindow
         container.state = .followsWindowActiveState
         terminalArea.translatesAutoresizingMaskIntoConstraints = false
