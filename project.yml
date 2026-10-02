@@ -1,0 +1,98 @@
+name: Hyperterm
+options:
+  bundleIdPrefix: dev.hyperterm
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: YES
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    ENABLE_HARDENED_RUNTIME: NO
+    DEAD_CODE_STRIPPING: YES
+targets:
+  Hyperterm:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/Hyperterm
+      - path: Sources/Shared
+      - path: Resources/ghostty
+        type: folder
+        buildPhase: resources
+      - path: Resources/terminfo
+        type: folder
+        buildPhase: resources
+      - path: Resources/AppIcon.icns
+        buildPhase: resources
+    dependencies:
+      - framework: GhosttyKit.xcframework
+        embed: false
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: QuartzCore.framework
+      - sdk: Carbon.framework
+      - sdk: UserNotifications.framework
+      - sdk: libc++.tbd
+      - target: ht
+        embed: false
+        link: false
+    info:
+      path: Sources/Hyperterm/App/Info.plist
+      properties:
+        CFBundleName: Hyperterm
+        CFBundleDisplayName: Hyperterm
+        CFBundleIconFile: AppIcon
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "15.0"
+        NSPrincipalClass: NSApplication
+        NSHighResolutionCapable: true
+        LSApplicationCategoryType: public.app-category.developer-tools
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.hyperterm.app
+        PRODUCT_NAME: Hyperterm
+        OTHER_LDFLAGS: "-lc++"
+    postBuildScripts:
+      - name: Embed ht CLI
+        script: |
+          set -e
+          mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/bin"
+          cp -f "$BUILT_PRODUCTS_DIR/ht" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/bin/ht"
+          codesign --force --sign - "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/bin/ht"
+        basedOnDependencyAnalysis: false
+  ht:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Sources/ht
+      - path: Sources/Shared
+    settings:
+      base:
+        PRODUCT_NAME: ht
+  HypertermTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/HypertermTests
+    dependencies:
+      - target: Hyperterm
+    settings:
+      base:
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Hyperterm.app/Contents/MacOS/Hyperterm"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Hyperterm:
+    build:
+      targets:
+        Hyperterm: all
+        ht: all
+    test:
+      targets:
+        - HypertermTests

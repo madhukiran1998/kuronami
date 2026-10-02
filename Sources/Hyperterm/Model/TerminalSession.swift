@@ -1,0 +1,421 @@
+import AppKit
+import Combine
+
+/// One labeled terminal: its launch spec, its live libghostty surface, and what it's doing.
+@MainActor
+final class TerminalSession: ObservableObject, Identifiable {
+    let id: UUID
+    @Published var spec: LaunchSpec
+    @Published private(set) var state: AgentState = .starting
+    @Published private(set) var stateSource = "launch"
+    @Published private(set) var stateChangedAt = Date()
+    @Published var summary: String? {
+        didSet {
+            guard summary != oldValue else { return }
+            spec.summary = summary
+            store?.persist()
+        }
+    }
+    @Published var title: String = ""
+    @Published var ports: [Int] = []
+    @Published var foregroundProcess: String?
+    @Published var unread = false
+    @Published var progressActive = false
+    /// What the agent is doing this moment ("Bash: pnpm test"), from tool-use hooks.
+    @Published var activity: String?
+    /// The agent's own one-line status, posted with the set_status tool.
+    @Published var agentStatus: String?
+    /// The request an agent is blocked on ("Bash: pnpm prisma migrate dev"), when known.
+    @Published var pendingRequest: String?
+    /// True while a PermissionRequest hook is held open, so approvals go through the CLI's API.
+    @Published var hasHookApproval = false
+    /// Last few meaningful lines on screen, for the card preview.
+    @Published var preview: [String] = []
+    @Published var git: GitInfo?
+    @Published var timeline: [TimelineEvent] = []
+    @Published var usage = UsageSnapshot()
+    @Published var tasks = TaskProgress()
+    @Published var testEvidence: TestEvidence?
+    @Published var diffStat: DiffStat?
+    /// Finished a turn with changes that the user hasn't opened in review yet.
+    @Published var readyForReview = false
+    /// When the user last looked at this session; the recap covers events after it.
+    @Published var lastViewedAt = Date()
+
+    /// Whether the agent CLI process has been seen running in this terminal.
+    var agentProcessSeen = false
+    private(set) var createdAt = Date()
+    /// Hook ordering: events stamped earlier than the newest applied one are stale.
+    var lastHookSentAt: UInt64 = 0
+    var lastHookAt = Date.distantPast
+
+    private(set) var surface: TerminalSurfaceView
+    /// Messages for an agent that is blocked on a prompt; delivered when it unblocks so typed text
+    /// can't land in a permission dialog.
+    private var pendingMessages: [String] = []
+    /// The command to type once the shell shows its first prompt.
+    private var pendingInput: String?
+    private var inputGeneration = 0
+    /// A label Claude Code itself should adopt via /rename at its next idle prompt, so its
+    /// native SendMessage name matches the Hyperterm label.
+    private var pendingNativeRename: String?
+    weak var store: SessionStore?
+
+    var label: String { spec.label }
+    var kind: SessionKind { spec.kind }
+
+    init(spec: LaunchSpec, resume: Bool, task: String? = nil) {
+        self.id = spec.id
+        self.spec = spec
+        self.surface = TerminalSessionFactory.makeSurface(spec: spec)
+        self.surface.events = self
+        self.summary = spec.summary
+        if !spec.kind.isAgent { state = .running }
+        scheduleInitialInput(resume: resume, task: task)
+    }
+
+    /// Typing before the shell is ready makes the tty echo the command above the prompt. Shell
+    /// integration reports the first prompt via OSC 7 (pwd); fall back to a timer without it.
+    private func scheduleInitialInput(resume: Bool, task: String? = nil) {
+        inputGeneration += 1
+        let generation = inputGeneration
+        pendingInput = AgentIntegration.initialInput(for: spec, resume: resume, task: task)
+        guard pendingInput != nil else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self, self.inputGeneration == generation else { return }
+            self.sendPendingInput()
+        }
+    }
+
+    private func sendPendingInput() {
+        guard let input = pendingInput else { return }
+        pendingInput = nil
+        surface.sendText(input.trimmingCharacters(in: .newlines))
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(60)) { [weak self] in
+            self?.surface.sendReturn()
+        }
+    }
+
+    /// Kills the current process and starts the same spec again. Queued messages survive.
+    func restart() {
+        store?.dropApproval(for: self)
+        surface.events = nil
+        surface.destroy()
+        surface.removeFromSuperview()
+        surface = TerminalSessionFactory.makeSurface(spec: spec)
+        surface.events = self
+        scheduleInitialInput(resume: true)
+        ports = []
+        agentProcessSeen = false
+        createdAt = Date()
+        lastHookSentAt = 0
+        apply(.processStarted, source: "restart", force: kind.isAgent ? .starting : .running)
+        store?.sessionSurfaceReplaced(self)
+    }
+
+    func terminate() {
+        inputGeneration += 1
+        surface.events = nil
+        surface.destroy()
+        surface.removeFromSuperview()
+    }
+
+    // MARK: - Status
+
+    func apply(_ event: StatusEvent, source: String, force: AgentState? = nil) {
+        let next = force ?? reduceState(state, kind: kind, event: event)
+        guard next != state else { return }
+        if !next.needsAttention { pendingRequest = nil }
+        if next == .idle || next == .exited(0) { activity = nil }
+        let previous = state
+        state = next
+        stateSource = source
+        stateChangedAt = Date()
+        if previous.needsAttention && !next.needsAttention { flushPendingMessages() }
+        if next == .idle {
+            applyPendingNativeRename()
+            if !pendingMessages.isEmpty { flushPendingMessages() }
+        }
+        store?.sessionStateChanged(self, from: previous)
+    }
+
+    /// Resume ids are typed into a shell on restore, so only id-shaped values are accepted.
+    func recordAgentSessionId(_ value: String?) {
+        guard let value, isSafeIdentifier(value), spec.agentSessionId != value else { return }
+        spec.agentSessionId = value
+        store?.persist()
+    }
+
+    func record(_ kind: TimelineEvent.Kind, _ text: String) {
+        timeline.append(TimelineEvent(date: Date(), kind: kind, text: String(text.prefix(300))))
+        if timeline.count > 300 { timeline.removeFirst(timeline.count - 300) }
+    }
+
+    // MARK: - Screen checks
+
+    /// A selection dialog (permission prompt, question, menu) is on screen.
+    var dialogOnScreen: Bool {
+        let screen = surface.readViewport()
+        return PromptScreen.hasDialog(screen)
+    }
+
+    /// The user typed into this terminal since their last submit. Screen text can't separate a
+    /// draft from Claude's dimmed prompt suggestion, so keystrokes decide.
+    private(set) var userDraftInProgress = false
+
+    /// The agent's input box holds nothing the user is in the middle of typing.
+    var inputIsEmpty: Bool { !userDraftInProgress }
+
+    /// Called on each poll: delivers queued messages once the agent is free.
+    func retryPendingMessages() {
+        guard !pendingMessages.isEmpty, kind.isAgent, !state.needsAttention, state != .working else { return }
+        flushPendingMessages()
+    }
+
+    // MARK: - Prompts (keystroke fallback)
+
+    /// Answers a prompt by pressing its numbered option. Used when no PermissionRequest hook is
+    /// waiting (Codex, or prompts that aren't permission requests). Re-reads the screen first so
+    /// a stale "needs you" can never become stray keystrokes.
+    func answerPromptByKeys(_ answer: PromptAnswer) -> Result<String, PromptError> {
+        guard kind.isAgent, state.needsAttention else { return .failure(.notWaiting(label)) }
+        let screen = surface.readViewport()
+        guard let keys = PromptScreen.keys(for: answer, screen: screen, kind: kind) else {
+            return .failure(.noPromptOnScreen(label))
+        }
+        keys.forEach { _ = surface.pressKey(named: $0) }
+        record(.approval, answer == .deny ? "Denied in Hyperterm" : "Approved in Hyperterm")
+        apply(.userSubmitted, source: "approval", force: answer == .deny ? .idle : .working)
+        return .success(answer == .deny ? "denied" : "approved")
+    }
+
+    enum PromptError: Error, CustomStringConvertible {
+        case notWaiting(String), noPromptOnScreen(String), noAlwaysOption
+        var description: String {
+            switch self {
+            case .notWaiting(let label): return "@\(label) isn't waiting on a prompt"
+            case .noPromptOnScreen(let label): return "couldn't find the prompt on @\(label)'s screen; open it to answer"
+            case .noAlwaysOption: return "this prompt has no \"don't ask again\" option"
+            }
+        }
+    }
+
+    /// Recomputes the card preview from what's on screen.
+    func refreshPreview() {
+        guard kind.isAgent else { return }
+        let next = AgentText.preview(from: surface.readViewport())
+        if next != preview { preview = next }
+    }
+
+    // MARK: - Naming
+
+    func syncNativeName() {
+        guard kind == .claude else { return }
+        pendingNativeRename = label
+        if state == .idle { applyPendingNativeRename() }
+    }
+
+    /// Typed only at an idle, empty prompt so it never lands in the user's half-written message.
+    private func applyPendingNativeRename() {
+        guard let name = pendingNativeRename, kind == .claude, state == .idle else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(300)) { [weak self] in
+            guard let self, self.state == .idle, self.inputIsEmpty, !self.dialogOnScreen else { return }
+            self.pendingNativeRename = nil
+            self.type("/rename \(name)", submit: true, countsAsWork: false)
+        }
+    }
+
+    /// Claude's Remote Control continues this session on the phone or web; typed only at an idle,
+    /// empty prompt.
+    func openRemoteControl() {
+        guard kind == .claude else { return }
+        if state == .idle && inputIsEmpty && !dialogOnScreen {
+            type("/remote-control", submit: true, countsAsWork: false)
+        } else {
+            pendingMessages.append("/remote-control")
+        }
+    }
+
+    // MARK: - Messaging
+
+    /// Types `text` into the terminal and submits it. For agents, text never lands in a dialog
+    /// or a half-typed prompt: it waits until the agent is at an empty prompt.
+    func deliver(_ text: String, submit: Bool = true, from sender: String?) -> String {
+        if submit, store?.pushViaChannel(text, to: self) == true {
+            if let sender { record(.message, "Message from @\(sender)") }
+            return "delivered to @\(label) (channel)"
+        }
+        if kind.isAgent && (state.needsAttention || dialogOnScreen || !inputIsEmpty) {
+            pendingMessages.append(text)
+            return "queued: @\(label) is busy at a prompt; it gets the message as soon as that clears"
+        }
+        type(text, submit: submit)
+        if let sender { record(.message, "Message from @\(sender)") }
+        return "delivered to @\(label)"
+    }
+
+    private func flushPendingMessages() {
+        guard !pendingMessages.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(400)) { [weak self] in
+            guard let self, !self.state.needsAttention, !self.dialogOnScreen, self.inputIsEmpty,
+                  !self.pendingMessages.isEmpty else { return }
+            let message = self.pendingMessages.removeFirst()
+            self.type(message, submit: true)
+            if !self.pendingMessages.isEmpty { self.flushPendingMessages() }
+        }
+    }
+
+    private func type(_ text: String, submit: Bool, countsAsWork: Bool = true) {
+        surface.sendText(text)
+        guard submit else { return }
+        // Let the paste land before Return so TUIs don't treat it as part of the paste.
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(120)) { [weak self] in
+            self?.surface.sendReturn()
+            if countsAsWork, self?.kind.isAgent == true { self?.apply(.userSubmitted, source: "message") }
+        }
+    }
+
+    func info() -> SessionInfo {
+        SessionInfo(
+            id: id.uuidString, label: label, kind: kind.rawValue, state: state.key,
+            stateDetail: state.detail, summary: agentStatus ?? summary, title: title.isEmpty ? nil : title,
+            cwd: abbreviateHome(spec.cwd), command: spec.command, ports: ports, unread: unread,
+            agentSessionId: spec.agentSessionId, labelSource: (spec.labelSource ?? .user).rawValue,
+            activity: activity, project: git?.project, branch: git?.branch)
+    }
+}
+
+// MARK: - Surface events
+
+extension TerminalSession: TerminalSurfaceEvents {
+    func surfaceTitleChanged(_ title: String) {
+        let cleaned = cleanTitle(title)
+        // Titles that are just a path (shells, Claude at rest) or the label say nothing new.
+        let meaningless = cleaned.contains("/") || cleaned.lowercased() == label || cleaned.lowercased() == kind.rawValue
+        self.title = meaningless ? "" : cleaned
+        if kind.isAgent, summary == nil, !self.title.isEmpty { summary = self.title }
+    }
+
+    func surfacePwdChanged(_ pwd: String) {
+        if pendingInput != nil { sendPendingInput() }
+        guard !pwd.isEmpty, let url = URL(string: pwd), url.isFileURL || pwd.hasPrefix("/") else { return }
+        let path = url.isFileURL ? url.path : pwd
+        if kind == .shell, spec.cwd != path {
+            spec.cwd = path
+            store?.persist()
+        }
+    }
+
+    func surfaceNotification(title: String, body: String) {
+        apply(.terminalNotification(title: title, body: body), source: "osc9")
+        if kind == .codex, !body.isEmpty { summary = summarize(body) }
+        store?.sessionWantsAttention(self, title: title.isEmpty ? "@\(label)" : title, body: body)
+    }
+
+    func surfaceBell() {
+        store?.sessionWantsAttention(self, title: "@\(label)", body: "Bell")
+    }
+
+    func surfaceChildExited(code: Int) {
+        apply(.childExited(code), source: "process")
+    }
+
+    func surfaceProgress(active: Bool, percent: Int) {
+        progressActive = active
+    }
+
+    /// A server's command returning means the server stopped; non-zero means it crashed.
+    func surfaceCommandFinished(exitCode: Int) {
+        guard kind == .server, state == .running else { return }
+        apply(.childExited(exitCode), source: "shell integration")
+    }
+
+    func surfaceRequestedClose() {
+        store?.close(self)
+    }
+
+    func surfaceProcessClosed(processAlive: Bool) {
+        // The shell exited (e.g. the user typed `exit`). Keep the row so output stays readable.
+        apply(.childExited(0), source: "process")
+    }
+
+    func surfaceFocused() {
+        if unread { unread = false }
+        store?.sessionFocused(self)
+    }
+
+    func surfaceUserSubmitted() {
+        userDraftInProgress = false
+        apply(.userSubmitted, source: "keyboard")
+    }
+
+    func surfaceUserEdited(clearsDraft: Bool) {
+        userDraftInProgress = !clearsDraft
+    }
+
+    func surfaceSearch(total: Int?, selected: Int?, start: Bool) {
+        store?.onSearchUpdate?(self, total, selected, start)
+    }
+}
+
+@MainActor
+enum TerminalSessionFactory {
+    static func makeSurface(spec: LaunchSpec) -> TerminalSurfaceView {
+        TerminalSurfaceView(launch: AgentIntegration.surfaceLaunch(for: spec))
+    }
+}
+
+/// Ids typed into shells: letters, digits, dash, underscore, dot. No spaces or metacharacters.
+func isSafeIdentifier(_ value: String) -> Bool {
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+    return (4...128).contains(value.count) && value.unicodeScalars.allSatisfy { allowed.contains($0) }
+}
+
+/// Reading agent TUIs from their screen text.
+enum PromptScreen {
+    /// Numbered option lines like "❯ 1. Yes" or "  2. Yes, and don't ask again".
+    static func options(_ screen: String) -> [(number: Int, text: String)] {
+        screen.split(separator: "\n").compactMap { raw in
+            var line = raw.trimmingCharacters(in: .whitespaces)
+            for marker in ["❯", "›", ">"] where line.hasPrefix(marker) {
+                line = String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+            }
+            guard let dot = line.firstIndex(of: "."), let number = Int(line[..<dot]), (1...9).contains(number) else { return nil }
+            return (number, String(line[line.index(after: dot)...]).trimmingCharacters(in: .whitespaces))
+        }
+    }
+
+    static func hasDialog(_ screen: String) -> Bool {
+        let lower = screen.lowercased()
+        let asks = lower.contains("do you want") || lower.contains("would you like") || lower.contains("allow command")
+            || lower.contains("proceed?") || lower.contains("trust this folder") || lower.contains("enter to confirm")
+        return asks && options(screen).count >= 2
+    }
+
+    static func inputIsEmpty(_ screen: String, kind: SessionKind) -> Bool {
+        let lines = screen.split(separator: "\n", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+        let marker = kind == .codex ? "›" : "❯"
+        guard let prompt = lines.last(where: { $0.hasPrefix(marker) }) else { return true }
+        let rest = prompt.dropFirst(marker.count).trimmingCharacters(in: .whitespaces)
+        // Claude shows a dim placeholder ("Try …") when empty; it can't be told from typed text
+        // by characters alone, so treat the common placeholder forms as empty.
+        return rest.isEmpty || rest.hasPrefix("Try \"") || rest.hasPrefix("Ask anything") || rest.hasPrefix("Implement {feature}")
+    }
+
+    /// Keys that choose `answer` in the dialog on screen, or nil when there is no dialog.
+    static func keys(for answer: PromptAnswer, screen: String, kind: SessionKind) -> [String]? {
+        let options = options(screen)
+        guard hasDialog(screen) || kind == .codex, !options.isEmpty else { return nil }
+        func pick(_ predicate: (String) -> Bool) -> [String]? {
+            options.first { predicate($0.text.lowercased()) }.map { [String($0.number)] }
+        }
+        switch answer {
+        case .approve:
+            return pick { $0.hasPrefix("yes") && !$0.contains("don't ask") && !$0.contains("always") && !$0.contains("auto") }
+        case .always:
+            return pick { $0.contains("don't ask again") || $0.contains("always") }
+        case .deny:
+            return pick { $0.hasPrefix("no") } ?? ["esc"]
+        }
+    }
+}

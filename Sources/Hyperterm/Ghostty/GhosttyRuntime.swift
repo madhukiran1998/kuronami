@@ -1,0 +1,321 @@
+import AppKit
+import GhosttyKit
+
+/// Owns the libghostty app handle and config, and routes runtime callbacks.
+///
+/// All `ghostty_*` app-level calls live here. Callbacks are file-level C functions that hop to
+/// the main actor: wakeups asynchronously (void, any thread), actions synchronously (they return a
+/// Bool and arrive on the main thread during `ghostty_app_tick`).
+@MainActor
+final class GhosttyRuntime {
+    static let shared = GhosttyRuntime()
+
+    private(set) var app: ghostty_app_t?
+    private(set) var config: ghostty_config_t?
+    private var tickScheduled = false
+
+    private init() {}
+
+    /// Must run before any surface is created.
+    func start() -> Bool {
+        configureResourcesDirectory()
+        guard ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv) == GHOSTTY_SUCCESS else {
+            NSLog("hyperterm: ghostty_init failed")
+            return false
+        }
+        guard let config = makeConfig() else { return false }
+
+        var runtime = ghostty_runtime_config_s(
+            userdata: nil,
+            supports_selection_clipboard: true,
+            wakeup_cb: ghosttyWakeup,
+            action_cb: ghosttyAction,
+            read_clipboard_cb: ghosttyReadClipboard,
+            confirm_read_clipboard_cb: ghosttyConfirmReadClipboard,
+            write_clipboard_cb: ghosttyWriteClipboard,
+            close_surface_cb: ghosttyCloseSurface
+        )
+        guard let app = ghostty_app_new(&runtime, config) else {
+            NSLog("hyperterm: ghostty_app_new failed")
+            ghostty_config_free(config)
+            return false
+        }
+        self.app = app
+        self.config = config
+        ghostty_app_set_focus(app, NSApp.isActive)
+        observeAppFocus()
+        return true
+    }
+
+    func scheduleTick() {
+        guard !tickScheduled else { return }
+        tickScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.tickScheduled = false
+            if let app = self.app { ghostty_app_tick(app) }
+        }
+    }
+
+    // MARK: - Setup
+
+    /// The user's Ghostty config (fonts, theme, keybinds) applies as-is; we only layer defaults
+    /// that make sense for an agent host on top, by load order rather than editing their file.
+    private func makeConfig() -> ghostty_config_t? {
+        guard let config = ghostty_config_new() else { return nil }
+        ghostty_config_load_default_files(config)
+        ghostty_config_load_recursive_files(config)
+        if let overrides = Bundle.main.url(forResource: "hyperterm-defaults", withExtension: "conf", subdirectory: "ghostty") {
+            ghostty_config_load_file(config, overrides.path)
+        }
+        ghostty_config_finalize(config)
+        logDiagnostics(config)
+        return config
+    }
+
+    private func logDiagnostics(_ config: ghostty_config_t) {
+        let count = ghostty_config_diagnostics_count(config)
+        for index in 0..<count {
+            let diagnostic = ghostty_config_get_diagnostic(config, index)
+            if let message = diagnostic.message {
+                NSLog("hyperterm: ghostty config: %@", String(cString: message))
+            }
+        }
+    }
+
+    /// Shell integration and terminfo are version-matched to the embedded engine, so always point
+    /// at our bundled copy even if a standalone Ghostty set the variable.
+    private func configureResourcesDirectory() {
+        guard let resources = Bundle.main.resourceURL?.appendingPathComponent("ghostty") else { return }
+        if FileManager.default.fileExists(atPath: resources.path) {
+            setenv("GHOSTTY_RESOURCES_DIR", resources.path, 1)
+        }
+        unsetenv("NO_COLOR")
+    }
+
+    private func observeAppFocus() {
+        let center = NotificationCenter.default
+        center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                if let app = GhosttyRuntime.shared.app { ghostty_app_set_focus(app, true) }
+            }
+        }
+        center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                if let app = GhosttyRuntime.shared.app { ghostty_app_set_focus(app, false) }
+            }
+        }
+    }
+}
+
+// MARK: - C callbacks
+
+/// Views whose surfaces are alive. Callbacks queued by libghostty's IO thread can arrive after a
+/// surface was freed; resolving userdata only through this set avoids touching a dead view.
+@MainActor
+enum LiveSurfaces {
+    private static var views: [UnsafeMutableRawPointer: Weak] = [:]
+
+    private struct Weak {
+        weak var view: TerminalSurfaceView?
+    }
+
+    static func register(_ view: TerminalSurfaceView) {
+        views[Unmanaged.passUnretained(view).toOpaque()] = Weak(view: view)
+    }
+
+    static func unregister(_ view: TerminalSurfaceView) {
+        views[Unmanaged.passUnretained(view).toOpaque()] = nil
+    }
+
+    static func view(for userdata: UnsafeMutableRawPointer?) -> TerminalSurfaceView? {
+        guard let userdata else { return nil }
+        return views[userdata]?.view
+    }
+}
+
+@MainActor
+private func surfaceView(fromUserdata userdata: UnsafeMutableRawPointer?) -> TerminalSurfaceView? {
+    LiveSurfaces.view(for: userdata)
+}
+
+@MainActor
+private func surfaceView(from surface: ghostty_surface_t?) -> TerminalSurfaceView? {
+    guard let surface else { return nil }
+    return LiveSurfaces.view(for: ghostty_surface_userdata(surface))
+}
+
+private func ghosttyWakeup(_ userdata: UnsafeMutableRawPointer?) {
+    DispatchQueue.main.async {
+        MainActor.assumeIsolated { GhosttyRuntime.shared.scheduleTick() }
+    }
+}
+
+private func ghosttyAction(_ app: ghostty_app_t?, _ target: ghostty_target_s, _ action: ghostty_action_s) -> Bool {
+    let safeTarget = target
+    let safeAction = action
+    return MainActor.assumeIsolated {
+        GhosttyActionRouter.handle(target: safeTarget, action: safeAction)
+    }
+}
+
+private func ghosttyReadClipboard(_ userdata: UnsafeMutableRawPointer?, _ location: ghostty_clipboard_e, _ state: UnsafeMutableRawPointer?) -> Bool {
+    nonisolated(unsafe) let ud = userdata
+    nonisolated(unsafe) let st = state
+    return MainActor.assumeIsolated {
+        guard let view = surfaceView(fromUserdata: ud), let surface = view.surface else { return false }
+        let pasteboard = location == GHOSTTY_CLIPBOARD_SELECTION
+            ? NSPasteboard(name: NSPasteboard.Name("dev.hyperterm.selection"))
+            : NSPasteboard.general
+        guard let text = pasteboardText(pasteboard) else { return false }
+        text.withCString { ghostty_surface_complete_clipboard_request(surface, $0, st, false) }
+        return true
+    }
+}
+
+private func ghosttyConfirmReadClipboard(_ userdata: UnsafeMutableRawPointer?, _ string: UnsafePointer<CChar>?, _ state: UnsafeMutableRawPointer?, _ request: ghostty_clipboard_request_e) {
+    // Agents and programs asking to read the clipboard (OSC 52) is denied unless the user's
+    // Ghostty config allows it without confirmation; we have no confirmation UI.
+    nonisolated(unsafe) let ud = userdata
+    nonisolated(unsafe) let st = state
+    MainActor.assumeIsolated {
+        guard let view = surfaceView(fromUserdata: ud), let surface = view.surface else { return }
+        "".withCString { ghostty_surface_complete_clipboard_request(surface, $0, st, true) }
+    }
+}
+
+private func ghosttyWriteClipboard(_ userdata: UnsafeMutableRawPointer?, _ location: ghostty_clipboard_e, _ content: UnsafePointer<ghostty_clipboard_content_s>?, _ len: Int, _ confirm: Bool) {
+    guard let content, len > 0 else { return }
+    var text: String?
+    for index in 0..<len {
+        let item = content[index]
+        guard let mime = item.mime, let data = item.data else { continue }
+        if String(cString: mime) == "text/plain" { text = String(cString: data) }
+    }
+    guard let text else { return }
+    let isSelection = location == GHOSTTY_CLIPBOARD_SELECTION
+    DispatchQueue.main.async {
+        let pasteboard = isSelection
+            ? NSPasteboard(name: NSPasteboard.Name("dev.hyperterm.selection"))
+            : NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+}
+
+private func ghosttyCloseSurface(_ userdata: UnsafeMutableRawPointer?, _ processAlive: Bool) {
+    nonisolated(unsafe) let ud = userdata
+    DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+            surfaceView(fromUserdata: ud)?.handleCloseRequest(processAlive: processAlive)
+        }
+    }
+}
+
+private func pasteboardText(_ pasteboard: NSPasteboard) -> String? {
+    if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL], !urls.isEmpty,
+       urls.allSatisfy(\.isFileURL) {
+        return urls.map { shellEscape($0.path) }.joined(separator: " ")
+    }
+    return pasteboard.string(forType: .string)
+}
+
+func shellEscape(_ value: String) -> String {
+    let safe = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "@%+=:,./-_"))
+    if value.unicodeScalars.allSatisfy({ safe.contains($0) }) { return value }
+    return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+}
+
+// MARK: - Action routing
+
+@MainActor
+enum GhosttyActionRouter {
+    static func handle(target: ghostty_target_s, action: ghostty_action_s) -> Bool {
+        guard target.tag == GHOSTTY_TARGET_SURFACE else { return handleAppAction(action) }
+        guard let view = surfaceView(from: target.target.surface) else { return false }
+        return handleSurfaceAction(action, view: view)
+    }
+
+    private static func handleAppAction(_ action: ghostty_action_s) -> Bool {
+        switch action.tag {
+        case GHOSTTY_ACTION_QUIT:
+            NSApp.terminate(nil)
+            return true
+        case GHOSTTY_ACTION_RELOAD_CONFIG, GHOSTTY_ACTION_CONFIG_CHANGE, GHOSTTY_ACTION_COLOR_CHANGE,
+             GHOSTTY_ACTION_RENDER, GHOSTTY_ACTION_QUIT_TIMER:
+            return true
+        default:
+            return false
+        }
+    }
+
+    // swiftlint:disable:next cyclomatic_complexity
+    private static func handleSurfaceAction(_ action: ghostty_action_s, view: TerminalSurfaceView) -> Bool {
+        let payload = action.action
+        switch action.tag {
+        case GHOSTTY_ACTION_SET_TITLE:
+            view.events?.surfaceTitleChanged(string(payload.set_title.title))
+        case GHOSTTY_ACTION_PWD:
+            view.events?.surfacePwdChanged(string(payload.pwd.pwd))
+        case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+            let note = payload.desktop_notification
+            view.events?.surfaceNotification(title: sanitized(string(note.title)), body: sanitized(string(note.body)))
+        case GHOSTTY_ACTION_RING_BELL:
+            view.events?.surfaceBell()
+        case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
+            view.events?.surfaceChildExited(code: Int(payload.child_exited.exit_code))
+        case GHOSTTY_ACTION_PROGRESS_REPORT:
+            let report = payload.progress_report
+            view.events?.surfaceProgress(active: report.state != GHOSTTY_PROGRESS_STATE_REMOVE, percent: Int(report.progress))
+        case GHOSTTY_ACTION_COMMAND_FINISHED:
+            view.events?.surfaceCommandFinished(exitCode: Int(payload.command_finished.exit_code))
+        case GHOSTTY_ACTION_CELL_SIZE:
+            view.cellSize = NSSize(width: Double(payload.cell_size.width), height: Double(payload.cell_size.height))
+        case GHOSTTY_ACTION_MOUSE_SHAPE:
+            view.setCursorShape(payload.mouse_shape)
+        case GHOSTTY_ACTION_MOUSE_VISIBILITY:
+            NSCursor.setHiddenUntilMouseMoves(payload.mouse_visibility == GHOSTTY_MOUSE_HIDDEN)
+        case GHOSTTY_ACTION_OPEN_URL:
+            let url = String(cString: payload.open_url.url)
+            if let target = URL(string: url) { NSWorkspace.shared.open(target) }
+        case GHOSTTY_ACTION_SCROLLBAR, GHOSTTY_ACTION_RENDERER_HEALTH, GHOSTTY_ACTION_INITIAL_SIZE,
+             GHOSTTY_ACTION_SIZE_LIMIT, GHOSTTY_ACTION_MOUSE_OVER_LINK, GHOSTTY_ACTION_SECURE_INPUT,
+             GHOSTTY_ACTION_KEY_SEQUENCE, GHOSTTY_ACTION_KEY_TABLE, GHOSTTY_ACTION_SET_TAB_TITLE,
+             GHOSTTY_ACTION_COLOR_CHANGE, GHOSTTY_ACTION_RENDER, GHOSTTY_ACTION_CONFIG_CHANGE:
+            // Accepted with no host-side behavior yet.
+            break
+        case GHOSTTY_ACTION_START_SEARCH:
+            view.events?.surfaceSearch(total: nil, selected: nil, start: true)
+        case GHOSTTY_ACTION_SEARCH_TOTAL:
+            view.events?.surfaceSearch(total: Int(payload.search_total.total), selected: nil, start: false)
+        case GHOSTTY_ACTION_SEARCH_SELECTED:
+            view.events?.surfaceSearch(total: nil, selected: Int(payload.search_selected.selected), start: false)
+        case GHOSTTY_ACTION_END_SEARCH:
+            break
+        case GHOSTTY_ACTION_CLOSE_WINDOW, GHOSTTY_ACTION_CLOSE_TAB:
+            view.events?.surfaceRequestedClose()
+        default:
+            // Unhandled actions return false so performable keybinds fall through to the shell.
+            return false
+        }
+        return true
+    }
+
+    private static func string(_ pointer: UnsafePointer<CChar>?) -> String {
+        guard let pointer else { return "" }
+        return String(validatingCString: pointer) ?? ""
+    }
+
+    /// Strips C0/C1 controls and bidi overrides before agent-supplied text reaches the UI.
+    private static func sanitized(_ text: String) -> String {
+        let banned: Set<UInt32> = [0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069]
+        let scalars = text.unicodeScalars.filter { scalar in
+            let value = scalar.value
+            if banned.contains(value) { return false }
+            if value < 0x20 && value != 0x0A { return false }
+            if (0x7F...0x9F).contains(value) { return false }
+            return true
+        }
+        return String(String.UnicodeScalarView(scalars)).prefix(500).description
+    }
+}

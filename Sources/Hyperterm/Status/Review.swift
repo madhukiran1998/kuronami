@@ -1,0 +1,134 @@
+import Foundation
+
+/// Git facts and actions behind the review queue. All calls block; run them off the main thread.
+enum Review {
+    struct FileDiff: Identifiable, Equatable {
+        var id: String { path }
+        let path: String
+        let added: Int
+        let removed: Int
+        let patch: String
+    }
+
+    /// The commit the agent's work is measured against: the merge-base with its base branch for
+    /// worktrees, otherwise HEAD (uncommitted changes only).
+    static func baseCommit(at path: String, base: String?) -> String? {
+        if let base, let mergeBase = runGit(["-C", path, "merge-base", "HEAD", base]), !mergeBase.isEmpty { return mergeBase }
+        return runGit(["-C", path, "rev-parse", "HEAD"])
+    }
+
+    static func diffStat(at path: String, base: String?) -> DiffStat? {
+        guard FileManager.default.fileExists(atPath: path), let commit = baseCommit(at: path, base: base) else { return nil }
+        let numstat = runGit(["-C", path, "diff", "--numstat", commit]) ?? ""
+        var added = 0, removed = 0, files = 0
+        for line in numstat.split(separator: "\n") {
+            let parts = line.split(separator: "\t")
+            guard parts.count >= 3 else { continue }
+            added += Int(parts[0]) ?? 0
+            removed += Int(parts[1]) ?? 0
+            files += 1
+        }
+        let untracked = untrackedFiles(at: path)
+        for file in untracked {
+            files += 1
+            added += lineCount((path as NSString).appendingPathComponent(file))
+        }
+        return DiffStat(added: added, removed: removed, files: files)
+    }
+
+    static func fileDiffs(at path: String, base: String?) -> [FileDiff] {
+        guard let commit = baseCommit(at: path, base: base) else { return [] }
+        let numstat = runGit(["-C", path, "diff", "--numstat", commit]) ?? ""
+        var result: [FileDiff] = numstat.split(separator: "\n").compactMap { line in
+            let parts = line.split(separator: "\t", maxSplits: 2)
+            guard parts.count == 3 else { return nil }
+            let file = String(parts[2])
+            let patch = runGit(["-C", path, "diff", commit, "--", file]) ?? ""
+            return FileDiff(path: file, added: Int(parts[0]) ?? 0, removed: Int(parts[1]) ?? 0, patch: patch)
+        }
+        for file in untrackedFiles(at: path).prefix(200) {
+            let full = (path as NSString).appendingPathComponent(file)
+            let content = (try? String(contentsOfFile: full, encoding: .utf8)) ?? "(binary or unreadable file)"
+            let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map { "+" + $0 }
+            result.append(FileDiff(path: file, added: lines.count, removed: 0, patch: "new file\n@@ -0,0 +1,\(lines.count) @@\n" + lines.joined(separator: "\n")))
+        }
+        return result
+    }
+
+    static func currentBranch(at path: String) -> String? {
+        runGit(["-C", path, "rev-parse", "--abbrev-ref", "HEAD"])
+    }
+
+    /// Commits everything in the workspace. Returns the short hash.
+    static func commit(at path: String, message: String) -> Result<String, ReviewError> {
+        guard runGit(["-C", path, "add", "-A"]) != nil else { return .failure(.git("git add failed")) }
+        guard runGit(["-C", path, "-c", "commit.gpgsign=false", "commit", "-m", message]) != nil else {
+            return .failure(.git("nothing to commit, or git commit failed"))
+        }
+        return .success(runGit(["-C", path, "rev-parse", "--short", "HEAD"]) ?? "")
+    }
+
+    /// Pushes the branch and opens a PR with `gh`. Returns the PR URL.
+    static func openPullRequest(at path: String, base: String?, title: String) -> Result<String, ReviewError> {
+        guard let branch = currentBranch(at: path), branch != "HEAD" else { return .failure(.git("not on a branch")) }
+        guard runGit(["-C", path, "push", "-u", "origin", branch]) != nil else { return .failure(.git("git push failed (is there an origin remote?)")) }
+        let gh = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].first { FileManager.default.isExecutableFile(atPath: $0) }
+        guard let gh else { return .failure(.git("GitHub CLI (gh) not found")) }
+        var args = ["pr", "create", "--title", title, "--body", "Opened from Hyperterm.", "--head", branch]
+        if let base { args += ["--base", base] }
+        guard let url = runProcess(gh, args, timeout: 60, environment: ProcessInfo.processInfo.environment.merging(["GIT_DIR": ""]) { a, _ in a }),
+              let line = url.split(separator: "\n").last else {
+            return .failure(.git("gh pr create failed"))
+        }
+        return .success(String(line))
+    }
+
+    /// Merges the agent's branch into its base in the main checkout. Refuses when the main
+    /// checkout is on another branch or has uncommitted work.
+    static func merge(branch: String, into base: String, mainRoot: String) -> Result<String, ReviewError> {
+        guard currentBranch(at: mainRoot) == base else { return .failure(.git("the main checkout isn't on \(base)")) }
+        guard (runGit(["-C", mainRoot, "status", "--porcelain"]) ?? "x").isEmpty else {
+            return .failure(.git("the main checkout has uncommitted changes"))
+        }
+        guard runGit(["-C", mainRoot, "merge", "--no-ff", "-m", "Merge \(branch) (Hyperterm)", branch]) != nil else {
+            _ = runGit(["-C", mainRoot, "merge", "--abort"])
+            return .failure(.git("merge conflicts; resolve them in the main checkout"))
+        }
+        return .success("merged \(branch) into \(base)")
+    }
+
+    /// Snapshots any work as a commit on the workspace branch, then removes the worktree. The
+    /// branch stays, so nothing is lost.
+    static func archive(worktree path: String, mainRoot: String) -> Result<String, ReviewError> {
+        if !(runGit(["-C", path, "status", "--porcelain"]) ?? "").isEmpty {
+            _ = runGit(["-C", path, "add", "-A"])
+            _ = runGit(["-C", path, "-c", "commit.gpgsign=false", "commit", "-m", "Hyperterm snapshot before archiving"])
+        }
+        let branch = currentBranch(at: path) ?? "?"
+        guard runGit(["-C", mainRoot, "worktree", "remove", "--force", path]) != nil else {
+            return .failure(.git("git worktree remove failed"))
+        }
+        return .success("archived; work kept on branch \(branch)")
+    }
+
+    static func mainRoot(of path: String) -> String? {
+        runGit(["-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"]).map { ($0 as NSString).deletingLastPathComponent }
+    }
+
+    private static func untrackedFiles(at path: String) -> [String] {
+        (runGit(["-C", path, "ls-files", "--others", "--exclude-standard"]) ?? "").split(separator: "\n").map(String.init)
+    }
+
+    private static func lineCount(_ file: String) -> Int {
+        guard let data = FileManager.default.contents(atPath: file), data.count < 2_000_000, !data.isEmpty else { return 0 }
+        let newlines = data.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 }
+        return data.last == 0x0A ? newlines : newlines + 1
+    }
+}
+
+enum ReviewError: Error, CustomStringConvertible {
+    case git(String)
+    var description: String {
+        switch self { case .git(let message): return message }
+    }
+}

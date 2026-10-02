@@ -1,0 +1,265 @@
+import AppKit
+
+/// Maps control requests to store operations and enforces who may do what.
+///
+/// The caller comes from the kernel (`CallerIdentity`), never from the request. Fail closed:
+/// - The user is a process outside Hyperterm, or one traced to a shell/server terminal.
+/// - Agents (traced to an agent terminal) may message other agents, read agents and servers,
+///   restart servers, start servers with the user's OK, and rename only themselves.
+/// - Anything else from inside Hyperterm (detached, unknown) gets read-only access.
+/// Only the user may press keys, answer prompts, close terminals, or type raw text: those would
+/// let one agent answer another's permission prompts or run commands outside its own checks.
+@MainActor
+struct ControlHandler {
+    let store: SessionStore
+    let caller: CallerIdentity
+
+    private var callerSession: TerminalSession? {
+        guard case .session(let id) = caller else { return nil }
+        return store.session(forEnvironmentID: id)
+    }
+
+    private var callerAgent: TerminalSession? {
+        guard let session = callerSession, session.kind.isAgent else { return nil }
+        return session
+    }
+
+    private var isUser: Bool {
+        switch caller {
+        case .external: return true
+        case .session: return callerSession.map { !$0.kind.isAgent } ?? false
+        case .detachedInside, .unknown: return false
+        }
+    }
+
+    func handle(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
+        switch request.cmd {
+        case .permission:
+            handlePermission(request, reply: reply)
+        case .subscribe:
+            guard let agent = callerAgent, agent.kind == .claude else { reply(.success()); return }
+            store.subscribeChannel(agent, reply: reply)
+        case .new where callerAgent != nil && request.kind == SessionKind.server.rawValue:
+            startServerForAgent(request, reply: reply)
+        default:
+            reply(handle(request))
+        }
+    }
+
+    private func handle(_ request: ControlRequest) -> ControlResponse {
+        switch request.cmd {
+        case .list:
+            var response = ControlResponse.success()
+            response.sessions = store.orderedSessions.map { $0.info() }
+            return response
+        case .hook:
+            // Hook events only count when the kernel traces them to the session they describe.
+            guard let session = callerSession else { return .success() }
+            store.handleHook(source: request.source ?? "", session: session, payload: request.payload ?? "{}", sentAt: request.sentAt)
+            return .success()
+        case .statusline:
+            guard let session = callerSession else { return .success() }
+            store.handleStatusLine(session: session, payload: request.payload ?? "{}")
+            return .success()
+        case .key:
+            guard isUser else { return .failure("only the user can press keys in terminals") }
+            guard let target = resolve(request.target) else { return notFound(request.target) }
+            let unknown = (request.keys ?? []).filter { !target.surface.pressKey(named: $0) }
+            return unknown.isEmpty ? .success() : .failure("unknown key names: \(unknown.joined(separator: ", "))")
+        case .layout:
+            guard isUser else { return .failure("only the user can change the layout") }
+            guard let mode = LayoutMode(rawValue: request.text ?? "") else { return .failure("layout must be focus, split, or grid") }
+            store.setLayout(mode)
+            return .success()
+        case .new:
+            return create(request)
+        case .status:
+            let target = callerAgent ?? (isUser ? resolve(request.target) : nil)
+            guard let me = target else { return .failure("set_status works from inside an agent terminal") }
+            let text = sanitizeMessage(request.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            me.agentStatus = text.isEmpty ? nil : String(text.prefix(140))
+            return .success(text: "status set on @\(me.label)")
+        case .approve:
+            guard isUser else { return .failure("only the user can answer prompts") }
+            guard let target = resolve(request.target) else { return notFound(request.target) }
+            guard let answer = PromptAnswer(rawValue: request.text ?? "") else {
+                return .failure("answer must be approve, always, or deny")
+            }
+            switch store.answer(target, answer, reason: request.label) {
+            case .success(let text): return .success(text: "\(text) @\(target.label)")
+            case .failure(let error): return .failure(error.description)
+            }
+        case .send:
+            return send(request)
+        case .read:
+            return read(request)
+        case .focus:
+            guard isUser else { return .failure("only the user can change focus") }
+            guard let target = resolve(request.target) else { return notFound(request.target) }
+            store.select(target)
+            NSApp.activate(ignoringOtherApps: true)
+            return .success()
+        case .close:
+            guard isUser else { return .failure("only the user can close terminals") }
+            guard let target = resolve(request.target) else { return notFound(request.target) }
+            store.close(target)
+            return .success()
+        case .restart:
+            return restart(request)
+        case .rename:
+            return rename(request)
+        case .notify:
+            guard let target = callerSession ?? (isUser ? resolve(request.target) : nil) else { return notFound(request.target) }
+            store.sessionWantsAttention(target, title: "@\(target.label)", body: sanitizeMessage(request.text ?? ""))
+            return .success()
+        case .permission, .subscribe:
+            return .success()
+        }
+    }
+
+    private func resolve(_ target: String?) -> TerminalSession? {
+        guard let target, !target.isEmpty else { return nil }
+        return store.find(target)
+    }
+
+    private func notFound(_ target: String?) -> ControlResponse {
+        let known = store.sessions.map { "@" + $0.label }.joined(separator: ", ")
+        return .failure("no terminal named \(target ?? "(none)"). Known: \(known.isEmpty ? "none" : known)")
+    }
+
+    // MARK: - Commands
+
+    private func create(_ request: ControlRequest) -> ControlResponse {
+        guard let kind = SessionKind(rawValue: request.kind ?? "shell") else {
+            return .failure("kind must be one of: claude, codex, shell, server")
+        }
+        if !isUser {
+            guard callerAgent != nil else { return .failure("not allowed from a detached process") }
+            if kind == .shell { return .failure("agents can't open shells; ask the user") }
+            // Raw flags would let an agent start a sibling with weaker permissions.
+            if request.command?.isEmpty == false { return .failure("agents can't pass extra arguments to new agents") }
+        }
+        let cwd = request.cwd ?? callerSession?.spec.cwd ?? NSHomeDirectory()
+        var spec = LaunchSpec(label: request.label ?? "", kind: kind, cwd: cwd, command: request.command)
+        if callerAgent != nil && spec.labelSource == .user { spec.labelSource = .agent }
+        let session = store.create(spec, select: isUser, worktree: request.worktree ?? false, task: request.text)
+        var response = ControlResponse.success(text: "@\(session.label)")
+        response.session = session.info()
+        return response
+    }
+
+    /// A command an agent wants run as a server runs outside its own permission checks, so the
+    /// user confirms it in the app first.
+    private func startServerForAgent(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
+        guard let agent = callerAgent, let command = request.command, !command.isEmpty else {
+            reply(.failure("a server needs a command"))
+            return
+        }
+        let label = normalizeLabel(request.label ?? "")
+        let cwd = request.cwd ?? agent.spec.cwd
+        store.confirm(
+            "@\(agent.label) wants to start a server",
+            "\(label.isEmpty ? "" : "@\(label) · ")\(abbreviateHome(cwd))\n\n\(command)"
+        ) { approved in
+            guard approved else {
+                reply(.failure("the user declined to start that server"))
+                return
+            }
+            var spec = LaunchSpec(label: label, kind: .server, cwd: cwd, command: command)
+            if spec.labelSource == .user { spec.labelSource = .agent }
+            let session = store.create(spec, select: false)
+            var response = ControlResponse.success(text: "started @\(session.label)")
+            response.session = session.info()
+            reply(response)
+        }
+    }
+
+    private func send(_ request: ControlRequest) -> ControlResponse {
+        guard let target = resolve(request.target) else { return notFound(request.target) }
+        let text = sanitizeMessage(request.text ?? "")
+        guard !text.isEmpty else { return .failure("message is empty") }
+        if let sender = callerAgent {
+            if sender.id == target.id { return .failure("that's this terminal") }
+            guard target.kind.isAgent else {
+                return .failure("@\(target.label) is a \(target.kind.displayName.lowercased()); agents can read it or restart it, not type into it")
+            }
+            let framed = "Message from @\(sender.label) (\(sender.kind.displayName), via Hyperterm): \(singleLine(text))"
+            return .success(text: target.deliver(framed, from: sender.label))
+        }
+        guard isUser else { return .failure("not allowed from a detached process") }
+        return .success(text: target.deliver(text, submit: request.submit ?? true, from: nil))
+    }
+
+    /// Agents can read agents and servers. Shell scrollback can hold secrets, so only the user
+    /// reads shells.
+    private func read(_ request: ControlRequest) -> ControlResponse {
+        guard let target = resolve(request.target) else { return notFound(request.target) }
+        if !isUser && target.kind == .shell && target.id != callerSession?.id {
+            return .failure("@\(target.label) is a shell; agents can't read shells")
+        }
+        return .success(text: target.surface.readText(lastLines: min(request.lines ?? 60, 2000)))
+    }
+
+    /// Agents rename only themselves, never over a name the user chose, and never onto a label
+    /// someone else answers to.
+    private func rename(_ request: ControlRequest) -> ControlResponse {
+        guard let label = request.label, !normalizeLabel(label).isEmpty else { return .failure("label is empty") }
+        if let me = callerAgent {
+            if let target = request.target, !target.isEmpty, resolve(target)?.id != me.id {
+                return .failure("agents can only rename their own terminal")
+            }
+            guard me.spec.agentMayRename else { return .failure("the user named this terminal @\(me.label); keep it") }
+            if let holder = store.find(label), holder.id != me.id {
+                return .failure("@\(normalizeLabel(label)) is taken by another terminal")
+            }
+            if store.isReserved(normalizeLabel(label)) { return .failure("@\(normalizeLabel(label)) was recently used by another terminal") }
+            let old = me.label
+            let new = store.rename(me, to: label, source: .agent) ?? old
+            return .success(text: new == old ? "already @\(new)" : "renamed @\(old) → @\(new). Other terminals can still reach you at @\(old).")
+        }
+        guard isUser else { return .failure("not allowed from a detached process") }
+        guard let target = resolve(request.target) else { return notFound(request.target) }
+        let new = store.rename(target, to: label, source: .user)
+        return .success(text: "@\(new ?? target.label)")
+    }
+
+    private func restart(_ request: ControlRequest) -> ControlResponse {
+        guard let target = resolve(request.target) else { return notFound(request.target) }
+        if !isUser {
+            guard callerAgent != nil, target.kind == .server else { return .failure("agents can only restart servers") }
+        }
+        target.restart()
+        return .success(text: "restarted @\(target.label)")
+    }
+
+    // MARK: - Approvals
+
+    /// PermissionRequest hook: hold the hook open until the user decides in Hyperterm, the agent
+    /// moves on (answered in its own terminal), or the hook times out.
+    private func handlePermission(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
+        guard let agent = callerAgent else {
+            reply(.success())   // no decision: the CLI's own prompt handles it
+            return
+        }
+        store.registerApproval(for: agent, source: request.source ?? "claude", payload: request.payload ?? "{}", reply: reply)
+    }
+
+    /// Newlines would submit early in most TUIs; flatten so one message is one prompt.
+    private func singleLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ⏎ ")
+    }
+}
+
+/// Strips control characters (ESC, bracketed-paste markers, C0/C1) and bidi overrides from text
+/// that will be typed into a terminal or shown in the UI. Newlines and tabs survive.
+func sanitizeMessage(_ text: String) -> String {
+    let bidi: ClosedRange<UInt32> = 0x202A...0x202E
+    let isolates: ClosedRange<UInt32> = 0x2066...0x2069
+    let scalars = text.unicodeScalars.filter { scalar in
+        let value = scalar.value
+        if value == 0x0A || value == 0x09 { return true }
+        if value < 0x20 || (0x7F...0x9F).contains(value) { return false }
+        return !bidi.contains(value) && !isolates.contains(value)
+    }
+    return String(String.UnicodeScalarView(scalars)).prefix(8000).description
+}

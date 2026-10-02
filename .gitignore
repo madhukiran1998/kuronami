@@ -1,0 +1,8 @@
+vendor/
+GhosttyKit.xcframework/
+build/
+DerivedData/
+*.xcodeproj/
+.DS_Store
+Resources/ghostty/
+Resources/terminfo/
