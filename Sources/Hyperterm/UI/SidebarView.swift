@@ -275,7 +275,7 @@ struct AgentRow: View {
 struct AgentAvatar: View {
     let kind: SessionKind
     let state: AgentState
-    @State private var spin = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var tint: Color {
         switch state {
@@ -295,12 +295,16 @@ struct AgentAvatar: View {
                 .font(.system(size: 11.5, weight: .semibold))
                 .foregroundStyle(state.needsAttention ? Color.white : tint.opacity(state == .idle ? 0.75 : 1))
             if state == .working {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .trim(from: 0, to: 0.3)
-                    .stroke(Palette.working, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .frame(width: 31, height: 31)
-                    .rotationEffect(.degrees(spin ? 360 : 0))
-                    .onAppear { withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) { spin = true } }
+                // Angle from the clock, not a repeatForever animation: it restarts correctly each
+                // time work resumes, and 30fps is plenty for a 31pt arc on a 120Hz display.
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .trim(from: 0, to: 0.3)
+                        .stroke(Palette.working, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .frame(width: 31, height: 31)
+                        .rotationEffect(.degrees(context.date.timeIntervalSinceReferenceDate
+                            .truncatingRemainder(dividingBy: 1.4) / 1.4 * 360))
+                }
             }
         }
         .frame(width: 31, height: 31)
