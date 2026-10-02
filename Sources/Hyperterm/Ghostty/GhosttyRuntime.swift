@@ -59,18 +59,23 @@ final class GhosttyRuntime {
 
     // MARK: - Setup
 
-    /// The user's Ghostty config (fonts, theme, keybinds) applies as-is; we only layer defaults
-    /// that make sense for an agent host on top, by load order rather than editing their file.
+    /// The user's Ghostty config (fonts, theme, keybinds) applies as-is. Load order does the
+    /// layering instead of editing their file: our styling goes underneath it, and only the
+    /// behavior Hyperterm manages goes on top.
     private func makeConfig() -> ghostty_config_t? {
         guard let config = ghostty_config_new() else { return nil }
+        loadBundledConfig(config, named: "hyperterm-style")
         ghostty_config_load_default_files(config)
         ghostty_config_load_recursive_files(config)
-        if let overrides = Bundle.main.url(forResource: "hyperterm-defaults", withExtension: "conf", subdirectory: "ghostty") {
-            ghostty_config_load_file(config, overrides.path)
-        }
+        loadBundledConfig(config, named: "hyperterm-defaults")
         ghostty_config_finalize(config)
         logDiagnostics(config)
         return config
+    }
+
+    private func loadBundledConfig(_ config: ghostty_config_t, named name: String) {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "conf", subdirectory: "ghostty") else { return }
+        ghostty_config_load_file(config, url.path)
     }
 
     private func logDiagnostics(_ config: ghostty_config_t) {
