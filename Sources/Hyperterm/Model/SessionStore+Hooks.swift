@@ -2,8 +2,28 @@ import AppKit
 
 /// Turning agent hook events and statusLine reports into session state.
 extension SessionStore {
+    /// Payloads can be large (PostToolUse carries whole tool output), so they're parsed on a
+    /// serial background queue and applied on main in arrival order.
+    private static let parseQueue = DispatchQueue(label: "dev.hyperterm.hook-parse", qos: .userInitiated)
+
+    private func parseOffMain(_ payload: String, then apply: @escaping @MainActor ([String: Any]) -> Void) {
+        Self.parseQueue.async {
+            nonisolated(unsafe) let json = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any]
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { apply(json ?? [:]) }
+            }
+        }
+    }
+
     func handleHook(source: String, session: TerminalSession, payload: String, sentAt: UInt64?) {
         HookLog.append(source: source, sessionID: session.id.uuidString, payload: payload)
+        parseOffMain(payload) { [weak self, weak session] json in
+            guard let self, let session, self.sessions.contains(where: { $0 === session }) else { return }
+            self.applyHook(source: source, session: session, json: json, sentAt: sentAt)
+        }
+    }
+
+    private func applyHook(source: String, session: TerminalSession, json: [String: Any], sentAt: UInt64?) {
         // Hook processes race each other to the socket; an event stamped before the newest one
         // already applied is stale and must not roll state back.
         if let sentAt {
@@ -11,7 +31,6 @@ extension SessionStore {
             session.lastHookSentAt = sentAt
         }
         session.lastHookAt = Date()
-        let json = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any] ?? [:]
         switch source {
         case "claude":
             handleClaudeHook(session, json)
@@ -155,7 +174,13 @@ extension SessionStore {
     // MARK: - statusLine
 
     func handleStatusLine(session: TerminalSession, payload: String) {
-        guard let json = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any] else { return }
+        parseOffMain(payload) { [weak self, weak session] json in
+            guard let self, let session, !json.isEmpty else { return }
+            self.applyStatusLine(session: session, json: json)
+        }
+    }
+
+    private func applyStatusLine(session: TerminalSession, json: [String: Any]) {
         var usage = session.usage
         usage.costUSD = (json["cost"] as? [String: Any])?["total_cost_usd"] as? Double
         usage.contextPercent = (json["context_window"] as? [String: Any])?["used_percentage"] as? Double
