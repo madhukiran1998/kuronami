@@ -16,10 +16,10 @@ struct InspectorView: View {
                 InspectorContent(session: session, store: store, actions: actions)
                     .id(session.id)
             } else {
-                ContentUnavailableView("No Terminal Selected", systemImage: "sidebar.right")
+                Text("Select a terminal").foregroundStyle(.secondary).padding(.top, 40)
             }
         }
-        .frame(minWidth: 320)
+        .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -30,12 +30,24 @@ private struct InspectorContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                AgentAvatar(kind: session.kind, state: session.state)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("@" + session.label).font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    Text(shortPath(session.spec.workPath)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
             Picker("", selection: $store.inspectorTab) {
                 ForEach(InspectorTab.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .padding(10)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
             Divider()
             switch store.inspectorTab {
             case .changes: ChangesView(session: session, store: store)
@@ -76,16 +88,32 @@ private struct ChangesView: View {
             summary
             Divider()
             if files.isEmpty {
-                ContentUnavailableView(loading ? "Loading changes…" : "No Changes",
-                                       systemImage: loading ? "hourglass" : "checkmark.seal",
-                                       description: Text(loading ? "" : "The agent hasn't changed any files here."))
+                VStack(spacing: 8) {
+                    Image(systemName: loading ? "hourglass" : "checkmark.circle")
+                        .font(.system(size: 22, weight: .light))
+                        .foregroundStyle(.tertiary)
+                    Text(loading ? "Loading changes…" : "No changes yet")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    if !loading {
+                        Text("When @\(session.label) edits files, the diff shows up here for review.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 36)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
                 fileList
                 Divider()
                 patchView
             }
-            Divider()
-            footer
+            if !files.isEmpty || !comments.isEmpty {
+                Divider()
+                footer
+            }
         }
         .task(id: session.diffStat) { await load() }
         .onAppear { session.readyForReview = false }
@@ -94,10 +122,13 @@ private struct ChangesView: View {
     private var summary: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                if let stat = session.diffStat, !stat.isEmpty {
-                    Text(stat.text).font(.headline.monospacedDigit())
+                if !files.isEmpty {
+                    let added = files.reduce(0) { $0 + $1.added }, removed = files.reduce(0) { $0 + $1.removed }
+                    Text(DiffStat(added: added, removed: removed, files: files.count).text).font(.headline.monospacedDigit())
                 } else {
-                    Text("Changes").font(.headline)
+                    Text(files.isEmpty ? "Working tree clean" : "\(files.count) changed file\(files.count == 1 ? "" : "s")")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
@@ -442,43 +473,70 @@ private struct InfoView: View {
     let actions: SessionActions
 
     var body: some View {
-        Form {
-            Section {
-                LabeledContent("Label", value: "@" + session.label)
-                LabeledContent("Kind", value: session.kind.displayName)
-                LabeledContent("State", value: session.state.phrase + (session.state.detail.map { " · " + $0 } ?? ""))
-                LabeledContent("Folder") { Text(abbreviateHome(session.spec.workPath)).textSelection(.enabled).lineLimit(2).truncationMode(.head) }
-                if let branch = session.git?.branch { LabeledContent("Branch", value: branch) }
-                if let port = session.spec.port { LabeledContent("Port", value: String(port)) }
-            }
-            if session.kind == .claude {
-                Section("Usage") {
-                    LabeledContent("Model", value: session.usage.model ?? "—")
-                    LabeledContent("Cost", value: session.usage.costUSD.map { String(format: "$%.2f", $0) } ?? "—")
-                    LabeledContent("Context") {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                group("Terminal") {
+                    row("Kind", session.kind.displayName)
+                    row("Status", session.statusWord + (session.state.detail.map { " · " + $0 } ?? ""))
+                    row("Folder", abbreviateHome(session.spec.workPath), mono: true)
+                    if let branch = session.git?.branch { row("Branch", branch, mono: true) }
+                    if let port = session.spec.port, store.sessions.contains(where: { $0.kind == .server && $0.spec.port == port }) {
+                        row("Dev server", "localhost:\(port)", mono: true)
+                    }
+                }
+                if session.kind == .claude {
+                    group("Usage") {
+                        row("Model", session.usage.model ?? "—")
+                        row("Cost", session.usage.costUSD.map { String(format: "$%.2f", $0) } ?? "—")
                         if let context = session.usage.contextPercent {
-                            ProgressView(value: min(context, 100), total: 100) { EmptyView() } currentValueLabel: { Text("\(Int(context))%") }
-                        } else { Text("—") }
-                    }
-                    if let limits = store.rateLimits { UsageMeter(limits: limits) }
-                }
-            }
-            if let id = session.spec.agentSessionId {
-                Section("Session") {
-                    LabeledContent("ID") { Text(id).font(.caption.monospaced()).textSelection(.enabled) }
-                    Button("Copy Resume Command") {
-                        let command = session.kind == .claude ? "claude --resume \(id)" : "codex resume \(id)"
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(command, forType: .string)
+                            HStack {
+                                Text("Context").foregroundStyle(.secondary).frame(width: 84, alignment: .leading)
+                                ProgressView(value: min(context, 100), total: 100).controlSize(.small)
+                                Text("\(Int(context))%").monospacedDigit().foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
+                if let id = session.spec.agentSessionId {
+                    group("Session") {
+                        row("ID", id, mono: true)
+                    }
+                }
+                HStack(spacing: 8) {
+                    if let id = session.spec.agentSessionId {
+                        Button("Copy Resume") {
+                            let command = session.kind == .claude ? "claude --resume \(id)" : "codex resume \(id)"
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(command, forType: .string)
+                        }
+                    }
+                    if session.kind == .claude { Button("On Phone") { session.openRemoteControl() }.help("Continue with Claude Remote Control") }
+                    Button("Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.spec.workPath)]) }
+                }
+                .controlSize(.small)
             }
-            Section {
-                if session.kind == .claude { Button("Continue on Phone (Remote Control)") { session.openRemoteControl() } }
-                Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.spec.workPath)]) }
-                Button("Rename…") { actions.rename(session) }
-            }
+            .padding(14)
+            .font(.system(size: 12))
         }
-        .formStyle(.grouped)
+    }
+
+    private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title.uppercased()).font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary).tracking(0.5)
+            VStack(alignment: .leading, spacing: 5) { content() }
+        }
+    }
+
+    private func row(_ label: String, _ value: String, mono: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label).foregroundStyle(.secondary).frame(width: 84, alignment: .leading)
+            Text(value)
+                .font(mono ? .system(size: 11.5, design: .monospaced) : .system(size: 12))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .help(value)
+            Spacer(minLength: 0)
+        }
     }
 }

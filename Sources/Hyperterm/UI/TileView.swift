@@ -3,69 +3,28 @@ import SwiftUI
 
 /// A session's terminal plus, in split/grid layouts, a slim header naming it. The surface is
 /// reparented into whichever tile shows it; the process keeps running regardless.
+///
+/// Focus and attention are different signals: the focused tile gets an accent border; a tile that
+/// needs you gets a breathing orange glow outside its edge, never a border.
 @MainActor
 final class TileView: NSView {
     let session: TerminalSession
+    private let content = NSView()
     private let header: NSHostingView<TileHeader>
     private let model: TileHeaderModel
     private let border = CALayer()
-    private let dimmer = PassthroughView()
     private let headerRule = CALayer()
-    private static let headerHeight: CGFloat = 27
-    private static let radius: CGFloat = 7
-
-    let search = SearchModel()
+    private let sweep = CAGradientLayer()
+    private let dimmer = PassthroughView()
     private var recapHost: NSHostingView<RecapBanner>?
-
-    /// "Since you left 14m ago: 6 edits, tests passed, finished: …" when returning to an agent.
-    func showRecapIfNeeded() {
-        let events = session.timeline.filter { $0.date > session.lastViewedAt }
-        guard session.kind.isAgent, !events.isEmpty, Date().timeIntervalSince(session.lastViewedAt) > 120 else { return }
-        recapHost?.removeFromSuperview()
-        let host = NSHostingView(rootView: RecapBanner(
-            since: session.lastViewedAt, sentence: Recap.sentence(for: events),
-            onDismiss: { [weak self] in self?.recapHost?.removeFromSuperview(); self?.recapHost = nil }))
-        addSubview(host, positioned: .above, relativeTo: nil)
-        recapHost = host
-        needsLayout = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self, weak host] in
-            guard let self, let host, self.recapHost === host else { return }
-            NSAnimationContext.runAnimationGroup { $0.duration = 0.3; host.animator().alphaValue = 0 } completionHandler: {
-                MainActor.assumeIsolated {
-                    host.removeFromSuperview()
-                    if self.recapHost === host { self.recapHost = nil }
-                }
-            }
-        }
-    }
     private var searchHost: NSHostingView<SearchBar>?
+    let search = SearchModel()
 
-    func showSearch() {
-        if let searchHost { searchHost.isHidden = false; window?.makeFirstResponder(searchHost); return }
-        let surface = session.surface
-        let host = NSHostingView(rootView: SearchBar(
-            model: search,
-            onChange: { needle in surface.performBinding("search:" + needle) },
-            onNext: { surface.performBinding("navigate_search:next") },
-            onPrevious: { surface.performBinding("navigate_search:previous") },
-            onClose: { [weak self] in self?.hideSearch() }))
-        host.frame.size = host.fittingSize
-        addSubview(host, positioned: .above, relativeTo: nil)
-        searchHost = host
-        needsLayout = true
-    }
+    private static let headerHeight: CGFloat = 28
+    private static let radius: CGFloat = 12
 
-    func hideSearch() {
-        session.surface.performBinding("end_search")
-        search.needle = ""
-        search.total = nil
-        searchHost?.removeFromSuperview()
-        searchHost = nil
-        window?.makeFirstResponder(session.surface)
-    }
-
-    var showsHeader = false { didSet { needsLayout = true; header.isHidden = !showsHeader; updateBorder() } }
-    var isFocusedTile = false { didSet { model.focused = isFocusedTile; updateBorder() } }
+    var showsHeader = false { didSet { header.isHidden = !showsHeader; needsLayout = true; updateChrome() } }
+    var isFocusedTile = false { didSet { model.focused = isFocusedTile; updateChrome() } }
 
     init(session: TerminalSession, onSelect: @escaping () -> Void, onZoom: @escaping () -> Void) {
         self.session = session
@@ -73,23 +32,32 @@ final class TileView: NSView {
         self.header = NSHostingView(rootView: TileHeader(session: session, model: model, onSelect: onSelect, onZoom: onZoom))
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = Theme.terminalBackground.cgColor
-        layer?.cornerRadius = Self.radius
-        layer?.cornerCurve = .continuous
-        layer?.masksToBounds = true
+        layer?.masksToBounds = false
+        content.wantsLayer = true
+        // Matches the terminal's 0.9 background opacity so the padding blends with the glass.
+        content.layer?.backgroundColor = Theme.terminalBackground.withAlphaComponent(0.9).cgColor
+        content.layer?.cornerCurve = .continuous
+        content.layer?.masksToBounds = true
+        addSubview(content)
+
         border.borderWidth = 1
-        border.cornerRadius = Self.radius
         border.cornerCurve = .continuous
-        border.zPosition = 11
-        // Unfocused tiles recede so the one taking keystrokes is obvious at a glance.
-        dimmer.wantsLayer = true
-        dimmer.layer?.backgroundColor = NSColor.black.withAlphaComponent(Theme.isDark ? 0.32 : 0.12).cgColor
-        dimmer.isHidden = true
-        headerRule.backgroundColor = NSColor.separatorColor.cgColor
+        border.zPosition = 20
+        headerRule.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
         headerRule.zPosition = 9
-        [border, headerRule].forEach { layer?.addSublayer($0) }
-        addSubview(header)
-        addSubview(dimmer)
+        sweep.colors = [NSColor.clear.cgColor, NSColor(Palette.working).withAlphaComponent(0.9).cgColor, NSColor.clear.cgColor]
+        sweep.startPoint = CGPoint(x: 0, y: 0.5)
+        sweep.endPoint = CGPoint(x: 1, y: 0.5)
+        sweep.zPosition = 10
+        sweep.isHidden = true
+        [headerRule, sweep].forEach { content.layer?.addSublayer($0) }
+        layer?.addSublayer(border)
+
+        dimmer.wantsLayer = true
+        dimmer.layer?.backgroundColor = NSColor.black.withAlphaComponent(Theme.isDark ? 0.3 : 0.1).cgColor
+        dimmer.isHidden = true
+        content.addSubview(header)
+        content.addSubview(dimmer)
         header.isHidden = true
         attachSurface()
     }
@@ -98,30 +66,27 @@ final class TileView: NSView {
 
     /// Called after a restart swaps the session's surface.
     func attachSurface() {
-        subviews.filter { $0 is TerminalSurfaceView && $0 !== session.surface }.forEach { $0.removeFromSuperview() }
-        if session.surface.superview !== self {
+        content.subviews.filter { $0 is TerminalSurfaceView && $0 !== session.surface }.forEach { $0.removeFromSuperview() }
+        if session.surface.superview !== content {
             session.surface.removeFromSuperview()
-            addSubview(session.surface, positioned: .below, relativeTo: header)
+            content.addSubview(session.surface, positioned: .below, relativeTo: header)
         }
         needsLayout = true
     }
 
-    func refreshAttention() { updateBorder() }
+    func refreshAttention() { updateChrome() }
+
+    // MARK: - Layout
 
     override func layout() {
         super.layout()
+        content.frame = bounds
         let headerHeight = showsHeader ? Self.headerHeight : 0
         header.frame = NSRect(x: 0, y: bounds.height - headerHeight, width: bounds.width, height: headerHeight)
-        // Inset the terminal slightly inside tiles so text doesn't touch the rounded border.
-        let inset: CGFloat = showsHeader ? 4 : 0
+        let inset: CGFloat = 0
         session.surface.frame = NSRect(x: inset, y: inset, width: bounds.width - inset * 2,
                                        height: bounds.height - headerHeight - inset * 2)
         dimmer.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - headerHeight)
-        if let recapHost {
-            let width = min(bounds.width - 24, 560)
-            let height = recapHost.fittingSize.height
-            recapHost.frame = NSRect(x: (bounds.width - width) / 2, y: bounds.height - headerHeight - height - 12, width: width, height: height)
-        }
         if let recapHost {
             let width = min(bounds.width - 24, 560)
             let height = recapHost.fittingSize.height
@@ -137,29 +102,126 @@ final class TileView: NSView {
         border.frame = bounds
         headerRule.frame = NSRect(x: 0, y: bounds.height - headerHeight - 1, width: bounds.width, height: 1)
         headerRule.isHidden = !showsHeader
+        sweep.frame = NSRect(x: 0, y: bounds.height - headerHeight - 1, width: bounds.width, height: 1.5)
         CATransaction.commit()
     }
 
-    private func updateBorder() {
-        let color: NSColor
-        if !showsHeader {
-            color = .clear
-        } else if session.state.needsAttention {
-            color = NSColor(Palette.attention).withAlphaComponent(0.8)
-        } else if isFocusedTile {
-            color = Theme.focusRing
-        } else {
-            color = NSColor.separatorColor
-        }
+    // MARK: - Chrome
+
+    private func updateChrome() {
+        // Every pane is a rounded, softly shadowed card on the glass.
+        content.layer?.cornerRadius = Self.radius
+        border.cornerRadius = Self.radius
+        let attention = session.state.needsAttention
         CATransaction.begin()
-        CATransaction.setAnimationDuration(0.15)
-        border.borderColor = color.cgColor
-        border.borderWidth = session.state.needsAttention && showsHeader ? 1.5 : 1
+        CATransaction.setAnimationDuration(0.18)
+        if showsHeader && isFocusedTile {
+            border.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.9).cgColor
+            border.borderWidth = 1.5
+        } else {
+            border.borderColor = NSColor.white.withAlphaComponent(Theme.isDark ? 0.09 : 0.5).cgColor
+            border.borderWidth = 0.5
+        }
         CATransaction.commit()
         dimmer.isHidden = !(showsHeader && !isFocusedTile)
-        let radius = showsHeader ? Self.radius : 0
-        layer?.cornerRadius = radius
-        border.cornerRadius = radius
+        setGlow(attention)
+        setSweep(session.state == .working && showsHeader)
+    }
+
+    /// An orange halo that breathes slowly while the agent waits on you.
+    private func setGlow(_ on: Bool) {
+        guard let layer else { return }
+        if on {
+            layer.shadowColor = NSColor(Palette.attention).cgColor
+            layer.shadowOffset = .zero
+            layer.shadowRadius = 14
+            layer.shadowPath = CGPath(roundedRect: bounds, cornerWidth: Self.radius, cornerHeight: Self.radius, transform: nil)
+            guard layer.animation(forKey: "glow") == nil else { return }
+            layer.shadowOpacity = 0.55
+            if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                let breathe = CABasicAnimation(keyPath: "shadowOpacity")
+                breathe.fromValue = 0.25
+                breathe.toValue = 0.7
+                breathe.duration = 0.85
+                breathe.autoreverses = true
+                breathe.repeatCount = .infinity
+                breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                layer.add(breathe, forKey: "glow")
+            }
+        } else {
+            layer.removeAnimation(forKey: "glow")
+            layer.shadowColor = NSColor.black.cgColor
+            layer.shadowOffset = CGSize(width: 0, height: -3)
+            layer.shadowRadius = 12
+            layer.shadowOpacity = 0.28
+            layer.shadowPath = CGPath(roundedRect: bounds, cornerWidth: Self.radius, cornerHeight: Self.radius, transform: nil)
+        }
+    }
+
+    /// A light that travels along the header's bottom edge while the agent works.
+    private func setSweep(_ on: Bool) {
+        sweep.isHidden = !on
+        guard on else { sweep.removeAnimation(forKey: "sweep"); return }
+        guard sweep.animation(forKey: "sweep") == nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        sweep.locations = [0, 0.1, 0.2]
+        let move = CABasicAnimation(keyPath: "locations")
+        move.fromValue = [-0.3, -0.15, 0]
+        move.toValue = [1, 1.15, 1.3]
+        move.duration = 1.8
+        move.repeatCount = .infinity
+        sweep.add(move, forKey: "sweep")
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        layer?.shadowPath = CGPath(roundedRect: NSRect(origin: .zero, size: newSize), cornerWidth: Self.radius, cornerHeight: Self.radius, transform: nil)
+    }
+
+    // MARK: - Overlays
+
+    /// "Since you left 14m ago: 6 edits, tests passed, finished: …" when returning to an agent.
+    func showRecapIfNeeded() {
+        let events = session.timeline.filter { $0.date > session.lastViewedAt }
+        guard session.kind.isAgent, !events.isEmpty, Date().timeIntervalSince(session.lastViewedAt) > 120 else { return }
+        recapHost?.removeFromSuperview()
+        let host = NSHostingView(rootView: RecapBanner(
+            since: session.lastViewedAt, sentence: Recap.sentence(for: events),
+            onDismiss: { [weak self] in self?.recapHost?.removeFromSuperview(); self?.recapHost = nil }))
+        content.addSubview(host, positioned: .above, relativeTo: nil)
+        recapHost = host
+        needsLayout = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self, weak host] in
+            guard let self, let host, self.recapHost === host else { return }
+            NSAnimationContext.runAnimationGroup { $0.duration = 0.3; host.animator().alphaValue = 0 } completionHandler: {
+                MainActor.assumeIsolated {
+                    host.removeFromSuperview()
+                    if self.recapHost === host { self.recapHost = nil }
+                }
+            }
+        }
+    }
+
+    func showSearch() {
+        if let searchHost { searchHost.isHidden = false; window?.makeFirstResponder(searchHost); return }
+        let surface = session.surface
+        let host = NSHostingView(rootView: SearchBar(
+            model: search,
+            onChange: { needle in surface.performBinding("search:" + needle) },
+            onNext: { surface.performBinding("navigate_search:next") },
+            onPrevious: { surface.performBinding("navigate_search:previous") },
+            onClose: { [weak self] in self?.hideSearch() }))
+        content.addSubview(host, positioned: .above, relativeTo: nil)
+        searchHost = host
+        needsLayout = true
+    }
+
+    func hideSearch() {
+        session.surface.performBinding("end_search")
+        search.needle = ""
+        search.total = nil
+        searchHost?.removeFromSuperview()
+        searchHost = nil
+        window?.makeFirstResponder(session.surface)
     }
 }
 
@@ -173,6 +235,8 @@ final class TileHeaderModel: ObservableObject {
     @Published var focused = false
 }
 
+/// 26pt: the label, and a status capsule. The summary appears on hover only, since the agent's
+/// own screen already says what it's doing.
 struct TileHeader: View {
     @ObservedObject var session: TerminalSession
     @ObservedObject var model: TileHeaderModel
@@ -181,62 +245,74 @@ struct TileHeader: View {
     @State private var hovering = false
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 5)) { context in
-            HStack(spacing: 7) {
-                StatusDot(state: session.state, size: 6)
-                Text("@" + session.label)
-                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(model.focused ? Color.primary : Color.primary.opacity(0.6))
-                if let summary = headerSummary {
-                    Text(summary)
-                        .font(.system(size: 11))
-                        .foregroundStyle(session.state.needsAttention ? Palette.attention : Color.secondary.opacity(model.focused ? 0.9 : 0.6))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                Spacer(minLength: 6)
-                if !session.ports.isEmpty { PortChips(ports: session.ports, compact: true) }
-                if let state = stateLine(now: context.date) {
-                    Text(state)
-                        .font(.system(size: 10.5).monospacedDigit())
-                        .foregroundStyle(session.state.needsAttention ? Palette.attention : Color.secondary.opacity(0.7))
-                        .lineLimit(1)
-                }
-                Button(action: onZoom) {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 16, height: 16)
-                }
-                .buttonStyle(.plain)
-                .opacity(hovering ? 1 : 0)
-                .help("Zoom (⌘⏎)")
+        HStack(spacing: 7) {
+            Image(systemName: session.kind.symbol)
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(session.kind.tint.opacity(model.focused ? 1 : 0.7))
+            Text(session.label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(model.focused ? Color.primary : Color.secondary)
+                .lineLimit(1)
+            if hovering, let summary = headerSummary {
+                Text(summary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .transition(.opacity)
             }
-            .padding(.leading, 10)
-            .padding(.trailing, 6)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.bar)
-            .contentShape(Rectangle())
-            .onHover { hovering = $0 }
-            .onTapGesture(count: 2, perform: onZoom)
-            .onTapGesture(perform: onSelect)
+            Spacer(minLength: 6)
+            if !session.ports.isEmpty { PortChips(ports: session.ports, compact: true) }
+            StatusCapsule(session: session)
+            Button(action: onZoom) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 16)
+            }
+            .buttonStyle(.plain)
+            .opacity(hovering ? 1 : 0)
+            .help("Zoom (⌘⏎)")
         }
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.white.opacity(model.focused ? 0.045 : 0.02))
+        .contentShape(Rectangle())
+        .onHover { value in withAnimation(.easeOut(duration: 0.15)) { hovering = value } }
+        .onTapGesture(count: 2, perform: onZoom)
+        .onTapGesture(perform: onSelect)
     }
 
     private var headerSummary: String? {
-        if case .needsInput(let reason) = session.state { return reason }
-        return session.kind.isAgent ? session.summary : session.foregroundProcess
+        if case .needsInput(let reason) = session.state { return session.pendingRequest ?? reason }
+        return session.kind.isAgent ? (session.agentStatus ?? session.summary) : session.foregroundProcess
+    }
+}
+
+/// "Working 2m", "Needs you", "Done": the shared status vocabulary as a small capsule.
+struct StatusCapsule: View {
+    @ObservedObject var session: TerminalSession
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { context in
+            let color = Palette.status(session.state)
+            HStack(spacing: 4) {
+                Circle().fill(color).frame(width: 5, height: 5)
+                Text(text(now: context.date))
+            }
+            .font(.system(size: 10, weight: .medium).monospacedDigit())
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(color.opacity(session.state.needsAttention ? 0.25 : 0.12)))
+            .foregroundStyle(session.state.needsAttention ? Palette.attention : Color.secondary)
+        }
     }
 
-    /// Agents show their turn state; shells and servers are already described by the dot.
-    private func stateLine(now: Date) -> String? {
+    private func text(now: Date) -> String {
         switch session.state {
-        case .working, .needsInput, .idle:
-            return "\(session.state.phrase) \(elapsed(since: session.stateChangedAt, now: now))"
-        case .failed, .exited, .starting:
-            return session.state.phrase
-        case .running:
-            return nil
+        case .working: return "Working \(elapsed(since: session.stateChangedAt, now: now))"
+        default: return session.statusWord
         }
     }
 }

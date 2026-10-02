@@ -32,9 +32,9 @@ final class LayoutAndLabelTests: XCTestCase {
         }
     }
 
-    func testFocusUsesWholeArea() {
+    func testFocusFloatsInsetFromEdges() {
         let bounds = NSRect(x: 0, y: 0, width: 900, height: 600)
-        XCTAssertEqual(TerminalAreaView.frames(count: 1, in: bounds, mode: .focus), [bounds])
+        XCTAssertEqual(TerminalAreaView.frames(count: 1, in: bounds, mode: .focus), [bounds.insetBy(dx: 10, dy: 10)])
     }
 
     func testFuzzyScore() {

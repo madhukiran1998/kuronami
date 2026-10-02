@@ -39,6 +39,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var diffStat: DiffStat?
     /// Finished a turn with changes that the user hasn't opened in review yet.
     @Published var readyForReview = false
+    /// Servers normally sit in the canvas's strip; pinned ones get a grid tile.
+    @Published var pinnedToGrid = false
     /// When the user last looked at this session; the recap covers events after it.
     @Published var lastViewedAt = Date()
 
@@ -69,7 +71,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         self.spec = spec
         self.surface = TerminalSessionFactory.makeSurface(spec: spec)
         self.surface.events = self
-        self.summary = spec.summary
+        self.summary = spec.summary.flatMap { $0.hasPrefix("~") || $0.count < 3 ? nil : $0 }
         if !spec.kind.isAgent { state = .running }
         scheduleInitialInput(resume: resume, task: task)
     }
@@ -291,7 +293,8 @@ extension TerminalSession: TerminalSurfaceEvents {
     func surfaceTitleChanged(_ title: String) {
         let cleaned = cleanTitle(title)
         // Titles that are just a path (shells, Claude at rest) or the label say nothing new.
-        let meaningless = cleaned.contains("/") || cleaned.lowercased() == label || cleaned.lowercased() == kind.rawValue
+        let meaningless = cleaned.contains("/") || cleaned.hasPrefix("~") || cleaned.lowercased() == label
+            || cleaned.lowercased() == kind.rawValue || cleaned.count < 3
         self.title = meaningless ? "" : cleaned
         if kind.isAgent, summary == nil, !self.title.isEmpty { summary = self.title }
     }

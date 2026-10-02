@@ -18,6 +18,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered, defer: false)
         window.title = "Hyperterm"
         window.toolbarStyle = .unified
+        // Glass window: the desktop blurs through the chrome and canvas (system vibrancy), and
+        // terminals float on it as rounded panes. Chrome follows the system appearance.
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.titlebarAppearsTransparent = true
         window.minSize = NSSize(width: 760, height: 440)
         window.tabbingMode = .disallowed
         super.init(window: window)
@@ -63,7 +68,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         split.addSplitViewItem(sidebarItem)
 
         let detail = NSViewController()
-        let container = NSView()
+        let container = NSVisualEffectView()
+        container.material = .underWindowBackground
+        container.blendingMode = .behindWindow
+        container.state = .followsWindowActiveState
         terminalArea.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(terminalArea)
         NSLayoutConstraint.activate([
@@ -79,7 +87,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         let inspectorHost = NSHostingController(rootView: InspectorView(store: store, actions: actions))
         inspectorHost.sizingOptions = []
-        let inspector = NSSplitViewItem(inspectorWithViewController: inspectorHost)
+        let inspector = NSSplitViewItem(inspectorWithViewController: Self.glass(inspectorHost, material: .sidebar))
         inspector.minimumThickness = 340
         inspector.maximumThickness = 640
         inspector.canCollapse = true
@@ -87,7 +95,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         split.addSplitViewItem(inspector)
         inspectorItem = inspector
         split.splitView.autosaveName = "HypertermSplit3"
+        // The inspector opens on demand (review chip, ⌥⌘R); don't restore it open and empty.
+        DispatchQueue.main.async { inspector.isCollapsed = true }
         return split
+    }
+
+    /// Wraps a view controller's view in a behind-window vibrancy material.
+    private static func glass(_ child: NSViewController, material: NSVisualEffectView.Material) -> NSViewController {
+        let wrapper = NSViewController()
+        let effect = NSVisualEffectView()
+        effect.material = material
+        effect.blendingMode = .behindWindow
+        effect.state = .followsWindowActiveState
+        wrapper.addChild(child)
+        child.view.translatesAutoresizingMaskIntoConstraints = false
+        effect.addSubview(child.view)
+        NSLayoutConstraint.activate([
+            child.view.topAnchor.constraint(equalTo: effect.topAnchor),
+            child.view.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
+            child.view.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+            child.view.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+        ])
+        wrapper.view = effect
+        return wrapper
     }
 
     func toggleInspector() {
@@ -115,6 +145,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func bindStore() {
+        let strip = NSHostingView(rootView: ServerStrip(store: store))
+        strip.sizingOptions = []
+        terminalArea.serverStrip = strip
         store.onSurfaceChange = { [weak self] session in self?.terminalArea.mount(session) }
         store.onRemove = { [weak self] session in self?.terminalArea.unmount(session) }
         store.onArrangementChange = { [weak self] in self?.arrange() }
@@ -141,8 +174,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     private func arrange() {
         terminalArea.apply(mode: store.layout, visible: store.visibleIDs, focused: store.selectedID)
+        terminalArea.showsServerStrip = store.layout != .focus && store.sessions.contains { $0.kind == .server && !$0.pinnedToGrid }
         terminalArea.refreshAttention()
-        window?.subtitle = store.windowSubtitle
+        if let session = store.selected {
+            window?.title = session.label
+            window?.subtitle = [session.git?.project, session.git?.branch].compactMap { $0 }.joined(separator: " · ")
+        } else {
+            window?.title = "Hyperterm"
+            window?.subtitle = store.windowSubtitle
+        }
         toolbarController.refresh()
     }
 

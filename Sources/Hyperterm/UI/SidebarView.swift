@@ -40,6 +40,7 @@ struct SidebarView: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
             .overlay {
                 if store.sessions.isEmpty {
                     ContentUnavailableView {
@@ -51,6 +52,7 @@ struct SidebarView: View {
             }
             SidebarFooter(store: store, actions: actions)
         }
+        // Vibrancy comes from the split view's sidebar material.
     }
 }
 
@@ -80,7 +82,7 @@ private struct DispatchField: View {
                 Image(systemName: kind.symbol)
                     .foregroundStyle(kind.tint)
                     .font(.system(size: 12, weight: .semibold))
-                TextField("Ask a new agent…", text: $text, axis: .vertical)
+                TextField("New agent in \(URL(fileURLWithPath: targetFolder).lastPathComponent)…", text: $text, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...4)
                     .focused($focused)
@@ -145,12 +147,12 @@ struct AgentRow: View {
             HStack(alignment: .top, spacing: 10) {
                 AgentAvatar(kind: session.kind, state: session.state)
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(session.label)
-                            .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.primary)
                             .lineLimit(1)
                             .layoutPriority(1)
-                        if session.unread { Circle().fill(Palette.working).frame(width: 6, height: 6) }
                         Spacer(minLength: 4)
                         trailing(now: context.date)
                     }
@@ -166,42 +168,45 @@ struct AgentRow: View {
     }
 
     @ViewBuilder private func trailing(now: Date) -> some View {
-        if session.readyForReview, let stat = session.diffStat {
+        if session.readyForReview, let stat = session.diffStat, stat.files > 0 {
             Button { actions.review(session) } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "eye").font(.system(size: 8.5, weight: .bold))
-                    Text(stat.added + stat.removed == 0 ? "\(stat.files) file\(stat.files == 1 ? "" : "s")" : "+\(stat.added) −\(stat.removed)")
-                }
-                .font(.caption2.monospacedDigit().weight(.semibold))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(Palette.running.opacity(0.2)))
-                .foregroundStyle(Palette.running)
+                Text("\(stat.files) changed")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Palette.running.opacity(0.2)))
+                    .foregroundStyle(Palette.running)
             }
             .buttonStyle(.plain)
-            .help("Ready for review: open the changes (⌥⌘R)")
+            .help("Review the changes (⌥⌘R)")
         } else {
-            Text(stateText(now: now))
+            Text(elapsedLabel(now: now))
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(session.state.needsAttention ? Palette.attention : .secondary)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func elapsedLabel(now: Date) -> String {
+        switch session.state {
+        case .working, .needsInput, .idle: return elapsed(since: session.stateChangedAt, now: now)
+        default: return session.statusWord
         }
     }
 
     @ViewBuilder private var detailLines: some View {
         if let headline {
             Text(headline)
-                .font(.callout)
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         if session.state == .working, let activity = session.activity {
-            HStack(spacing: 4) {
-                ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 10, height: 10)
-                Text(activity).lineLimit(1).truncationMode(.middle)
-            }
-            .font(.caption.monospaced())
-            .foregroundStyle(Palette.working)
+            Text(activity)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Palette.working)
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
         let progress = session.tasks
         if progress.total > 0 && progress.done < progress.total {
@@ -221,11 +226,11 @@ struct AgentRow: View {
             HStack(spacing: 9) {
                 ForEach(meta, id: \.text) { item in
                     Label(item.text, systemImage: item.symbol)
-                        .foregroundStyle(item.color ?? Color.secondary.opacity(0.75))
+                        .font(item.mono ? .system(size: 10.5, design: .monospaced) : .caption)
+                        .foregroundStyle(item.color ?? Color.secondary.opacity(0.7))
                         .lineLimit(1)
                 }
             }
-            .font(.caption)
             .labelStyle(CompactLabelStyle())
         }
     }
@@ -234,15 +239,16 @@ struct AgentRow: View {
         let text: String
         let symbol: String
         let color: Color?
+        var mono = false
     }
 
     private var metaItems: [MetaItem] {
         var items: [MetaItem] = []
         if let branch = session.spec.worktreeBranch ?? (session.git?.isWorktree == true ? session.git?.branch : nil) {
-            items.append(MetaItem(text: branch, symbol: "arrow.triangle.branch", color: nil))
+            items.append(MetaItem(text: branch, symbol: "arrow.triangle.branch", color: nil, mono: true))
         }
         if let evidence = session.testEvidence {
-            items.append(MetaItem(text: evidence.passed ? "passing" : "failing", symbol: evidence.passed ? "checkmark.circle.fill" : "xmark.circle.fill",
+            items.append(MetaItem(text: evidence.passed ? "Tests pass" : "Tests fail", symbol: evidence.passed ? "checkmark.circle.fill" : "xmark.circle.fill",
                                   color: evidence.passed ? Palette.running : Palette.failed))
         }
         if let cost = session.usage.costUSD, cost > 0 {
@@ -255,43 +261,49 @@ struct AgentRow: View {
         switch session.state {
         case .failed(let reason): return reason
         case .exited: return "Agent exited · shell open"
-        default: return session.agentStatus ?? session.summary
-        }
-    }
-
-    private func stateText(now: Date) -> String {
-        let time = elapsed(since: session.stateChangedAt, now: now)
-        switch session.state {
-        case .working: return time
-        case .needsInput: return "waiting \(time)"
-        case .idle: return session.summary == nil ? "ready" : "done"
-        case .starting: return "starting"
-        case .failed: return "failed"
-        case .exited: return "exited"
-        case .running: return ""
+        case .starting: return "Starting…"
+        default:
+            if let text = session.agentStatus ?? session.summary { return text }
+            return session.state == .idle ? "Ready for a task" : nil
         }
     }
 }
 
-/// The agent's mark in a tinted tile, with its state as a badge.
+/// The agent's mark, carrying its status: orange when it needs you, a spinning arc while it
+/// works, muted when idle. This is the one place the sidebar shows state.
 struct AgentAvatar: View {
     let kind: SessionKind
     let state: AgentState
+    @State private var spin = false
+
+    private var tint: Color {
+        switch state {
+        case .needsInput: return Palette.attention
+        case .failed: return Palette.failed
+        case .exited: return .secondary
+        default: return kind.tint
+        }
+    }
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
+        ZStack {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(kind.tint.gradient.opacity(0.22))
-                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(kind.tint.opacity(0.25), lineWidth: 0.5))
+                .fill(state.needsAttention ? AnyShapeStyle(Palette.attention.gradient) : AnyShapeStyle(tint.gradient.opacity(state == .idle || state == .exited(0) ? 0.14 : 0.24)))
                 .frame(width: 26, height: 26)
-                .overlay(Image(systemName: kind.symbol).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(kind.tint))
-            StatusDot(state: state, size: 8)
-                .padding(2)
-                .background(Circle().fill(.background))
-                .offset(x: 4, y: 4)
+            Image(systemName: state.needsAttention ? "hand.raised.fill" : kind.symbol)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(state.needsAttention ? Color.white : tint.opacity(state == .idle ? 0.75 : 1))
+            if state == .working {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .trim(from: 0, to: 0.3)
+                    .stroke(Palette.working, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .frame(width: 31, height: 31)
+                    .rotationEffect(.degrees(spin ? 360 : 0))
+                    .onAppear { withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) { spin = true } }
+            }
         }
-        .padding(.top, 1)
-        .padding(.trailing, 2)
+        .frame(width: 31, height: 31)
+        .accessibilityLabel(state.phrase)
     }
 }
 
@@ -305,36 +317,43 @@ struct CompactLabelStyle: LabelStyle {
     }
 }
 
-/// The request an agent is blocked on, with the answers right there.
+/// The request an agent is blocked on, with the answers right there. Allow is the primary
+/// action; "Always" lives in its menu and says what it would allow.
 private struct ApprovalStrip: View {
     @ObservedObject var session: TerminalSession
     let store: SessionStore
     @State private var error: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Label(session.hasHookApproval || session.pendingRequest != nil ? "Wants to run" : (session.state.detail ?? "Waiting for you"),
-                  systemImage: "hand.raised.fill")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Palette.attention)
+        VStack(alignment: .leading, spacing: 8) {
             if let request = session.pendingRequest {
                 Text(request)
-                    .font(.system(size: 11.5, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.primary)
-                    .lineLimit(4)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .help(request)
+            } else {
+                Text(session.state.detail ?? "Waiting for you").font(.system(size: 12)).foregroundStyle(.secondary)
             }
             HStack(spacing: 6) {
-                Button { answer(.approve) } label: { Text("Allow").frame(maxWidth: .infinity) }
+                Button { answer(.approve) } label: { Text("Allow").frame(minWidth: 44) }
                     .buttonStyle(.borderedProminent)
                     .tint(Palette.attention)
-                Button { answer(.always) } label: { Text("Always").frame(maxWidth: .infinity) }
-                    .help(store.alwaysRuleText(for: session).map { "Always allow \($0)" } ?? "Allow and don't ask again for this")
-                Button { answer(.deny) } label: { Text("Deny").frame(maxWidth: .infinity) }
+                    .help("Allow once (⌥⌘Y)")
+                Button { answer(.deny) } label: { Text("Deny").frame(minWidth: 36) }
+                    .buttonStyle(.bordered)
+                    .help("Deny (⌥⌘N)")
+                Spacer(minLength: 0)
+                Menu {
+                    Button(store.alwaysRuleText(for: session).map { "Always Allow \($0)" } ?? "Always Allow (Claude's suggested scope)") { answer(.always) }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More options")
             }
             .controlSize(.small)
             if let error {
@@ -342,8 +361,7 @@ private struct ApprovalStrip: View {
             }
         }
         .padding(8)
-        .background(Palette.attention.opacity(0.1), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Palette.attention.opacity(0.35), lineWidth: 0.5))
+        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func answer(_ choice: PromptAnswer) {
@@ -382,20 +400,29 @@ private struct SidebarFooter: View {
     let actions: SessionActions
 
     var body: some View {
-        VStack(spacing: 6) {
+        HStack(spacing: 10) {
             if let limits = store.rateLimits {
                 UsageMeter(limits: limits)
             }
-            HStack {
-                Button { actions.newSession() } label: {
-                    Label("New Terminal", systemImage: "plus")
+            Spacer(minLength: 0)
+            Menu {
+                Button("New Terminal…") { actions.newSession() }
+                Divider()
+                ForEach(SessionKind.allCases) { kind in
+                    Button { NSApp.sendAction(#selector(AppDelegate.newSessionOfKind(_:)), to: nil, from: KindSender(kind: kind)) } label: {
+                        Label("New \(kind.displayName)", systemImage: kind.symbol)
+                    }
                 }
-                .buttonStyle(.borderless)
-                Spacer()
+            } label: {
+                Image(systemName: "plus")
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("New terminal")
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 9)
     }
 }
 
@@ -404,23 +431,25 @@ struct UsageMeter: View {
     let limits: RateLimits
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            row("5-hour", limits.fiveHourPercent, limits.fiveHourResets)
-            row("Weekly", limits.sevenDayPercent, limits.sevenDayResets)
+        HStack(spacing: 12) {
+            gauge("5h", limits.fiveHourPercent, limits.fiveHourResets)
+            gauge("Week", limits.sevenDayPercent, limits.sevenDayResets)
         }
     }
 
-    @ViewBuilder private func row(_ title: String, _ percent: Double?, _ reset: Date?) -> some View {
+    @ViewBuilder private func gauge(_ title: String, _ percent: Double?, _ reset: Date?) -> some View {
         if let percent {
-            HStack(spacing: 8) {
-                Text(title).font(.caption).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
-                ProgressView(value: min(percent, 100), total: 100)
-                    .progressViewStyle(.linear)
-                    .tint(percent > 85 ? Palette.failed : percent > 65 ? Palette.attention : Color.accentColor)
-                    .controlSize(.small)
-                Text("\(Int(percent))%").font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 34, alignment: .trailing)
+            HStack(spacing: 5) {
+                Text(title).font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                Capsule().fill(.quaternary)
+                    .frame(width: 44, height: 4)
+                    .overlay(alignment: .leading) {
+                        Capsule().fill(percent > 80 ? Palette.attention : Color.secondary)
+                            .frame(width: 44 * min(percent, 100) / 100, height: 4)
+                    }
+                Text("\(Int(percent))%").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
             }
-            .help(reset.map { "Resets \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "")
+            .help("\(title == "5h" ? "5-hour" : "Weekly") usage · " + (reset.map { "resets \($0.formatted(date: .abbreviated, time: .shortened))" } ?? ""))
         }
     }
 }

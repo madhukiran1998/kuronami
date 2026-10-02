@@ -99,7 +99,11 @@ final class SessionStore: ObservableObject {
             let pair = Set(recent.prefix(2))
             return sessions.filter { pair.contains($0.id) }.map(\.id)
         case .grid:
-            return sessions.filter { !isExited($0) || $0.id == selectedID }.map(\.id)
+            // Servers live in the strip below the canvas unless pinned or selected.
+            return sessions.filter { session in
+                (session.kind != .server || session.pinnedToGrid || session.id == selectedID)
+                    && (!isExited(session) || session.id == selectedID)
+            }.map(\.id)
         }
     }
 
@@ -157,7 +161,7 @@ final class SessionStore: ObservableObject {
         var order: [String] = []
         var groups: [String: [TerminalSession]] = [:]
         for session in sessions where session.kind.isAgent {
-            let name = session.git?.project ?? URL(fileURLWithPath: expandTilde(session.spec.cwd)).lastPathComponent
+            let name = session.git?.project ?? "Scratch"
             if groups[name] == nil { order.append(name) }
             groups[name, default: []].append(session)
         }

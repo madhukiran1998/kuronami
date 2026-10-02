@@ -32,6 +32,15 @@ final class TerminalAreaView: NSView {
     private let emptyState = NSHostingViewFactory.emptyState()
 
     var onSelectTile: ((UUID) -> Void)?
+    /// Servers strip along the bottom in split and grid layouts.
+    var serverStrip: NSView? {
+        didSet {
+            oldValue?.removeFromSuperview()
+            if let serverStrip { addSubview(serverStrip) }
+        }
+    }
+    var showsServerStrip = false { didSet { serverStrip?.isHidden = !showsServerStrip; needsLayout = true } }
+    private static let stripHeight: CGFloat = 32
     var onZoomTile: ((UUID) -> Void)?
 
     override init(frame: NSRect) {
@@ -72,7 +81,8 @@ final class TerminalAreaView: NSView {
             let isVisible = visibleSet.contains(id)
             tile.isHidden = !isVisible
             tile.session.surface.setOccluded(!isVisible)
-            tile.showsHeader = mode != .focus
+            // One tile gets the whole area without chrome, whatever the layout.
+            tile.showsHeader = mode != .focus && visibleSet.count > 1
             tile.isFocusedTile = id == focused
         }
         emptyState.isHidden = !tiles.isEmpty
@@ -101,7 +111,12 @@ final class TerminalAreaView: NSView {
     override func layout() {
         super.layout()
         emptyState.frame = bounds
-        let frames = Self.frames(count: visibleOrder.count, in: bounds, mode: mode)
+        var area = bounds
+        if showsServerStrip, let serverStrip {
+            serverStrip.frame = NSRect(x: 0, y: 0, width: bounds.width, height: Self.stripHeight)
+            area = NSRect(x: 0, y: Self.stripHeight, width: bounds.width, height: bounds.height - Self.stripHeight)
+        }
+        let frames = Self.frames(count: visibleOrder.count, in: area, mode: mode)
         for (id, frame) in zip(visibleOrder, frames) {
             tiles[id]?.frame = frame.integral
         }
@@ -111,8 +126,9 @@ final class TerminalAreaView: NSView {
 
     nonisolated static func frames(count: Int, in bounds: NSRect, mode: LayoutMode) -> [NSRect] {
         guard count > 0 else { return [] }
-        if mode == .focus || count == 1 && mode != .grid { return [bounds] }
-        let gap: CGFloat = 8
+        // Panes always float inset from the window edges, like content panes in Apple's apps.
+        let gap: CGFloat = 10
+        if mode == .focus || count == 1 { return [bounds.insetBy(dx: gap, dy: gap)] }
         let area = bounds.insetBy(dx: gap, dy: gap)
         let (columns, rows) = gridShape(count: count, aspect: area.width / max(area.height, 1))
         let cellHeight = (area.height - gap * CGFloat(rows - 1)) / CGFloat(rows)

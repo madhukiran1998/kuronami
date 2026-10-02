@@ -81,17 +81,26 @@ extension SessionKind {
 }
 
 extension AgentState {
-    /// Short phrase for headers: "working", "needs you", "idle".
+    /// The one status vocabulary used everywhere: Working, Needs you, Done, Idle (+ Failed,
+    /// Exited, Running for processes).
     var phrase: String {
         switch self {
-        case .starting: return "starting"
-        case .working: return "working"
-        case .needsInput: return "needs you"
-        case .idle: return "idle"
-        case .failed: return "failed"
-        case .exited(let code): return code == 0 ? "exited" : "exit \(code)"
-        case .running: return "running"
+        case .starting: return "Starting"
+        case .working: return "Working"
+        case .needsInput: return "Needs you"
+        case .idle: return "Idle"
+        case .failed: return "Failed"
+        case .exited(let code): return code == 0 ? "Exited" : "Exit \(code)"
+        case .running: return "Running"
         }
+    }
+}
+
+extension TerminalSession {
+    /// Idle after finishing a turn reads as "Done"; idle before any work reads as "Idle".
+    var statusWord: String {
+        if state == .idle, summary != nil || !timeline.isEmpty { return "Done" }
+        return state.phrase
     }
 }
 

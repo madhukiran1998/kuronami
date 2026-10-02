@@ -2,9 +2,9 @@
 
 **A native macOS terminal for running many coding agents at once.** Claude Code, Codex, shells and dev servers each get a labeled terminal (`@api`, `@landing-page`). Hyperterm shows what every agent is doing, brings you the ones that need you, lets you approve and review their work without switching terminals, and lets agents message each other by label.
 
-![Hyperterm with an agent waiting on approval](docs/screenshot.png)
+![Hyperterm grid view with three agents and two dev servers](docs/screenshot.png)
 
-Terminals render with **libghostty**, Ghostty's own GPU (Metal) engine. Your `~/.config/ghostty/config` (fonts, theme, keybinds) applies as-is. The app chrome is native AppKit and SwiftUI: a translucent sidebar, a unified toolbar, and a system inspector.
+Terminals render with **libghostty**, Ghostty's own GPU (Metal) engine. Your `~/.config/ghostty/config` (fonts, theme, keybinds) applies as-is. The app chrome is native AppKit and SwiftUI: a translucent glass window, floating rounded terminal panes, a unified toolbar, a server strip, and a system inspector.
 
 ## Why
 

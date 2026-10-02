@@ -263,6 +263,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func nextWaiting(_ sender: Any?) { store.selectNextNeedingAttention() }
+    @objc func allowNext(_ sender: Any?) { answerNext(.approve) }
+    @objc func denyNext(_ sender: Any?) { answerNext(.deny) }
+
+    /// The focused agent if it's waiting, otherwise the one that has waited longest.
+    private func answerNext(_ answer: PromptAnswer) {
+        let waiting = store.sessions.filter { $0.state.needsAttention }.sorted { $0.stateChangedAt < $1.stateChangedAt }
+        guard let target = store.selected.flatMap({ $0.state.needsAttention ? $0 : nil }) ?? waiting.first else { NSSound.beep(); return }
+        if case .failure = store.answer(target, answer) { NSSound.beep(); store.select(target) }
+    }
     @objc func nextSession(_ sender: Any?) { store.selectRelative(1) }
     @objc func previousSession(_ sender: Any?) { store.selectRelative(-1) }
 

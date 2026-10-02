@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// Native unified toolbar: sidebar toggle, title/subtitle (set by the window controller), layout
 /// switcher, new terminal, and the inspector toggle.
@@ -25,9 +26,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
 
     func refresh() {
         layoutControl.selectedSegment = LayoutMode.allCases.firstIndex(of: store.layout) ?? 0
-        waitingItem?.isHidden = store.attentionCount == 0
-        waitingItem?.label = "\(store.attentionCount) waiting"
-        waitingItem?.toolTip = "Jump to the next agent waiting on you (⌘⇧U)"
+
     }
 
     private weak var waitingItem: NSToolbarItem?
@@ -54,7 +53,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
     // MARK: - NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, Self.waiting, Self.layout, Self.newTerminal,
+        [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, Self.waiting, .flexibleSpace, Self.layout, Self.newTerminal,
          .inspectorTrackingSeparator, .flexibleSpace, .toggleInspector]
     }
 
@@ -81,12 +80,11 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
             return item
         case Self.waiting:
             let item = NSToolbarItem(itemIdentifier: identifier)
-            item.image = NSImage(systemSymbolName: "exclamationmark.bubble.fill", accessibilityDescription: "Waiting")
-            item.label = "Waiting"
-            item.target = self
-            item.action = #selector(jumpToWaiting(_:))
-            item.isBordered = true
-            item.isHidden = true
+            let host = NSHostingView(rootView: AttentionQueue(store: store))
+            host.sizingOptions = [.intrinsicContentSize]
+            item.view = host
+            item.label = "Needs You"
+            item.visibilityPriority = .high
             waitingItem = item
             return item
         default:

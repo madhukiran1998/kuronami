@@ -96,7 +96,9 @@ enum MainMenu {
     private static func goMenu(_ target: AppDelegate) -> NSMenu {
         let menu = NSMenu(title: "Go")
         menu.addItem(item("Go to Terminal…", #selector(AppDelegate.showSwitcher(_:)), "p", target: target))
-        menu.addItem(item("Next Waiting on You", #selector(AppDelegate.nextWaiting(_:)), "u", [.command, .shift], target: target))
+        menu.addItem(item("Next Waiting on You", #selector(AppDelegate.nextWaiting(_:)), "j", target: target))
+        menu.addItem(item("Allow Next Request", #selector(AppDelegate.allowNext(_:)), "y", [.command, .option], target: target))
+        menu.addItem(item("Deny Next Request", #selector(AppDelegate.denyNext(_:)), "n", [.command, .option], target: target))
         menu.addItem(item("Next Terminal", #selector(AppDelegate.nextSession(_:)), "]", target: target))
         menu.addItem(item("Previous Terminal", #selector(AppDelegate.previousSession(_:)), "[", target: target))
         menu.addItem(.separator())
