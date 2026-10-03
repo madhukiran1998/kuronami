@@ -1,10 +1,10 @@
 # Hyperterm
 
-**A native macOS terminal for running many coding agents at once.** Claude Code, Codex, shells and dev servers each get a labeled terminal (`@api`, `@landing-page`). Hyperterm shows what every agent is doing, brings you the ones that need you, lets you approve and review their work without switching terminals, and lets agents message each other by label.
+**A native macOS terminal for running many coding agents at once.** Claude Code, Codex, shells and dev servers each get a labeled terminal (`@api`, `@landing-page`). Hyperterm shows what every agent is doing, brings you the ones that need you, lets you approve and review their work without switching terminals, lets agents message each other by label, and gives each agent a real Chromium browser you can watch and take over.
 
 ![Hyperterm grid view with three agents and two dev servers](docs/screenshot.png)
 
-Terminals render with **libghostty**, Ghostty's own GPU (Metal) engine. Your `~/.config/ghostty/config` (fonts, theme, keybinds) applies as-is. The app chrome is native AppKit and SwiftUI: a translucent glass window, floating rounded terminal panes, a unified toolbar, a server strip, and a system inspector.
+Terminals render with **libghostty**, Ghostty's own GPU (Metal) engine. Your `~/.config/ghostty/config` (fonts, theme, keybinds) applies as-is. Browsers are embedded **Chromium** (CEF), started only when first used. The app chrome is native AppKit and SwiftUI: a translucent glass window, floating rounded terminal panes, a unified toolbar, a server strip, and a system inspector.
 
 ## Why
 
@@ -74,11 +74,13 @@ Hyperterm types into terminals on your behalf, so who may ask for what matters. 
 
 Only you can press keys, answer prompts, type raw text, open shells, or close terminals. That stops one agent from approving another's permission prompt or running commands outside its own checks. Session IDs and tasks typed into shells are validated and shell-quoted, peer messages are stripped of control and escape sequences, and git runs with repo hooks and fsmonitor disabled.
 
+**Browsers.** Agents drive Chromium over its DevTools protocol on `127.0.0.1` only. Scoping each agent to its own browser is a default and a guardrail, not isolation: `chrome-devtools-mcp` sees every Hyperterm browser, and while Chromium runs, any process on your Mac can connect to that port. Every Hyperterm browser shares one profile (`~/.hyperterm/browser`), so a login in one is a login in all, including logins imported from Chrome. Only sign in where you're happy for your agents to act.
+
 **Limit:** this is a boundary between agents and Hyperterm, not an OS sandbox. An agent you allow to drive other apps (for example via `osascript`) could act outside it. Claude's sandbox mode closes that gap.
 
 ## Nothing global is modified
 
-Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.hyperterm/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Two opt-in menu items write config, and each asks first: channels (`claude mcp add --scope user hyperterm`) and Codex approvals (`~/.codex/hooks.json`).
+Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.hyperterm/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Claude agents also get `--no-chrome` per launch, so they use Hyperterm's browsers rather than your Chrome (App menu → *Let Agents Use My Chrome* drops it). Your Chrome profile is only read when you choose *Import Chrome Logins…*. Two opt-in menu items write config, and each asks first: channels (`claude mcp add --scope user hyperterm`) and Codex approvals (`~/.codex/hooks.json`).
 
 ## `ht` CLI
 
@@ -88,6 +90,7 @@ Add `export PATH="$HOME/.hyperterm/bin:$PATH"` to `~/.zshrc` (App menu → *Use 
 ht ls                                           # label · kind · state · ports · summary
 ht new claude --cwd ~/Code/app --worktree --task "fix the flaky auth test"
 ht new server @web -- pnpm dev                  # also: codex, shell
+ht new browser @docs -- localhost:3000          # a browser session
 ht send @api "users.name is now display_name"   # message an agent
 ht approve @api   ·   ht always @api   ·   ht deny @api "use a migration instead"
 ht read @web -n 50                              # recent output
@@ -105,6 +108,7 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 | ⌥⌘R / ⌥⌘I | Review changes / toggle inspector |
 | ⌘⌥1 · 2 · 3, ⌘⏎ | Focus · split · grid, zoom tile |
 | ⌘F, ⌘G | Find in terminal (scrollback included) |
+| ⇧⌘B | New browser (on the selected terminal's dev server, if it has one) |
 | ⇧⌘O | Open the selected server's port in a preview window |
 
 ## How status is detected
@@ -116,6 +120,7 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 | Codex `notify` + OSC 9 | Turn complete (summary, thread id), approval requests |
 | `~/.claude/sessions/<pid>.json` | Corrects a stale "working" after an interrupt |
 | Process tree + libproc sockets | Ports, foreground command, an agent quitting back to its shell, server crashes |
+| Browser tool calls (through `ht browser-mcp`) | Which agent is driving which browser, shown on its tile and sidebar row |
 
 Hook events are stamped and ordered, so a slow hook can't roll state back. The state machine (`Sources/Hyperterm/Status/StatusReducer.swift`) is a pure function with unit tests.
 
@@ -125,21 +130,25 @@ Requires macOS 15+, Xcode 16+, XcodeGen and Zig 0.15.2 (`brew install xcodegen z
 
 ```sh
 scripts/build-ghosttykit.sh   # once: builds libghostty (Ghostty v1.3.1, ReleaseFast) → GhosttyKit.xcframework
-scripts/run.sh                # build + launch the debug app
+scripts/run.sh                # build + launch the debug app (first build downloads Chromium, ~130 MB)
 scripts/install.sh            # optimized build → /Applications/Hyperterm.app
 xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -derivedDataPath build/DerivedData test
 ```
+
+Chromium comes from [CefSwift](https://github.com/Rajaniraiyn/CefSwift) (MIT, pinned in `project.yml`). `scripts/embed-cef.sh` runs after each build: it caches the CEF distribution in `~/Library/Caches/Hyperterm/cef` and assembles the framework plus the five helper apps Chromium needs. Agents' browser tools need Node.js (`npx chrome-devtools-mcp`).
 
 ## Project layout
 
 ```
 Sources/Hyperterm/Ghostty   libghostty bridge: runtime callbacks, action router, surface view (input/IME/mouse)
-Sources/Hyperterm/Model     LaunchSpec, TerminalSession, SessionStore (+Hooks, +Approvals), insights
+Sources/Hyperterm/Model     LaunchSpec, TerminalSession, SessionSurface, SessionStore (+Hooks, +Approvals, +Browser)
 Sources/Hyperterm/Status    StatusReducer, ProcessInspector (identity, ports), Git, Review, Workspaces, notifications
 Sources/Hyperterm/IPC       control socket server and request handler (permissions)
 Sources/Hyperterm/Launch    agent wrappers, per-launch hooks/statusLine/MCP config
+Sources/Hyperterm/Browser   Chromium runtime (lazy start, DevTools port), browser surface and bar, Chrome logins import
 Sources/Hyperterm/UI        sidebar, toolbar, tiles, inspector (changes/activity/info), switcher, sheets
-Sources/ht                  CLI, hook/permission/statusline entry points, stdio MCP server
+Sources/HypertermHelper     Chromium helper process (renderer, GPU, utility)
+Sources/ht                  CLI, hook/permission/statusline entry points, stdio MCP server, browser MCP proxy
 Tests/HypertermTests        state machine, layout, naming, safety, diff parsing, recap
 ```
 
@@ -154,6 +163,8 @@ Working and verified on macOS 26 with Claude Code 2.1.287:
 - usage telemetry
 - channels
 - the security boundary, tested against key presses, double-fork escapes, environment stripping, and shell-injection attempts
+
+Browsers are verified by driving `ht browser-mcp` directly: lazy start, per-agent default page, labeled `list_pages`, cross-browser access, and refused `new_page`. A live Claude agent opening its own browser and the Chrome logins import are implemented but not yet verified end to end.
 
 Codex integration is implemented, but on the development machine Codex itself fails to start (an account error), so its live paths are tested only with simulated signals.
 
