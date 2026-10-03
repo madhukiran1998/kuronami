@@ -133,6 +133,8 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     var options: AgentOptions?
     /// Claude: start as a fork of this conversation (`--resume <id> --fork-session`).
     var forkOf: String?
+    /// Agents started together on one task share a race id, so the best result can be picked.
+    var race: UUID?
 
     /// Where the agent's files actually live.
     var workPath: String {

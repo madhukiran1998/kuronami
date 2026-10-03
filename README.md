@@ -23,7 +23,8 @@ Running several agents in parallel moves the bottleneck from typing to **attenti
 - **Since you left.** Come back to an agent and a banner sums up what happened: edits, commands, approvals, tests, and the final answer.
 
 ### Start agents the way you want
-- **Several agents on one task.** The sidebar composer can hand a task to Claude, Codex, or several of each at once. Each gets its own worktree, so you compare their results side by side in the grid and merge the best one.
+- **Quick Ask from anywhere.** ⌃⌥Space in any app opens a floating task field; Return starts an agent on it in its own worktree without leaving what you were doing. Drop files or images on any message field to attach them.
+- **Several agents on one task.** The sidebar composer can hand a task to Claude, Codex, or several of each at once. Each gets its own worktree and a *Racing* tag; compare their results side by side in the grid, then right-click the best one → *Pick This One* to commit and merge its branch and close the others (their branches stay).
 - **Permissions, model and effort per agent.** *Ask First*, *Accept Edits*, *Plan* or *Full Access*, translated to each CLI's own flags (`--permission-mode` for Claude; approval and sandbox flags for Codex). Pick a model (Claude's `opus`/`sonnet`/`haiku` aliases, or any name) and, for Codex, reasoning effort. Leave them alone and the agent's own config applies.
 - **Plans you approve.** An agent in plan mode shows *Plan ready* on its card with *Approve Plan* and *Keep Planning*; the inspector's Plan tab shows the whole plan.
 - **Fork a conversation.** Right-click a Claude agent → *Fork Conversation* starts a new agent that continues from this point (`--resume --fork-session`); the original carries on unchanged.
@@ -145,6 +146,7 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 | ⌥⌘O | Open the selected workspace in your editor |
 | ⌘⌥1 · 2 · 3, ⌘⏎ | Focus · split · grid, zoom tile |
 | ⌥⌘0 | Even out tiles |
+| ⌃⌥Space | Quick Ask from any app: type a task, Return starts an agent |
 | ⇧⌘M | Minimize the selected tile to the shelf (again to restore) |
 | ⌘F, ⌘G | Find in terminal (scrollback included) |
 | ⇧⌘B | New browser (on the selected terminal's dev server, if it has one) |

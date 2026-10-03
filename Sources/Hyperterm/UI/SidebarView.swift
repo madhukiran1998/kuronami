@@ -329,8 +329,13 @@ struct AgentRow: View {
         let queued = session.pendingMessages.count
         let stat: DiffStat? = session.diffStat
         let review: DiffStat? = session.readyForReview && (stat?.files ?? 0) > 0 ? stat : nil
-        if review != nil || queued > 0 {
+        let racing = store.raceSiblings(of: session).count
+        if review != nil || queued > 0 || racing > 0 {
             HStack(spacing: Space.xs) {
+                if racing > 0 {
+                    Tag(text: "Racing \(racing + 1)", tint: Palette.accent)
+                        .help("Started with \(racing) other agent\(racing == 1 ? "" : "s") on the same task. Right-click → Pick This One to keep its work.")
+                }
                 if let review {
                     Button { actions.review(session) } label: {
                         HStack(spacing: Space.xs) {
@@ -650,6 +655,9 @@ struct SessionMenu: View {
         if session.kind != .browser {
             Button("Open in \(Editors.preferred?.name ?? "Editor")") { Editors.open(session.spec.workPath) }
         }
+        if let store = session.store, !store.raceSiblings(of: session).isEmpty {
+            Button("Pick This One…") { actions.pickWinner(session) }
+        }
         Divider()
         Button(session.isMinimized ? "Restore Tile" : "Minimize Tile") {
             session.store?.setMinimized(session, !session.isMinimized)
@@ -700,6 +708,8 @@ struct SessionActions {
     var dispatch: (String, [SessionKind], String, AgentOptions?) -> Void
     /// Opens the inspector on the agent's pending plan.
     var showPlan: (TerminalSession) -> Void = { _ in }
+    /// Keeps one racing agent's work and closes the others, after confirming.
+    var pickWinner: (TerminalSession) -> Void = { _ in }
 }
 
 /// Wraps children onto new lines like text.

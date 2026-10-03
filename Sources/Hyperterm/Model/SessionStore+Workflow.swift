@@ -95,12 +95,14 @@ extension SessionStore {
     func dispatch(_ task: String, kinds: [SessionKind], cwd: String, options: AgentOptions?) {
         let base = labelFromTask(task)
         let mixed = Set(kinds).count > 1
+        let race = kinds.count > 1 ? UUID() : nil
         for (index, kind) in kinds.enumerated() {
             var label = base
             if mixed { label += "-" + kind.rawValue } else if kinds.count > 1 { label += "-\(index + 1)" }
             var spec = LaunchSpec(label: label, kind: kind, cwd: cwd)
             spec.labelSource = .auto
             spec.options = options
+            spec.race = race
             let select = index == 0
             Task { @MainActor [weak self, spec] in
                 guard let self else { return }
@@ -108,6 +110,53 @@ extension SessionStore {
             }
         }
         if kinds.count > 1, layout == .focus { setLayout(.grid) }
+    }
+
+    // MARK: - Races
+
+    /// The other agents started on the same task.
+    func raceSiblings(of session: TerminalSession) -> [TerminalSession] {
+        guard let race = session.spec.race else { return [] }
+        return sessions.filter { $0.id != session.id && $0.spec.race == race }
+    }
+
+    /// Keeps `winner`'s work: commits what it left uncommitted, merges its branch into the base
+    /// branch, then closes the other agents and archives their worktrees (their branches stay,
+    /// so nothing is lost).
+    func pickWinner(_ winner: TerminalSession, completion: @escaping @MainActor (Result<String, ReviewError>) -> Void) {
+        guard let base = winner.spec.baseBranch, let branch = winner.git?.branch, branch != base else {
+            completion(.failure(.git("@\(winner.label) isn't on its own branch")))
+            return
+        }
+        let path = winner.spec.workPath
+        let root = winner.git.map(GitInfo.mainRoot) ?? path
+        let label = winner.label
+        let losers = raceSiblings(of: winner).map { (session: $0, path: $0.spec.workPath, id: $0.id.uuidString,
+                                                    isWorktree: $0.spec.worktreeBranch != nil || $0.spec.worktreeName != nil) }
+        DispatchQueue.global(qos: .userInitiated).async {
+            if !(Git.run(["status", "--porcelain"], at: path) ?? "").isEmpty {
+                _ = Review.commit(at: path, message: "Work from @\(label) (Kuronami)")
+            }
+            let merged = Review.merge(branch: branch, into: base, mainRoot: root)
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    guard case .success = merged else { completion(merged); return }
+                    winner.record(.note, "Picked: merged \(branch) into \(base)")
+                    winner.spec.race = nil
+                    for loser in losers { self.close(loser.session) }
+                    // Closing stops each agent; its worktree lock goes with it a moment later.
+                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.5) {
+                        for loser in losers where loser.isWorktree {
+                            _ = Review.archive(worktree: loser.path, mainRoot: root)
+                            Checkpoints.prune(at: root, session: loser.id)
+                        }
+                    }
+                    let others = losers.count
+                    completion(.success("Merged \(branch) into \(base)" + (others > 0 ? "; closed \(others) other agent\(others == 1 ? "" : "s")" : "")))
+                }
+            }
+        }
     }
 
     // MARK: - Recently closed

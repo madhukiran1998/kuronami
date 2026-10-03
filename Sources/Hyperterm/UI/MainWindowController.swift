@@ -54,7 +54,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             close: { [weak self] in self?.confirmClose($0) },
             review: { [weak self] in self?.showInspector(for: $0) },
             dispatch: { [weak self] task, kinds, cwd, options in self?.store.dispatch(task, kinds: kinds, cwd: cwd, options: options) },
-            showPlan: { [weak self] in self?.showInspector(for: $0, tab: .plan) })
+            showPlan: { [weak self] in self?.showInspector(for: $0, tab: .plan) },
+            pickWinner: { [weak self] in self?.confirmPickWinner($0) })
     }
 
     // MARK: - Layout
@@ -360,6 +361,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in
             if response == .alertFirstButtonReturn { self?.store.close(session) }
+        }
+    }
+
+    func confirmPickWinner(_ session: TerminalSession) {
+        guard let window else { return }
+        let others = store.raceSiblings(of: session)
+        let alert = NSAlert()
+        alert.messageText = "Keep \(session.label)'s work?"
+        alert.informativeText = "Its changes are committed and merged into \(session.spec.baseBranch ?? "the base branch"). "
+            + "\(others.map(\.label).joined(separator: ", ")) will be closed and their worktrees archived; their branches stay."
+        alert.addButton(withTitle: "Merge and Close Others")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            self.store.pickWinner(session) { [weak self] result in
+                guard let self, let window = self.window else { return }
+                let done = NSAlert()
+                switch result {
+                case .success(let text): done.messageText = text
+                case .failure(let error):
+                    done.messageText = "Couldn't merge \(session.label)"
+                    done.informativeText = error.description
+                }
+                done.beginSheetModal(for: window)
+            }
         }
     }
 
