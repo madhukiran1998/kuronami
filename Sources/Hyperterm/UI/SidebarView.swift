@@ -187,16 +187,29 @@ struct AgentRow: View {
             // Only the clock ticks; the rest of the row re-renders when the session changes.
             TimelineView(.periodic(from: .now, by: 15)) { context in
                 Text(elapsedLabel(now: context.date))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 11.5, weight: session.state.needsAttention ? .semibold : .regular).monospacedDigit())
+                    .foregroundStyle(statusColor)
             }
         }
     }
 
+    /// "Working · 4m", "Needs you", "Done · 12m": state in words, colored only when it matters.
     private func elapsedLabel(now: Date) -> String {
+        let since = elapsed(since: session.stateChangedAt, now: now)
         switch session.state {
-        case .working, .needsInput, .idle: return elapsed(since: session.stateChangedAt, now: now)
+        case .working: return "Working · \(since)"
+        case .needsInput: return "Needs you"
+        case .idle: return "\(session.statusWord) · \(since)"
         default: return session.statusWord
+        }
+    }
+
+    private var statusColor: Color {
+        switch session.state {
+        case .working, .starting: return Palette.working
+        case .needsInput: return Palette.attention
+        case .failed: return Palette.failed
+        default: return Color.secondary.opacity(0.75)
         }
     }
 
