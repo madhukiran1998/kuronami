@@ -52,8 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = self.store.answer(session, answer)
         }
         store.notifier.requestAuthorization()
-        quickAskHotKey = GlobalHotKey(keyCode: GlobalHotKey.quickAsk.keyCode, modifiers: GlobalHotKey.quickAsk.modifiers) { [weak self] in
-            self?.windowController?.toggleQuickAsk()
+        updateQuickAskHotKey()
+        NotificationCenter.default.addObserver(forName: .quickAskSettingChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateQuickAskHotKey() }
         }
 
         _ = store.restore()
@@ -299,6 +300,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleZoom(_ sender: Any?) { store.toggleZoom(store.selectedID) }
     @objc func evenOutTiles(_ sender: Any?) { windowController?.evenOutTiles() }
     @objc func quickAsk(_ sender: Any?) { windowController?.toggleQuickAsk() }
+
+    private func updateQuickAskHotKey() {
+        guard AppSettings.quickAskEnabled else { quickAskHotKey = nil; return }
+        guard quickAskHotKey == nil else { return }
+        quickAskHotKey = GlobalHotKey(keyCode: GlobalHotKey.quickAsk.keyCode, modifiers: GlobalHotKey.quickAsk.modifiers) { [weak self] in
+            self?.windowController?.toggleQuickAsk()
+        }
+    }
     @objc func forkSelected(_ sender: Any?) {
         if let session = store.selected { _ = store.fork(session) }
     }

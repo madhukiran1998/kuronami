@@ -33,7 +33,8 @@ enum MainMenu {
         let menu = NSMenu(title: "Kuronami")
         menu.addItem(item("About Kuronami", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
         menu.addItem(.separator())
-        menu.addItem(item("Accounts…", #selector(AccountsController.showAccounts(_:)), ",", target: AccountsController.shared))
+        menu.addItem(item("Settings…", #selector(AccountsController.showSettings(_:)), ",", target: AccountsController.shared))
+        menu.addItem(item("Accounts…", #selector(AccountsController.showAccounts(_:)), target: AccountsController.shared))
         menu.addItem(item("Use ht in Your Shell…", #selector(AppDelegate.installCLI(_:)), target: target))
         let channels = item("Deliver Messages via Claude Channels", #selector(AppDelegate.toggleChannels(_:)), target: target)
         channels.state = SessionStore.channelsEnabled ? .on : .off

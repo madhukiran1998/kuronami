@@ -55,6 +55,9 @@ final class InterfaceSnapshotTests: XCTestCase {
         try capture(QuickAskView(store: store, dismiss: {}), size: NSSize(width: 640, height: 130),
                     name: "quick-ask", output: output)
 
+        try capture(SettingsView(pane: .general, signIn: { _ in }), size: NSSize(width: 560, height: 360),
+                    name: "settings", output: output)
+
         var draft = NewSessionDraft()
         draft.kind = .codex
         draft.label = "feature-lab"

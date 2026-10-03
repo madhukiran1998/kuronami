@@ -9,7 +9,7 @@ struct NewSessionDraft {
     /// nil: the account picked for new agents of this kind.
     var account: String?
     /// Agents: permission mode, model and effort.
-    var options = AgentOptions()
+    var options = AgentOptions(mode: AppSettings.defaultMode)
 }
 
 /// A sheet for starting anything: an agent, a shell, a server, a browser.

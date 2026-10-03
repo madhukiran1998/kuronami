@@ -9,7 +9,7 @@ extension SessionStore {
     /// Records a turn boundary for an agent in a Git workspace. Starts close any turn left open
     /// (an interrupt never sends Stop), so turns never overlap.
     func checkpoint(_ session: TerminalSession, phase: Checkpoints.Phase, prompt: String) {
-        guard session.kind.isAgent else { return }
+        guard session.kind.isAgent, AppSettings.checkpointsEnabled else { return }
         let path = session.spec.workPath, id = session.id.uuidString
         let title = summarize(prompt, limit: 120) ?? "Turn"
         checkpointQueue.async { [weak session] in

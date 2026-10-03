@@ -115,12 +115,16 @@ final class AccountsController: NSObject, NSMenuDelegate {
     static let shared = AccountsController()
     private var window: NSWindow?
 
-    func show() {
+    func show(_ pane: SettingsView.Pane = .accounts) {
         guard let store = TerminalSessionFactory.store else { return }
-        if window == nil {
-            let host = NSHostingController(rootView: AccountsView(accounts: AccountStore.shared, signIn: { store.signIn($0) }))
+        // A fresh view each time, so it opens on the pane that was asked for.
+        let host = NSHostingController(rootView: SettingsView(pane: pane, signIn: { store.signIn($0) }))
+        host.sizingOptions = [.preferredContentSize]
+        if let window {
+            window.contentViewController = host
+        } else {
             let window = NSWindow(contentViewController: host)
-            window.title = "Accounts"
+            window.title = "Settings"
             window.styleMask = [.titled, .closable, .fullSizeContentView]
             window.titlebarAppearsTransparent = true
             window.appearance = NSAppearance(named: .darkAqua)
@@ -131,6 +135,8 @@ final class AccountsController: NSObject, NSMenuDelegate {
         }
         window?.makeKeyAndOrderFront(nil)
     }
+
+    @objc func showSettings(_ sender: Any?) { show(.general) }
 
     /// "Move to Account" lists the selected agent's other accounts.
     func menuNeedsUpdate(_ menu: NSMenu) {

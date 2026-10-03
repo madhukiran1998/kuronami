@@ -109,7 +109,7 @@ private struct Composer: View {
     @State private var text = ""
     @State private var claude = 1
     @State private var codex = 0
-    @State private var mode: PermissionMode?
+    @State private var mode: PermissionMode? = AppSettings.defaultMode
     @State private var folder: String?
     @FocusState private var focused: Bool
 
