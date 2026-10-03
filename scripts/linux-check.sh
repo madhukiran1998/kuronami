@@ -48,4 +48,4 @@ let package = Package(
   ])
 EOF
 echo "· building and testing pure logic"
-(cd "$work" && swift test 2>&1 | tail -25)
+(cd "$work" && swift test 2>&1 | grep -E "error:|failed|Executed .* tests" | sort -u)

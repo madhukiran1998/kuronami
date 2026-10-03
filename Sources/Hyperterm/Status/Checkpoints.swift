@@ -42,8 +42,12 @@ enum Checkpoints {
         defer { try? FileManager.default.removeItem(atPath: index) }
         let environment = ["GIT_INDEX_FILE": index]
         let head = Git.run(["rev-parse", "--verify", "-q", "HEAD"], at: path)
-        if head != nil { _ = Git.run(["read-tree", "HEAD"], at: path, environment: environment) }
-        guard Git.run(["add", "-A", "."], at: path, environment: environment) != nil,
+        // Start from a copy of the real index: its stat cache lets `add -A` hash only files that
+        // changed, instead of every file in the repository. Without one, start from HEAD.
+        let realIndex = (gitDir as NSString).appendingPathComponent("index")
+        let seeded = (try? FileManager.default.copyItem(atPath: realIndex, toPath: index)) != nil
+        if !seeded, head != nil { _ = Git.run(["read-tree", "HEAD"], at: path, environment: environment) }
+        guard Git.run(["add", "-A", "--", ":/"], at: path, environment: environment) != nil,
               let tree = Git.run(["write-tree"], at: path, environment: environment) else { return nil }
         var args = ["commit-tree", tree, "-m", message.isEmpty ? "Kuronami checkpoint" : message]
         if let head { args += ["-p", head] }
@@ -120,11 +124,22 @@ enum Checkpoints {
         let index = (gitDir as NSString).appendingPathComponent("kuronami-restore-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(atPath: index) }
         let environment = ["GIT_INDEX_FILE": index]
-        guard Git.run(["read-tree", commit], at: path, environment: environment) != nil,
-              Git.run(["checkout-index", "-a", "-f"], at: path, environment: environment) != nil else {
-            return .failure(.git("couldn't write the checkpoint's files"))
+        // Only files that differ are written, so untouched files keep their modification times
+        // and file watchers (dev servers, test runners) don't rebuild everything.
+        let changed = (Git.run(["diff", "--name-only", "--no-renames", "--diff-filter=DMT", commit, before], at: path) ?? "")
+            .split(separator: "\n").map(String.init)
+        guard Git.run(["read-tree", commit], at: path, environment: environment) != nil else {
+            return .failure(.git("couldn't read the checkpoint"))
         }
         let root = Git.run(["rev-parse", "--show-toplevel"], at: path) ?? path
+        var start = 0
+        while start < changed.count {
+            let batch = Array(changed[start..<min(start + 200, changed.count)])
+            guard Git.run(["checkout-index", "-f", "--"] + batch, at: root, environment: environment) != nil else {
+                return .failure(.git("couldn't write the checkpoint's files"))
+            }
+            start += 200
+        }
         for file in added {
             let full = (root as NSString).appendingPathComponent(file)
             try? FileManager.default.removeItem(atPath: full)

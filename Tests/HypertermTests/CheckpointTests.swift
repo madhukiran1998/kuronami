@@ -97,6 +97,33 @@ final class CheckpointTests: XCTestCase {
         XCTAssertEqual(read("src/deep/new.swift"), "new\n")
     }
 
+    func testRestoreOnlyRewritesFilesThatDiffer() throws {
+        try write("untouched.txt", "same\n")
+        XCTAssertNotNil(Git.run(["add", "-A"], at: repo))
+        XCTAssertNotNil(Git.run(["commit", "-q", "-m", "second"], at: repo, environment: Git.identity))
+        Checkpoints.capture(at: repo, session: session, turn: 1, phase: .start, prompt: "one")
+        let untouched = (repo as NSString).appendingPathComponent("untouched.txt")
+        let past = Date(timeIntervalSince1970: 1_000_000)
+        try FileManager.default.setAttributes([.modificationDate: past], ofItemAtPath: untouched)
+        try write("README.md", "changed\n")
+        let turn = try XCTUnwrap(Checkpoints.turns(at: repo, session: session).first)
+        _ = Checkpoints.restore(at: repo, to: turn.start, session: session)
+        XCTAssertEqual(read("README.md"), "hello\n")
+        let modified = try FileManager.default.attributesOfItem(atPath: untouched)[.modificationDate] as? Date
+        XCTAssertEqual(modified, past, "files that didn't change aren't rewritten")
+    }
+
+    func testRestoreWorksFromASubfolder() throws {
+        Checkpoints.capture(at: repo, session: session, turn: 1, phase: .start, prompt: "one")
+        try write("src/a.swift", "new\n")
+        try write("README.md", "changed\n")
+        let turn = try XCTUnwrap(Checkpoints.turns(at: repo, session: session).first)
+        let sub = (repo as NSString).appendingPathComponent("src")
+        _ = Checkpoints.restore(at: sub, to: turn.start, session: session)
+        XCTAssertEqual(read("README.md"), "hello\n")
+        XCTAssertFalse(exists("src/a.swift"))
+    }
+
     func testRestoreLeavesIndexAlone() throws {
         Checkpoints.capture(at: repo, session: session, turn: 1, phase: .start, prompt: "one")
         try write("README.md", "staged change\n")
