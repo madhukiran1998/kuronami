@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastRegistryStatus: [UUID: String] = [:]
     private var diffStatsInFlight = false
     private var gitInFlight = false
+    private var quickAskHotKey: GlobalHotKey?
 
     private struct DiffTarget: Hashable, Sendable {
         let directory: String
@@ -51,6 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = self.store.answer(session, answer)
         }
         store.notifier.requestAuthorization()
+        quickAskHotKey = GlobalHotKey(keyCode: GlobalHotKey.quickAsk.keyCode, modifiers: GlobalHotKey.quickAsk.modifiers) { [weak self] in
+            self?.windowController?.toggleQuickAsk()
+        }
 
         _ = store.restore()
         NSApp.activate(ignoringOtherApps: true)
@@ -294,6 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func layoutGrid(_ sender: Any?) { store.setLayout(.grid) }
     @objc func toggleZoom(_ sender: Any?) { store.toggleZoom(store.selectedID) }
     @objc func evenOutTiles(_ sender: Any?) { windowController?.evenOutTiles() }
+    @objc func quickAsk(_ sender: Any?) { windowController?.toggleQuickAsk() }
     @objc func forkSelected(_ sender: Any?) {
         if let session = store.selected { _ = store.fork(session) }
     }

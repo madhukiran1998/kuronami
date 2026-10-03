@@ -52,6 +52,9 @@ final class InterfaceSnapshotTests: XCTestCase {
         try capture(DiffText(lines: patch, sideBySide: true, commented: [], onComment: { _ in })
                         .frame(width: 720, height: 260), size: NSSize(width: 720, height: 260), name: "diff-split", output: output)
 
+        try capture(QuickAskView(store: store, dismiss: {}), size: NSSize(width: 640, height: 130),
+                    name: "quick-ask", output: output)
+
         var draft = NewSessionDraft()
         draft.kind = .codex
         draft.label = "feature-lab"

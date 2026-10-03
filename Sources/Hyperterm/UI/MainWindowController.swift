@@ -241,6 +241,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         switcher = panel
     }
 
+    // MARK: - Quick Ask
+
+    private var quickAsk: SwitcherPanel?
+
+    /// The floating task field from ⌃⌥Space. It takes keystrokes without bringing the main window
+    /// forward, so the app you were in stays where it was.
+    func toggleQuickAsk() {
+        if let quickAsk, quickAsk.isVisible { quickAsk.close(); return }
+        let panel = SwitcherPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 140),
+                                  styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        let host = NSHostingView(rootView: QuickAskView(store: store, dismiss: { [weak panel] in panel?.close() }))
+        host.frame.size = host.fittingSize
+        panel.contentView = host
+        panel.setContentSize(host.fittingSize)
+        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+        if let visible = screen?.visibleFrame {
+            panel.setFrameTopLeftPoint(NSPoint(x: visible.midX - host.fittingSize.width / 2, y: visible.maxY - visible.height * 0.22))
+        }
+        panel.makeKeyAndOrderFront(nil)
+        quickAsk = panel
+    }
+
     // MARK: - Sheets
 
     func presentNewSession(kind: SessionKind? = nil) {

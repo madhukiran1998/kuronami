@@ -54,6 +54,9 @@ enum MainMenu {
     private static func sessionMenu(_ target: AppDelegate) -> NSMenu {
         let menu = NSMenu(title: "Terminal")
         menu.addItem(item("New Terminal…", #selector(AppDelegate.newSession(_:)), "n", target: target))
+        let quick = item("Quick Ask from Anywhere", #selector(AppDelegate.quickAsk(_:)), target: target)
+        quick.toolTip = "⌃⌥Space in any app"
+        menu.addItem(quick)
         menu.addItem(item("New Shell Here", #selector(AppDelegate.newShellHere(_:)), "t", target: target))
         menu.addItem(item("New Claude Code Here", #selector(AppDelegate.newClaudeHere(_:)), "c", [.command, .shift], target: target))
         menu.addItem(item("New Codex Here", #selector(AppDelegate.newCodexHere(_:)), "x", [.command, .shift], target: target))
