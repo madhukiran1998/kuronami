@@ -6,13 +6,22 @@ import AppKit
 extension SessionStore {
     // MARK: - Checkpoints
 
+    /// One serial queue per repository (worktrees share their main repository's refs).
+    func checkpointQueue(for session: TerminalSession) -> DispatchQueue {
+        let key = session.git?.mainRoot ?? session.spec.workPath
+        if let queue = checkpointQueues[key] { return queue }
+        let queue = DispatchQueue(label: "dev.hyperterm.checkpoints." + key, qos: .userInitiated)
+        checkpointQueues[key] = queue
+        return queue
+    }
+
     /// Records a turn boundary for an agent in a Git workspace. Starts close any turn left open
     /// (an interrupt never sends Stop), so turns never overlap.
     func checkpoint(_ session: TerminalSession, phase: Checkpoints.Phase, prompt: String) {
         guard session.kind.isAgent, AppSettings.checkpointsEnabled else { return }
         let path = session.spec.workPath, id = session.id.uuidString
         let title = summarize(prompt, limit: 120) ?? "Turn"
-        checkpointQueue.async { [weak session] in
+        checkpointQueue(for: session).async { [weak session] in
             let turns = Checkpoints.turns(at: path, session: id)
             let open = turns.last.flatMap { $0.end == nil ? $0 : nil }
             switch phase {
@@ -34,7 +43,7 @@ extension SessionStore {
     func loadTurns(_ session: TerminalSession) {
         guard session.kind.isAgent else { return }
         let path = session.spec.workPath, id = session.id.uuidString
-        checkpointQueue.async { [weak session] in
+        checkpointQueue(for: session).async { [weak session] in
             let turns = Checkpoints.turns(at: path, session: id)
             DispatchQueue.main.async { [weak session] in
                 MainActor.assumeIsolated { if session?.turns != turns { session?.turns = turns } }
@@ -49,7 +58,7 @@ extension SessionStore {
     func restoreCheckpoint(_ session: TerminalSession, to commit: String, label: String, fromTurn: Int?,
                            completion: @escaping @MainActor (Result<String, CheckpointError>) -> Void) {
         let path = session.spec.workPath, id = session.id.uuidString
-        checkpointQueue.async { [weak self, weak session] in
+        checkpointQueue(for: session).async { [weak self, weak session] in
             let scope = fromTurn.map { Checkpoints.touched(at: path, session: id, from: $0) }
                 ?? Checkpoints.undoScope(at: path, session: id)
             let result = Checkpoints.restore(at: path, to: commit, session: id, only: scope)

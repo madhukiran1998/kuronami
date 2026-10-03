@@ -42,7 +42,9 @@ final class SessionStore: ObservableObject {
     @Published var lastError: String?
     /// Agents closed recently, newest first, so a closed conversation is one click from coming back.
     @Published var recentlyClosed: [LaunchSpec] = SessionStore.loadRecentlyClosed()
-    /// Serializes checkpoint captures: Git must see one snapshot at a time per repository.
+    /// Serializes checkpoint captures within a repository, so turns stay ordered, while separate
+    /// repositories snapshot in parallel.
+    var checkpointQueues: [String: DispatchQueue] = [:]
     let checkpointQueue = DispatchQueue(label: "dev.hyperterm.checkpoints", qos: .utility)
     private var layoutBeforeZoom: LayoutMode?
 
