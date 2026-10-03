@@ -17,40 +17,56 @@ shape.fill()
 ctx.restoreGState()
 shape.addClip()
 
-// Graphite: a slight lift toward the top, nothing tinted.
-NSGradient(colors: [NSColor(srgbRed: 0.125, green: 0.125, blue: 0.137, alpha: 1),
-                    NSColor(srgbRed: 0.043, green: 0.043, blue: 0.047, alpha: 1)])!
+// Graphite sky, lighter toward the top so the black wave stands out against it.
+NSGradient(colors: [NSColor(srgbRed: 0.27, green: 0.27, blue: 0.29, alpha: 1),
+                    NSColor(srgbRed: 0.15, green: 0.15, blue: 0.165, alpha: 1)])!
     .draw(in: body, angle: -90)
 
-/// A true sine across the mark, so the wave reads as one clean stroke at every size.
-func wave(centerY: CGFloat, amplitude: CGFloat, from x0: CGFloat, to x1: CGFloat, periods: CGFloat) -> NSBezierPath {
+/// A swell: a filled band whose top edge is a sine, so layers stack like distant water.
+func swell(baseline: CGFloat, amplitude: CGFloat, periods: CGFloat, phase: CGFloat) -> NSBezierPath {
     let path = NSBezierPath()
-    let steps = 240
-    for step in 0...steps {
-        let t = CGFloat(step) / CGFloat(steps)
-        let x = x0 + (x1 - x0) * t
-        let y = centerY + amplitude * sin(t * periods * 2 * .pi)
-        step == 0 ? path.move(to: NSPoint(x: x, y: y)) : path.line(to: NSPoint(x: x, y: y))
+    path.move(to: NSPoint(x: 0, y: 0))
+    for step in 0...200 {
+        let t = CGFloat(step) / 200
+        path.line(to: NSPoint(x: size * t, y: baseline + amplitude * sin((t * periods + phase) * 2 * .pi)))
     }
-    path.lineCapStyle = .round
-    path.lineJoinStyle = .round
+    path.line(to: NSPoint(x: size, y: 0))
+    path.close()
     return path
 }
+NSColor(srgbRed: 0.11, green: 0.11, blue: 0.12, alpha: 1).setFill()
+swell(baseline: 330, amplitude: 22, periods: 1.4, phase: 0.2).fill()
 
-let ink = NSColor(srgbRed: 0.93, green: 0.93, blue: 0.94, alpha: 1)
-let echo = wave(centerY: 410, amplitude: 46, from: 262, to: 762, periods: 1.5)
-echo.lineWidth = 30
-ink.withAlphaComponent(0.26).setStroke()
-echo.stroke()
+// The wave (黒波): its face rises from the right and curls over to the left around a hollow.
+// Built from arcs so the spiral stays clean; it runs past the icon edge so the rim stroke
+// only shows along the crest.
+let center = NSPoint(x: 500, y: 590)
+func onCircle(_ radius: CGFloat, _ degrees: CGFloat) -> NSPoint {
+    NSPoint(x: center.x + radius * cos(degrees * .pi / 180), y: center.y + radius * sin(degrees * .pi / 180))
+}
+let wave = NSBezierPath()
+wave.move(to: NSPoint(x: 1024, y: -20))
+wave.line(to: NSPoint(x: 1024, y: 250))
+wave.curve(to: onCircle(200, 0), controlPoint1: NSPoint(x: 820, y: 270), controlPoint2: NSPoint(x: 700, y: 420))
+wave.appendArc(withCenter: center, radius: 200, startAngle: 0, endAngle: 205, clockwise: false)
+// The lip: a rounded tip, then back along the inside of the curl.
+let tip = onCircle(200, 205), inner = onCircle(104, 205)
+wave.curve(to: inner, controlPoint1: NSPoint(x: tip.x - 10, y: tip.y - 70), controlPoint2: NSPoint(x: inner.x - 20, y: inner.y - 60))
+wave.appendArc(withCenter: center, radius: 104, startAngle: 205, endAngle: -35, clockwise: true)
+wave.curve(to: NSPoint(x: -20, y: 230), controlPoint1: NSPoint(x: 520, y: 380), controlPoint2: NSPoint(x: 240, y: 250))
+wave.line(to: NSPoint(x: -20, y: -20))
+wave.close()
+NSGradient(colors: [NSColor(srgbRed: 0.06, green: 0.06, blue: 0.07, alpha: 1),
+                    NSColor(srgbRed: 0.015, green: 0.015, blue: 0.02, alpha: 1)])!
+    .draw(in: wave, angle: -90)
+wave.lineWidth = 16
+wave.lineJoinStyle = .round
+NSColor(srgbRed: 0.93, green: 0.93, blue: 0.94, alpha: 1).setStroke()
+wave.stroke()
 
-let crest = wave(centerY: 540, amplitude: 70, from: 240, to: 784, periods: 1.5)
-crest.lineWidth = 54
-ink.setStroke()
-crest.stroke()
-
-// The one color: the same blue that means "working" in the app.
+// The one color: a cursor block in the "working" blue, waiting inside the curl.
 NSColor(srgbRed: 0.357, green: 0.549, blue: 1.0, alpha: 1).setFill()
-NSBezierPath(ovalIn: NSRect(x: 716, y: 700, width: 64, height: 64)).fill()
+NSBezierPath(roundedRect: NSRect(x: center.x - 24, y: center.y - 40, width: 48, height: 80), xRadius: 8, yRadius: 8).fill()
 
 // A hairline rim.
 NSColor.white.withAlphaComponent(0.08).setStroke()
