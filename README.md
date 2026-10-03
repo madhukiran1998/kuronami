@@ -67,6 +67,9 @@ Claude sessions are launched as `claude --name <label>`, so Claude's built-in cr
 ### Usage
 The sidebar shows your 5-hour and weekly usage with reset times, taken from Claude's statusLine data (your own statusline still prints unchanged). Each card shows cost and the inspector shows context use. When an agent hits a rate limit, its card says when the limit resets, not just "failed".
 
+### Several Claude and Codex accounts
+**Accounts…** (⌘,) adds more Claude Code or Codex sign-ins. Each extra account runs from its own folder (`CLAUDE_CONFIG_DIR` / `CODEX_HOME` under `~/.hyperterm/accounts`), the way both CLIs separate accounts themselves. It gets its own login and history, and starts with your settings, skills, and instructions. Pick which account new agents use, or choose one per agent in New Session or with `ht new claude --account work`. Agents an agent starts inherit its account. When an agent hits a limit, right-click it and choose **Move to Account**: its conversation is copied over and it resumes there. Your default account (`~/.claude`, `~/.codex`) is never touched.
+
 ## Security model
 
 Kuronami types into terminals on your behalf, so who may ask for what matters. The control socket (`~/.hyperterm/control.sock`, user-only) identifies every caller from **kernel facts** (peer PID, process ancestry, and macOS's *responsible process*), never from anything the caller claims:
@@ -114,6 +117,7 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 | ⌘F, ⌘G | Find in terminal (scrollback included) |
 | ⇧⌘B | New browser (on the selected terminal's dev server, if it has one) |
 | ⇧⌘O | Open the selected server's port in a preview window |
+| ⌘, | Accounts |
 
 ## How status is detected
 

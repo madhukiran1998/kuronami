@@ -6,6 +6,8 @@ struct NewSessionDraft {
     var cwd = NSHomeDirectory()
     var command = ""
     var worktree = false
+    /// nil: the account picked for new agents of this kind.
+    var account: String?
 }
 
 struct NewSessionView: View {
@@ -47,6 +49,7 @@ struct NewSessionView: View {
                     ForEach(SessionKind.allCases) { kind in
                         KindCard(kind: kind, selected: draft.kind == kind) {
                             draft.kind = kind
+                            draft.account = nil
                             focus = kind == .server || kind == .browser ? .command : .label
                         }
                     }
@@ -90,6 +93,21 @@ struct NewSessionView: View {
                     .inputChrome()
                     .help(draft.cwd)
                     .accessibilityLabel("Working folder")
+                }
+                if draft.kind.isAgent, AccountStore.shared.accounts(for: draft.kind).count > 1 {
+                    FieldRow(title: "Account") {
+                        Picker("", selection: Binding(
+                            get: { draft.account ?? AccountStore.shared.preferredID(for: draft.kind) },
+                            set: { draft.account = $0 })) {
+                            ForEach(AccountStore.shared.accounts(for: draft.kind)) { account in
+                                Text(account.name + (AccountStore.signedInEmail(account).map { " · \($0)" } ?? " · not signed in"))
+                                    .tag(account.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel("Account")
+                    }
                 }
                 if draft.kind.isAgent {
                     FieldRow(title: "Isolation") {

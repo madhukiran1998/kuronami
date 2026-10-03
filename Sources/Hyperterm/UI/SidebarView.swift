@@ -790,6 +790,18 @@ struct SessionMenu: View {
             Button("Let Agent Name It") { actions.releaseLabel(session) }
         }
         Button("Restart") { actions.restart(session) }
+        if session.kind.isAgent, AccountStore.shared.accounts(for: session.kind).count > 1 {
+            Menu("Move to Account") {
+                ForEach(AccountStore.shared.accounts(for: session.kind)) { account in
+                    let current = (session.spec.account ?? AgentAccount.defaultID) == account.id
+                    let email = AccountStore.signedInEmail(account)
+                    Button((current ? "✓ " : "") + account.name + (email.map { " · \($0)" } ?? " · not signed in")) {
+                        session.store?.move(session, to: account)
+                    }
+                    .disabled(current || email == nil)
+                }
+            }
+        }
         if session.kind == .claude {
             Button("Continue on Phone…") { session.openRemoteControl() }
         }

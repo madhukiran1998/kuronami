@@ -271,7 +271,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func createSession(from draft: NewSessionDraft) {
-        let spec = LaunchSpec(label: draft.label, kind: draft.kind, cwd: draft.cwd, command: draft.command)
+        var spec = LaunchSpec(label: draft.label, kind: draft.kind, cwd: draft.cwd, command: draft.command)
+        if draft.kind.isAgent, let account = draft.account { spec.account = account }
         Task { @MainActor [weak self] in
             guard let self else { return }
             await store.launch(spec, worktree: draft.worktree)
