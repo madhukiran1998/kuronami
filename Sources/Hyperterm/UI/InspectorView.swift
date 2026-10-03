@@ -192,7 +192,7 @@ private struct ChangesView: View {
             Hairline()
             footer
         }
-        .task(id: LoadKey(stat: session.diffStat, scope: scope, whitespace: ignoreWhitespace, turns: session.turns.count)) { await load() }
+        .task(id: LoadKey(stat: session.diffStat, scope: scope, whitespace: ignoreWhitespace, turns: session.turns)) { await load() }
         .onAppear { session.readyForReview = false }
         .onReceive(store.$reviewTurn) { turn in
             guard let turn else { return }
@@ -227,7 +227,8 @@ private struct ChangesView: View {
         let stat: DiffStat?
         let scope: ChangeScope
         let whitespace: Bool
-        let turns: Int
+        /// Whole turns, not a count: a turn ending sets its end snapshot without adding one.
+        let turns: [Checkpoints.Turn]
     }
 
     // MARK: Toolbar

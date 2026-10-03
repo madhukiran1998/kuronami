@@ -22,6 +22,9 @@ struct DiffText: NSViewRepresentable {
         textView.drawsBackground = true
         textView.backgroundColor = Theme.terminalBackground
         textView.textContainerInset = NSSize(width: 0, height: Space.xs)
+        // Created at zero size: without an open-ended max size it could never grow to its text.
+        textView.minSize = .zero
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]

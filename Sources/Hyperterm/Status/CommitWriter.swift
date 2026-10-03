@@ -87,9 +87,13 @@ enum CommitWriter {
         do { try process.run() } catch { return nil }
         let killer = DispatchWorkItem { if process.isRunning { process.terminate() } }
         DispatchQueue.global().asyncAfter(deadline: .now() + 90, execute: killer)
+        // A CLI that exits without reading all of stdin (none installed, a failed sign-in, the
+        // timeout) must not take the app down: no SIGPIPE, and a write error is just ignored.
+        let writer = stdin.fileHandleForWriting
+        _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
         DispatchQueue.global().async {
-            stdin.fileHandleForWriting.write(Data(input.utf8))
-            try? stdin.fileHandleForWriting.close()
+            try? writer.write(contentsOf: Data(input.utf8))
+            try? writer.close()
         }
         let data = stdout.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()

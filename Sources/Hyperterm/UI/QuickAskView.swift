@@ -70,7 +70,8 @@ struct QuickAskView: View {
     private func submit() {
         let task = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !task.isEmpty else { return }
-        store.dispatch(task, kinds: [kind], cwd: folder, options: nil)
+        // Settings ▸ "New agents start with" covers agents started from here too.
+        store.dispatch(task, kinds: [kind], cwd: folder, options: AppSettings.defaultMode.map { AgentOptions(mode: $0) })
         text = ""
         dismiss()
     }
