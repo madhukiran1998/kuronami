@@ -43,9 +43,9 @@ struct QuickAskView: View {
                 .labelsHidden()
                 .fixedSize()
                 Menu {
+                    // Recent folders only: an open panel would take focus and close Quick Ask.
+                    if folders.isEmpty { Text("Start an agent in Kuronami first") }
                     ForEach(folders, id: \.self) { dir in Button(abbreviateHome(dir)) { savedFolder = dir } }
-                    if !folders.isEmpty { Divider() }
-                    Button("Choose Folder…") { chooseFolder() }
                 } label: {
                     Label(URL(fileURLWithPath: expandTilde(folder)).lastPathComponent, systemImage: "folder")
                 }
@@ -74,14 +74,5 @@ struct QuickAskView: View {
         store.dispatch(task, kinds: [kind], cwd: folder, options: AppSettings.defaultMode.map { AgentOptions(mode: $0) })
         text = ""
         dismiss()
-    }
-
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.directoryURL = URL(fileURLWithPath: expandTilde(folder))
-        NSApp.activate(ignoringOtherApps: true)
-        if panel.runModal() == .OK, let url = panel.url { savedFolder = url.path }
     }
 }

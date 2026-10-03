@@ -314,9 +314,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Launch problems (a worktree that couldn't be made) are shown once, from any launch path.
     private func reportLaunchError(_ error: String) {
         store.lastError = nil
+        // The first sentence is the headline; the rest explains.
         let alert = NSAlert()
-        alert.messageText = "Started without a worktree"
-        alert.informativeText = error
+        let parts = error.components(separatedBy: ". ")
+        alert.messageText = parts[0].hasSuffix(".") ? parts[0] : parts[0] + "."
+        alert.informativeText = parts.dropFirst().joined(separator: ". ")
         if let window { alert.beginSheetModal(for: window) }
     }
 

@@ -166,6 +166,8 @@ private struct ChangesView: View {
     @State private var confirmRevert: Checkpoints.Turn?
 
     private var path: String { session.spec.workPath }
+    /// Reverting while the agent writes would race it.
+    private var agentBusy: Bool { session.state == .working || session.state == .starting || session.state.needsAttention }
     private var isWorktree: Bool { session.spec.worktreeBranch != nil || session.git?.isWorktree == true }
     private var totals: DiffStat {
         DiffStat(added: files.reduce(0) { $0 + $1.added }, removed: files.reduce(0) { $0 + $1.removed }, files: files.count)
@@ -209,8 +211,8 @@ private struct ChangesView: View {
         }
         .alert(item: $confirmRevert) { turn in
             Alert(title: Text("Revert files to before turn \(turn.index)?"),
-                  message: Text("Files \(session.label) changed since then go back to how they were. The conversation isn't changed, and you can undo this."),
-                  primaryButton: .destructive(Text("Revert Files")) { revert(to: turn.start, label: "before turn \(turn.index)") },
+                  message: Text("Files \(session.label) changed since then go back to how they were. Other agents' changes and the conversation aren't touched, and you can undo this."),
+                  primaryButton: .destructive(Text("Revert Files")) { revert(to: turn.start, label: "before turn \(turn.index)", fromTurn: turn.index) },
                   secondaryButton: .cancel())
         }
     }
@@ -306,7 +308,7 @@ private struct ChangesView: View {
                     .help(file.path)
                     .contextMenu {
                         Button("Open in \(Editors.preferred?.name ?? "Editor")") {
-                            Editors.open((path as NSString).appendingPathComponent(file.path))
+                            Editors.open(((session.git?.root ?? path) as NSString).appendingPathComponent(file.path))
                         }
                         Button("Copy Path") {
                             NSPasteboard.general.clearContents()
@@ -386,7 +388,8 @@ private struct ChangesView: View {
                 if let turn = selectedTurn {
                     Button("Revert Files…") { confirmRevert = turn }
                         .buttonStyle(PanelButtonStyle())
-                        .help("Put the files back to how they were before this turn")
+                        .disabled(agentBusy)
+                        .help(agentBusy ? "Wait for \(session.label) to finish its turn" : "Put the files \(session.label) changed back to how they were before this turn")
                 } else {
                     Button("Commit…") { committing = true }
                         .buttonStyle(PanelButtonStyle())
@@ -403,7 +406,7 @@ private struct ChangesView: View {
                     }
                     Divider()
                     if let undo = undoPoint {
-                        Button("Undo Last Revert") { revert(to: undo, label: "how they were before the last revert") }
+                        Button("Undo Last Revert") { revert(to: undo, label: "how they were before the last revert", fromTurn: nil) }
                     }
                     Button("Open in \(Editors.preferred?.name ?? "Editor")") { Editors.open(path) }
                     if isWorktree {
@@ -483,9 +486,9 @@ private struct ChangesView: View {
         comments = []
     }
 
-    private func revert(to commit: String, label: String) {
+    private func revert(to commit: String, label: String, fromTurn: Int?) {
         working = true
-        store.restoreCheckpoint(session, to: commit, label: label) { outcome in
+        store.restoreCheckpoint(session, to: commit, label: label, fromTurn: fromTurn) { outcome in
             working = false
             switch outcome {
             case .success: result = "Files restored to \(label). Undo it from More."

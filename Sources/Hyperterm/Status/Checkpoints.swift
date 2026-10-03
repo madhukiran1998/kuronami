@@ -112,19 +112,24 @@ enum Checkpoints {
     /// then are removed; ignored files are left alone. The index, HEAD and branches aren't
     /// touched. Returns a snapshot of the workspace from just before, so the restore can itself
     /// be undone.
-    static func restore(at path: String, to commit: String, session: String) -> Result<String, CheckpointError> {
+    /// `only` limits the restore to those repository-relative paths, so files other agents in the
+    /// same folder changed are left alone; nil restores everything that differs.
+    static func restore(at path: String, to commit: String, session: String, only: Set<String>? = nil) -> Result<String, CheckpointError> {
         guard let before = snapshot(at: path, message: "Before restoring a checkpoint") else {
             return .failure(.notARepository)
         }
         _ = Git.run(["update-ref", prefix(session: session) + "undo", before], at: path)
-        let added = paths(at: path, from: commit, to: before, filter: "A")
+        func scoped(_ list: [String]) -> [String] { only.map { allowed in list.filter(allowed.contains) } ?? list }
+        let added = scoped(paths(at: path, from: commit, to: before, filter: "A"))
         guard let gitDir = Git.run(["rev-parse", "--absolute-git-dir"], at: path) else { return .failure(.notARepository) }
         let index = (gitDir as NSString).appendingPathComponent("kuronami-restore-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(atPath: index) }
         let environment = ["GIT_INDEX_FILE": index]
         // Only files that differ are written, so untouched files keep their modification times
         // and file watchers (dev servers, test runners) don't rebuild everything.
-        let changed = paths(at: path, from: commit, to: before, filter: "DMT")
+        let changed = scoped(paths(at: path, from: commit, to: before, filter: "DMT"))
+        // Undoing this restore touches exactly these files.
+        saveUndoScope(Set(changed + added), gitDir: gitDir, session: session)
         guard Git.run(["read-tree", commit], at: path, environment: environment) != nil else {
             return .failure(.git("couldn't read the checkpoint"))
         }
@@ -143,6 +148,35 @@ enum Checkpoints {
             removeEmptyParents(of: full, upTo: root)
         }
         return .success(before)
+    }
+
+    /// Files a session's turns changed from turn `from` on: what reverting to before that turn
+    /// should touch. Other sessions' edits in the same folder aren't in it.
+    static func touched(at path: String, session: String, from turn: Int) -> Set<String> {
+        var result = Set<String>()
+        var live: String?
+        for entry in turns(at: path, session: session) where entry.index >= turn {
+            if entry.end == nil, live == nil { live = snapshot(at: path, message: "Kuronami: compare") }
+            guard let end = entry.end ?? live else { continue }
+            result.formUnion(paths(at: path, from: entry.start, to: end, filter: nil))
+        }
+        return result
+    }
+
+    /// The files the last restore changed, so undoing it touches nothing else.
+    static func undoScope(at path: String, session: String) -> Set<String>? {
+        guard let gitDir = Git.run(["rev-parse", "--absolute-git-dir"], at: path),
+              let data = FileManager.default.contents(atPath: undoScopeFile(gitDir: gitDir, session: session)) else { return nil }
+        return Set(String(decoding: data, as: UTF8.self).split(separator: "\0").map(String.init))
+    }
+
+    private static func undoScopeFile(gitDir: String, session: String) -> String {
+        (gitDir as NSString).appendingPathComponent("kuronami-undo-\(session)")
+    }
+
+    private static func saveUndoScope(_ files: Set<String>, gitDir: String, session: String) {
+        let data = Data(files.sorted().joined(separator: "\0").utf8)
+        FileManager.default.createFile(atPath: undoScopeFile(gitDir: gitDir, session: session), contents: data)
     }
 
     /// The snapshot taken before the most recent restore, if any.

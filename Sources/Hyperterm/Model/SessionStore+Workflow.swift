@@ -44,11 +44,15 @@ extension SessionStore {
 
     /// Puts the agent's files back to how they were at `commit`. The agent's conversation is
     /// untouched; it's told what happened so it doesn't assume its edits are still there.
-    func restoreCheckpoint(_ session: TerminalSession, to commit: String, label: String,
+    /// `fromTurn`: revert only the files this agent changed from that turn on, so other agents'
+    /// edits in the same folder survive. Nil undoes the last restore, touching only what it changed.
+    func restoreCheckpoint(_ session: TerminalSession, to commit: String, label: String, fromTurn: Int?,
                            completion: @escaping @MainActor (Result<String, CheckpointError>) -> Void) {
         let path = session.spec.workPath, id = session.id.uuidString
         checkpointQueue.async { [weak self, weak session] in
-            let result = Checkpoints.restore(at: path, to: commit, session: id)
+            let scope = fromTurn.map { Checkpoints.touched(at: path, session: id, from: $0) }
+                ?? Checkpoints.undoScope(at: path, session: id)
+            let result = Checkpoints.restore(at: path, to: commit, session: id, only: scope)
             DispatchQueue.main.async { [weak self, weak session] in
                 MainActor.assumeIsolated {
                     guard let session else { return }
@@ -124,6 +128,10 @@ extension SessionStore {
     /// branch, then closes the other agents and archives their worktrees (their branches stay,
     /// so nothing is lost).
     func pickWinner(_ winner: TerminalSession, completion: @escaping @MainActor (Result<String, ReviewError>) -> Void) {
+        if winner.state == .working || winner.state.needsAttention {
+            completion(.failure(.git("@\(winner.label) is still working; pick it once its turn ends")))
+            return
+        }
         guard let base = winner.spec.baseBranch, let branch = winner.git?.branch, branch != base else {
             completion(.failure(.git("@\(winner.label) isn't on its own branch")))
             return
@@ -180,19 +188,26 @@ extension SessionStore {
         spec.minimized = nil
         recentlyClosed.removeAll { $0.id == spec.id }
         recentlyClosed.insert(spec, at: 0)
-        if recentlyClosed.count > 15 { recentlyClosed.removeLast(recentlyClosed.count - 15) }
+        if recentlyClosed.count > 15 {
+            // Out of reach for good: its checkpoints can go too.
+            let dropped = recentlyClosed.suffix(from: 15)
+            recentlyClosed.removeLast(recentlyClosed.count - 15)
+            let targets = dropped.map { (path: $0.workPath, id: $0.id.uuidString) }
+            checkpointQueue.async { for target in targets { Checkpoints.prune(at: target.path, session: target.id) } }
+        }
         saveRecentlyClosed()
     }
 
     func reopen(_ spec: LaunchSpec) {
         recentlyClosed.removeAll { $0.id == spec.id }
         saveRecentlyClosed()
-        // A worktree archived since closing can't be resumed; start in the main folder instead.
-        var spec = spec
-        if !FileManager.default.fileExists(atPath: spec.workPath) {
-            spec.worktreeName = nil
-            spec.worktreeBranch = nil
+        // A conversation lives with its folder; once the worktree is archived it can't resume.
+        guard FileManager.default.fileExists(atPath: spec.workPath) else {
+            let branch = spec.worktreeBranch.map { " Its work is on branch \($0)." } ?? ""
+            lastError = "@\(spec.label)'s worktree was archived, so its conversation can't be resumed.\(branch)"
+            return
         }
+        var spec = spec
         spec.label = sessions.contains { $0.label == spec.label } ? "" : spec.label
         create(spec, resume: true)
     }

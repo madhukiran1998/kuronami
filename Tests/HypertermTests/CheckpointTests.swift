@@ -136,6 +136,29 @@ final class CheckpointTests: XCTestCase {
         XCTAssertFalse(exists("naïve new.txt"))
     }
 
+    func testRevertLeavesOtherAgentsFilesAlone() throws {
+        let other = "B9C1A0F2-0000-4000-8000-000000000002"
+        Checkpoints.capture(at: repo, session: session, turn: 1, phase: .start, prompt: "mine")
+        try write("mine.swift", "mine\n")
+        Checkpoints.capture(at: repo, session: session, turn: 1, phase: .end, prompt: "mine")
+        // Another agent in the same folder edits meanwhile.
+        Checkpoints.capture(at: repo, session: other, turn: 1, phase: .start, prompt: "theirs")
+        try write("README.md", "theirs\n")
+        let turn = try XCTUnwrap(Checkpoints.turns(at: repo, session: session).first)
+        let scope = Checkpoints.touched(at: repo, session: session, from: 1)
+        XCTAssertEqual(scope, ["mine.swift"])
+        _ = Checkpoints.restore(at: repo, to: turn.start, session: session, only: scope)
+        XCTAssertFalse(exists("mine.swift"))
+        XCTAssertEqual(read("README.md"), "theirs\n", "the other agent's edit survives")
+
+        // Undo touches only what the revert changed.
+        try write("README.md", "theirs, later\n")
+        let undo = try XCTUnwrap(Checkpoints.undoPoint(at: repo, session: session))
+        _ = Checkpoints.restore(at: repo, to: undo, session: session, only: Checkpoints.undoScope(at: repo, session: session))
+        XCTAssertEqual(read("mine.swift"), "mine\n")
+        XCTAssertEqual(read("README.md"), "theirs, later\n")
+    }
+
     func testRestoreLeavesIndexAlone() throws {
         Checkpoints.capture(at: repo, session: session, turn: 1, phase: .start, prompt: "one")
         try write("README.md", "staged change\n")
