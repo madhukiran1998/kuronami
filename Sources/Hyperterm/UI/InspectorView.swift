@@ -888,6 +888,7 @@ private struct FollowUp: View {
             }
             .padding(Space.s)
             .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+            .acceptsAttachments($text)
             if let status { Text(status).font(Typeface.caption).foregroundStyle(Tone.faint) }
         }
         .padding(Space.m)
