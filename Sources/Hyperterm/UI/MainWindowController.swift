@@ -228,6 +228,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.level = .floating
+        panel.appearance = NSAppearance(named: .darkAqua)
         let view = QuickSwitcherView(store: store, quickCreate: { [weak self] in self?.quickCreate($0) },
                                      dismiss: { [weak panel] in panel?.close() })
         let host = NSHostingView(rootView: view)
@@ -256,6 +257,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         panel.hasShadow = true
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: QuickAskView(store: store, dismiss: { [weak panel] in panel?.close() }))
         host.frame.size = host.fittingSize
         panel.contentView = host

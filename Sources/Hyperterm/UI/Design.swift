@@ -171,7 +171,9 @@ extension View {
     @ViewBuilder func floatingSurface(cornerRadius: CGFloat = Radius.pane, fallback: Color = Tone.surface) -> some View {
         #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
-            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            // Tinted toward graphite so light text stays legible over any window behind it.
+            self.glassEffect(.regular.tint(fallback.opacity(0.72)), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .environment(\.colorScheme, .dark)
         } else {
             self.background(fallback, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         }
