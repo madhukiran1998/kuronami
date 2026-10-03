@@ -183,7 +183,7 @@ struct AttentionQueue: View {
             .help("Go to the agent that has waited longest (⌘J)")
         } else if working > 0 {
             HStack(spacing: Space.xs + 2) {
-                ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 10, height: 10)
+                Circle().fill(Palette.working).frame(width: 6, height: 6)
                 Text("\(working) working")
             }
             .font(Typeface.callout)

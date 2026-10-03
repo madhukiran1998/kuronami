@@ -367,12 +367,7 @@ struct StateLabel: View {
     var body: some View {
         // Only the clock ticks; the rest of the row re-renders when the session changes.
         TimelineView(.periodic(from: .now, by: session.state == .working ? 15 : 60)) { context in
-            HStack(spacing: Space.xs) {
-                if session.state == .working || session.state == .starting {
-                    ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 10, height: 10)
-                }
-                Text(text(now: context.date))
-            }
+            Text(text(now: context.date))
             .font(Typeface.caption.weight(session.state.needsAttention ? .semibold : .regular).monospacedDigit())
             .foregroundStyle(color)
             .lineLimit(1)
@@ -383,7 +378,7 @@ struct StateLabel: View {
     private func text(now: Date) -> String {
         let since = elapsed(since: session.stateChangedAt, now: now)
         switch session.state {
-        case .working: return since
+        case .working: return "Working \(since)"
         case .needsInput: return "Needs you"
         case .idle: return "\(session.statusWord) · \(since)"
         default: return session.statusWord
