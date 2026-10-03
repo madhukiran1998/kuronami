@@ -177,6 +177,7 @@ struct AgentRow: View {
             }
         }
         .padding(.vertical, 5)
+        .opacity(session.isMinimized ? 0.55 : 1)
     }
 
     @ViewBuilder private var trailing: some View {
@@ -409,6 +410,7 @@ private struct UtilityRow: View {
             PortChips(ports: session.ports, compact: true)
         }
         .help(session.foregroundProcess ?? session.spec.command ?? abbreviateHome(session.spec.cwd))
+        .opacity(session.isMinimized ? 0.55 : 1)
     }
 }
 
@@ -445,6 +447,7 @@ private struct BrowserRow: View {
         .padding(.leading, nested ? 18 : 0)
         .padding(.vertical, 1)
         .help(session.summary ?? session.spec.url ?? session.label)
+        .opacity(session.isMinimized ? 0.55 : 1)
     }
 }
 
@@ -581,6 +584,9 @@ struct SessionMenu: View {
     var body: some View {
         if session.kind.isAgent {
             Button("Review Changes") { actions.review(session) }
+        }
+        Button(session.isMinimized ? "Restore Tile" : "Minimize Tile") {
+            session.store?.setMinimized(session, !session.isMinimized)
         }
         Button("Rename…") { actions.rename(session) }
         if session.kind.isAgent && !session.spec.agentMayRename {

@@ -1,19 +1,30 @@
 import SwiftUI
 
-/// Servers live here instead of taking grid space: a chip per server with its ports. Click for
-/// recent logs and actions; "Show as Tile" pins it into the grid.
+/// The shelf under the canvas: servers (a chip with their ports; click for logs and actions,
+/// "Show as Tile" pins one into the grid) and minimized tiles (click to bring back).
 struct ServerStrip: View {
     @ObservedObject var store: SessionStore
 
-    private var servers: [TerminalSession] { store.sessions.filter { $0.kind == .server && !$0.pinnedToGrid } }
+    private var servers: [TerminalSession] {
+        store.sessions.filter { $0.kind == .server && !$0.pinnedToGrid && !$0.isMinimized }
+    }
+    private var shelved: [TerminalSession] { store.sessions.filter(\.isMinimized) }
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "bolt.horizontal.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.tertiary)
-            ForEach(servers) { server in
-                ServerChip(session: server, store: store)
+            if !servers.isEmpty {
+                Image(systemName: "bolt.horizontal.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                ForEach(servers) { server in
+                    ServerChip(session: server, store: store)
+                }
+            }
+            if !servers.isEmpty && !shelved.isEmpty {
+                Divider().frame(height: 14).padding(.horizontal, 2)
+            }
+            ForEach(shelved) { session in
+                ShelvedChip(session: session, store: store)
             }
             Spacer(minLength: 0)
         }
@@ -21,6 +32,35 @@ struct ServerStrip: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
+    }
+}
+
+/// A minimized tile waiting on the shelf.
+private struct ShelvedChip: View {
+    @ObservedObject var session: TerminalSession
+    let store: SessionStore
+    @State private var hovering = false
+
+    var body: some View {
+        Button { store.select(session) } label: {
+            HStack(spacing: 5) {
+                Image(systemName: session.kind.symbol)
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(session.kind.tint)
+                Text(session.label).font(.system(size: 11.5, weight: .medium))
+                Circle().fill(Palette.status(session.state)).frame(width: 5, height: 5)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(.quaternary.opacity(hovering ? 1 : 0.6)))
+            .overlay(Capsule().strokeBorder(session.state.needsAttention ? Palette.attention.opacity(0.7) : .clear, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Bring @\(session.label) back")
+        .contextMenu {
+            Button("Restore") { store.select(session) }
+        }
     }
 }
 

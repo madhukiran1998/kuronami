@@ -262,6 +262,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func cleanUpWorktrees(_ sender: Any?) { windowController?.presentWorktreeCleanup() }
     @objc func toggleInspectorPane(_ sender: Any?) { windowController?.toggleInspector() }
     @objc func newBrowser(_ sender: Any?) { store.openBrowser() }
+    @objc func minimizeTile(_ sender: Any?) {
+        guard let session = store.selected else { NSSound.beep(); return }
+        store.setMinimized(session, !session.isMinimized)
+    }
     /// Agents use Hyperterm's browsers by default; this also lets Claude agents use the
     /// user's own Chrome (Claude in Chrome). Applies to agents started afterwards.
     @objc func toggleOutsideChrome(_ sender: NSMenuItem) {

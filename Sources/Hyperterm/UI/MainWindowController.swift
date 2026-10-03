@@ -167,6 +167,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self.store.select(session)
         }
         terminalArea.onZoomTile = { [weak self] id in self?.store.toggleZoom(id) }
+        terminalArea.onMinimizeTile = { [weak self] id in
+            guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
+            self.store.setMinimized(session, true)
+        }
+        terminalArea.onCloseTile = { [weak self] id in
+            guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
+            self.confirmClose(session)
+        }
+        terminalArea.onReorder = { [weak self] order in self?.store.setTileOrder(order) }
         store.onSearchUpdate = { [weak self] session, total, selected, start in
             if start { self?.terminalArea.showSearch(for: session.id) }
             self?.terminalArea.searchResults(for: session.id, total: total, selected: selected)
@@ -175,7 +184,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     private func arrange(takeFocus: Bool) {
         terminalArea.apply(mode: store.layout, visible: store.visibleIDs, focused: store.selectedID, takeFocus: takeFocus)
-        let showsStrip = store.layout != .focus && store.sessions.contains { $0.kind == .server && !$0.pinnedToGrid }
+        let showsStrip = store.layout != .focus
+            && store.sessions.contains { ($0.kind == .server && !$0.pinnedToGrid) || $0.isMinimized }
         if terminalArea.showsServerStrip != showsStrip { terminalArea.showsServerStrip = showsStrip }
         terminalArea.refreshAttention()
         let title: String, subtitle: String
@@ -296,7 +306,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func confirmClose(_ session: TerminalSession) {
-        let running = session.state == .working || session.state == .running || session.state.needsAttention
+        // A browser has no process to lose; closing it just closes the page.
+        let running = session.kind != .browser
+            && (session.state == .working || session.state == .running || session.state.needsAttention)
         guard running, let window else { store.close(session); return }
         let alert = NSAlert()
         alert.messageText = "Close @\(session.label)?"

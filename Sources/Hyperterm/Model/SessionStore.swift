@@ -20,6 +20,8 @@ final class SessionStore: ObservableObject {
 
     /// Most recently selected first; split view shows the top two.
     private var recent: [UUID] = []
+    /// The user's arrangement of tiles (by dragging); sessions not in it follow in creation order.
+    private var tileOrder: [UUID] = (UserDefaults.standard.stringArray(forKey: "tileOrder") ?? []).compactMap(UUID.init)
     @Published var inspectorTab: InspectorTab = .changes
 
     /// "2 agents waiting · 3 working" under the window title.
@@ -101,14 +103,49 @@ final class SessionStore: ObservableObject {
         case .focus:
             return selectedID.map { [$0] } ?? []
         case .split:
-            let pair = Set(recent.prefix(2))
-            return sessions.filter { pair.contains($0.id) }.map(\.id)
+            let minimized = Set(sessions.filter(\.isMinimized).map(\.id))
+            let pair = Set(recent.filter { !minimized.contains($0) }.prefix(2))
+            return arranged(sessions.filter { pair.contains($0.id) }).map(\.id)
         case .grid:
-            // Servers live in the strip below the canvas unless pinned or selected.
-            return sessions.filter { session in
+            // Servers live in the strip below the canvas unless pinned or selected; minimized
+            // sessions wait on the shelf.
+            return arranged(sessions.filter { session in
                 (session.kind != .server || session.pinnedToGrid || session.id == selectedID)
                     && (!isExited(session) || session.id == selectedID)
-            }.map(\.id)
+                    && !session.isMinimized
+            }).map(\.id)
+        }
+    }
+
+    /// Tiles in the user's order; anything they never moved keeps creation order after it.
+    private func arranged(_ list: [TerminalSession]) -> [TerminalSession] {
+        var rank: [UUID: Int] = [:]
+        for (index, id) in tileOrder.enumerated() where rank[id] == nil { rank[id] = index }
+        return list.enumerated()
+            .sorted { (rank[$0.element.id] ?? Int.max, $0.offset) < (rank[$1.element.id] ?? Int.max, $1.offset) }
+            .map(\.element)
+    }
+
+    /// Records a drag: `visible` is the new on-screen order.
+    func setTileOrder(_ visible: [UUID]) {
+        let placed = Set(visible)
+        let alive = Set(sessions.map(\.id))
+        tileOrder = (visible + tileOrder.filter { !placed.contains($0) }).filter(alive.contains)
+        UserDefaults.standard.set(tileOrder.map(\.uuidString), forKey: "tileOrder")
+        onArrangementChange?()
+    }
+
+    /// Parks a session on the shelf (or brings it back). Minimizing the focused tile moves focus
+    /// to the next one on screen.
+    func setMinimized(_ session: TerminalSession, _ minimized: Bool) {
+        guard session.isMinimized != minimized else { return }
+        session.spec.minimized = minimized ? true : nil
+        persist()
+        if minimized, selectedID == session.id {
+            let next = visibleIDs.first { $0 != session.id }
+            select(next.flatMap { id in sessions.first { $0.id == id } })
+        } else {
+            onArrangementChange?()
         }
     }
 
@@ -281,6 +318,11 @@ final class SessionStore: ObservableObject {
 
     func select(_ session: TerminalSession?) {
         if let previous = selected { previous.lastViewedAt = Date() }
+        // Choosing a minimized session is asking for it back.
+        if let session, session.isMinimized {
+            session.spec.minimized = nil
+            persist()
+        }
         selectedID = session?.id
         if let session {
             if session.unread { session.unread = false }
@@ -475,6 +517,7 @@ private struct SessionOutline: Equatable {
     let cwd: String
     let git: GitInfo?
     let pinnedToGrid: Bool
+    let minimized: Bool
     let readyForReview: Bool
     let port: Int?
 
@@ -487,6 +530,7 @@ private struct SessionOutline: Equatable {
         cwd = session.spec.cwd
         git = session.git
         pinnedToGrid = session.pinnedToGrid
+        minimized = session.isMinimized
         readyForReview = session.readyForReview
         port = session.spec.port
     }

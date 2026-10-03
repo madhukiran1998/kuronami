@@ -48,10 +48,10 @@ final class TileView: NSView {
         let working: Bool
     }
 
-    init(session: TerminalSession, onSelect: @escaping () -> Void, onZoom: @escaping () -> Void) {
+    init(session: TerminalSession, actions: TileActions) {
         self.session = session
         self.model = TileHeaderModel()
-        self.header = NSHostingView(rootView: TileHeader(session: session, model: model, onSelect: onSelect, onZoom: onZoom))
+        self.header = NSHostingView(rootView: TileHeader(session: session, model: model, actions: actions))
         super.init(frame: .zero)
         wantsLayer = true
         layer?.masksToBounds = false
@@ -97,6 +97,18 @@ final class TileView: NSView {
     }
 
     func refreshAttention() { updateChrome() }
+
+    /// Picked up by its header: drawn above the other tiles with a deeper shadow.
+    func setLifted(_ lifted: Bool) {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.15)
+        layer?.zPosition = lifted ? 100 : 0
+        layer?.shadowRadius = lifted ? 28 : 12
+        layer?.shadowOpacity = lifted ? 0.5 : 0.28
+        alphaValue = lifted ? 0.94 : 1
+        CATransaction.commit()
+        if !lifted { drawnChrome = nil; updateChrome() }
+    }
 
     // MARK: - Layout
 
@@ -263,11 +275,22 @@ final class TileHeaderModel: ObservableObject {
 
 /// 26pt: the label, and a status capsule. The summary appears on hover only, since the agent's
 /// own screen already says what it's doing.
+/// What a tile's header can ask of the canvas.
+@MainActor
+struct TileActions {
+    var select: () -> Void
+    var zoom: () -> Void
+    var minimize: () -> Void
+    var close: () -> Void
+    /// Header drag in progress: translation from where it started (SwiftUI, y down).
+    var drag: (CGSize) -> Void
+    var dragEnded: () -> Void
+}
+
 struct TileHeader: View {
     @ObservedObject var session: TerminalSession
     @ObservedObject var model: TileHeaderModel
-    let onSelect: () -> Void
-    let onZoom: () -> Void
+    let actions: TileActions
     @State private var hovering = false
 
     var body: some View {
@@ -294,15 +317,12 @@ struct TileHeader: View {
             } else {
                 StatusCapsule(session: session)
             }
-            Button(action: onZoom) {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
+            HStack(spacing: 2) {
+                HeaderButton(symbol: "minus", help: "Minimize to shelf (⇧⌘M)", action: actions.minimize)
+                HeaderButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Zoom (⌘⏎)", action: actions.zoom)
+                HeaderButton(symbol: "xmark", help: "Close (⌘W)", action: actions.close)
             }
-            .buttonStyle(.plain)
             .opacity(hovering ? 1 : 0)
-            .help("Zoom (⌘⏎)")
         }
         .padding(.leading, 10)
         .padding(.trailing, 6)
@@ -310,13 +330,38 @@ struct TileHeader: View {
         .background(Color.white.opacity(model.focused ? 0.045 : 0.02))
         .contentShape(Rectangle())
         .onHover { value in withAnimation(.easeOut(duration: 0.15)) { hovering = value } }
-        .onTapGesture(count: 2, perform: onZoom)
-        .onTapGesture(perform: onSelect)
+        .onTapGesture(count: 2, perform: actions.zoom)
+        .onTapGesture(perform: actions.select)
+        // Drag the header to move the tile; the canvas reflows the others around it.
+        .gesture(DragGesture(minimumDistance: 5, coordinateSpace: .global)
+            .onChanged { actions.drag($0.translation) }
+            .onEnded { _ in actions.dragEnded() })
     }
 
     private var headerSummary: String? {
         if case .needsInput(let reason) = session.state { return session.pendingRequest ?? reason }
         return session.kind.isAgent ? (session.agentStatus ?? session.summary) : session.foregroundProcess
+    }
+}
+
+private struct HeaderButton: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(hovering ? Color.primary : Color.secondary)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(Color.primary.opacity(hovering ? 0.12 : 0)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
     }
 }
 

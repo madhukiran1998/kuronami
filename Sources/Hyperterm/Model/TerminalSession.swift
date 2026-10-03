@@ -63,6 +63,7 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     var label: String { spec.label }
     var kind: SessionKind { spec.kind }
+    var isMinimized: Bool { spec.minimized == true }
 
     init(spec: LaunchSpec, resume: Bool, task: String? = nil) {
         self.id = spec.id

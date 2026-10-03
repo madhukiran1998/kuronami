@@ -32,6 +32,14 @@ final class TerminalAreaView: NSView {
     private let emptyState = NSHostingViewFactory.emptyState()
 
     var onSelectTile: ((UUID) -> Void)?
+    var onMinimizeTile: ((UUID) -> Void)?
+    var onCloseTile: ((UUID) -> Void)?
+    /// The user dragged tiles into a new order (the on-screen order).
+    var onReorder: (([UUID]) -> Void)?
+    /// The tile being dragged and where it started.
+    private var drag: (id: UUID, origin: NSRect)?
+    /// Where tiles go: the bounds minus the server/shelf strip.
+    private var tileArea: NSRect = .zero
     /// Servers strip along the bottom in split and grid layouts.
     var serverStrip: NSView? {
         didSet {
@@ -56,9 +64,13 @@ final class TerminalAreaView: NSView {
             return
         }
         let id = session.id
-        let tile = TileView(session: session,
-                            onSelect: { [weak self] in self?.onSelectTile?(id) },
-                            onZoom: { [weak self] in self?.onZoomTile?(id) })
+        let tile = TileView(session: session, actions: TileActions(
+            select: { [weak self] in self?.onSelectTile?(id) },
+            zoom: { [weak self] in self?.onZoomTile?(id) },
+            minimize: { [weak self] in self?.onMinimizeTile?(id) },
+            close: { [weak self] in self?.onCloseTile?(id) },
+            drag: { [weak self] translation in self?.dragTile(id, by: translation) },
+            dragEnded: { [weak self] in self?.endDrag(id) }))
         tile.isHidden = true
         tiles[id] = tile
         addSubview(tile)
@@ -118,10 +130,57 @@ final class TerminalAreaView: NSView {
             serverStrip.frame = NSRect(x: 0, y: 0, width: bounds.width, height: Self.stripHeight)
             area = NSRect(x: 0, y: Self.stripHeight, width: bounds.width, height: bounds.height - Self.stripHeight)
         }
+        tileArea = area
         let frames = Self.frames(count: visibleOrder.count, in: area, mode: mode)
-        for (id, frame) in zip(visibleOrder, frames) {
+        for (id, frame) in zip(visibleOrder, frames) where id != drag?.id {
             tiles[id]?.frame = frame.integral
         }
+    }
+
+    // MARK: - Drag to rearrange
+
+    /// The tile follows the pointer; when its center is nearest another slot, it takes that
+    /// slot and the others slide over.
+    private func dragTile(_ id: UUID, by translation: CGSize) {
+        guard mode != .focus, visibleOrder.count > 1, let tile = tiles[id] else { return }
+        if drag == nil {
+            drag = (id, tile.frame)
+            tile.setLifted(true)
+        }
+        guard let origin = drag?.origin else { return }
+        // SwiftUI's global space grows downward; this view's grows upward.
+        tile.frame.origin = CGPoint(x: origin.minX + translation.width, y: origin.minY - translation.height)
+        let slots = Self.frames(count: visibleOrder.count, in: tileArea, mode: mode)
+        let center = CGPoint(x: tile.frame.midX, y: tile.frame.midY)
+        func distance(_ rect: NSRect) -> CGFloat { hypot(rect.midX - center.x, rect.midY - center.y) }
+        guard let target = slots.indices.min(by: { distance(slots[$0]) < distance(slots[$1]) }),
+              let current = visibleOrder.firstIndex(of: id), target != current else { return }
+        visibleOrder.remove(at: current)
+        visibleOrder.insert(id, at: target)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            for (other, frame) in zip(visibleOrder, slots) where other != id {
+                tiles[other]?.animator().frame = frame.integral
+            }
+        }
+    }
+
+    private func endDrag(_ id: UUID) {
+        guard drag?.id == id, let tile = tiles[id] else { return }
+        drag = nil
+        let slots = Self.frames(count: visibleOrder.count, in: tileArea, mode: mode)
+        if let index = visibleOrder.firstIndex(of: id), slots.indices.contains(index) {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                tile.animator().frame = slots[index].integral
+            } completionHandler: {
+                MainActor.assumeIsolated { tile.setLifted(false) }
+            }
+        } else {
+            tile.setLifted(false)
+        }
+        onReorder?(visibleOrder)
     }
 
     // MARK: - Geometry

@@ -123,6 +123,8 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     var url: String?
     /// Browser: the agent it belongs to. Its tools act on this browser by default.
     var owner: UUID?
+    /// Parked on the shelf instead of taking a tile in split and grid.
+    var minimized: Bool?
 
     /// Where the agent's files actually live.
     var workPath: String {

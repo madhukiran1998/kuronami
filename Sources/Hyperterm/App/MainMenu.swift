@@ -60,6 +60,7 @@ enum MainMenu {
         menu.addItem(.separator())
         menu.addItem(item("Rename…", #selector(AppDelegate.renameSession(_:)), "r", [.command, .shift], target: target))
         menu.addItem(item("Restart", #selector(AppDelegate.restartSession(_:)), "r", target: target))
+        menu.addItem(item("Minimize Tile", #selector(AppDelegate.minimizeTile(_:)), "m", [.command, .shift], target: target))
         menu.addItem(item("Close", #selector(AppDelegate.closeSession(_:)), "w", target: target))
         menu.addItem(.separator())
         menu.addItem(item("Review Changes", #selector(AppDelegate.reviewSelected(_:)), "r", [.command, .option], target: target))
