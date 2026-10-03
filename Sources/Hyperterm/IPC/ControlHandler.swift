@@ -77,6 +77,8 @@ struct ControlHandler {
             store.subscribeChannel(agent, reply: reply)
         case .new where callerAgent != nil && request.kind == SessionKind.server.rawValue:
             startServerForAgent(request, reply: reply)
+        case .new where callerAgent != nil && (request.kind == SessionKind.claude.rawValue || request.kind == SessionKind.codex.rawValue):
+            startAgentForAgent(request, reply: reply)
         default:
             reply(handle(request))
         }
@@ -216,6 +218,51 @@ struct ControlHandler {
             var response = ControlResponse.success(text: "started @\(session.label)")
             response.session = session.info()
             reply(response)
+        }
+    }
+
+    /// An agent delegating a subtask. Each new agent costs usage and works outside its parent's
+    /// view, so the user confirms it. The child inherits the parent's account and permission
+    /// choices (never more), gets its own worktree by default, and is asked to report back.
+    private func startAgentForAgent(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
+        guard let parent = callerAgent, let kind = SessionKind(rawValue: request.kind ?? ""), kind.isAgent else {
+            reply(.failure("kind must be claude or codex"))
+            return
+        }
+        if request.command?.isEmpty == false {
+            reply(.failure("agents can't pass extra arguments to new agents"))
+            return
+        }
+        let task = sanitizeMessage(request.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty else {
+            reply(.failure("a new agent needs a task"))
+            return
+        }
+        let cwd = request.cwd ?? parent.spec.workPath
+        let worktree = request.worktree ?? true
+        store.confirm(
+            "@\(parent.label) wants to start a \(kind.displayName) agent",
+            "\(abbreviateHome(cwd))\(worktree ? " · own worktree" : "")\n\n\(task)"
+        ) { [store] approved in
+            guard approved else {
+                reply(.failure("the user declined to start that agent"))
+                return
+            }
+            var spec = LaunchSpec(label: request.label ?? "", kind: kind, cwd: cwd)
+            if spec.labelSource == .user { spec.labelSource = .agent }
+            if parent.kind == kind {
+                spec.account = parent.spec.account
+                spec.options = parent.spec.options
+            }
+            let brief = task + "\n\n(Delegated by @\(parent.label) through Kuronami. When you finish, use send_message to tell @\(parent.label) what you did and where.)"
+            Task { @MainActor in
+                let child = await store.launch(spec, select: false, worktree: worktree, task: brief)
+                child.record(.note, "Started by @\(parent.label)")
+                parent.record(.note, "Delegated to @\(child.label)")
+                var response = ControlResponse.success(text: "started @\(child.label); it will message you when done")
+                response.session = child.info()
+                reply(response)
+            }
         }
     }
 
