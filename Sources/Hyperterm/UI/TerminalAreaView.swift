@@ -22,6 +22,10 @@ enum LayoutMode: String, CaseIterable, Codable {
 
 /// Arranges session tiles. Every session owns one persistent tile; layouts only change which
 /// tiles are visible and where, so switching layouts never restarts a process.
+///
+/// Split and grid are a `LayoutTree` each: tiles share the canvas by weight, and the gaps between
+/// them are dividers the user drags to resize. Dragging a tile by its header trades places with
+/// the tile it is dropped on.
 @MainActor
 final class TerminalAreaView: NSView {
     private var tiles: [UUID: TileView] = [:]
@@ -29,6 +33,9 @@ final class TerminalAreaView: NSView {
     private var lastFocused: UUID?
     private var mode: LayoutMode = .focus
     private let emptyState = NSHostingViewFactory.emptyState()
+    /// One arrangement per multi-tile layout, saved between launches.
+    private var trees: [LayoutMode: LayoutTree] = [:]
+    private var handles: [DividerHandle] = []
 
     var onSelectTile: ((UUID) -> Void)?
     var onMinimizeTile: ((UUID) -> Void)?
@@ -37,7 +44,7 @@ final class TerminalAreaView: NSView {
     var onReorder: (([UUID]) -> Void)?
     /// The tile being dragged and where it started.
     private var drag: (id: UUID, origin: NSRect)?
-    /// Where tiles go: the bounds minus the server/shelf strip.
+    /// Where tiles go: the bounds minus the server/shelf strip, inset from the edges.
     private var tileArea: NSRect = .zero
     /// Servers strip along the bottom in split and grid layouts.
     var serverStrip: NSView? {
@@ -59,6 +66,7 @@ final class TerminalAreaView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         addSubview(emptyState)
+        for mode in [LayoutMode.split, .grid] { trees[mode] = LayoutTreeStore.load(mode.rawValue) ?? LayoutTree() }
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
@@ -78,7 +86,7 @@ final class TerminalAreaView: NSView {
             dragEnded: { [weak self] in self?.endDrag(id) }))
         tile.isHidden = true
         tiles[id] = tile
-        addSubview(tile)
+        addSubview(tile, positioned: .below, relativeTo: handles.first)
     }
 
     func unmount(_ session: TerminalSession) {
@@ -137,6 +145,17 @@ final class TerminalAreaView: NSView {
         for id in visibleOrder { tiles[id]?.refreshAttention() }
     }
 
+    /// Even out the current layout's tiles (View ▸ Even Out Tiles).
+    func evenOutTiles() {
+        guard var tree = trees[mode] else { return }
+        tree.reset(in: tileArea)
+        trees[mode] = tree
+        LayoutTreeStore.save(tree, mode.rawValue)
+        animateToLayout()
+    }
+
+    private var multiTile: Bool { mode != .focus && visibleOrder.count > 1 }
+
     override func layout() {
         super.layout()
         emptyState.frame = bounds
@@ -145,59 +164,133 @@ final class TerminalAreaView: NSView {
             serverStrip.frame = NSRect(x: 0, y: 0, width: bounds.width, height: Self.stripHeight)
             area = NSRect(x: 0, y: Self.stripHeight, width: bounds.width, height: max(0, bounds.height - Self.stripHeight))
         }
-        tileArea = area
-        let frames = Self.frames(count: visibleOrder.count, in: area, mode: mode)
-        for (id, frame) in zip(visibleOrder, frames) where id != drag?.id {
+        // Panes float inset from the window edges, like content panes in Apple's apps.
+        let inset = min(LayoutTree.gap, max(0, min(area.width, area.height) / 2))
+        tileArea = area.insetBy(dx: inset, dy: inset)
+        let frames = currentFrames()
+        for (id, frame) in frames where id != drag?.id {
             let aligned = frame.integral
             if tiles[id]?.frame != aligned { tiles[id]?.frame = aligned }
         }
+        updateHandles()
+    }
+
+    /// Reconciles the current tree with what's visible and returns every tile's frame.
+    private func currentFrames() -> [UUID: NSRect] {
+        guard multiTile, var tree = trees[mode] else {
+            return visibleOrder.first.map { [$0: tileArea] } ?? [:]
+        }
+        let before = tree
+        tree.reconcile(visible: visibleOrder, in: tileArea)
+        if tree != before {
+            trees[mode] = tree
+            LayoutTreeStore.save(tree, mode.rawValue)
+        }
+        return tree.frames(in: tileArea)
+    }
+
+    private func animateToLayout() {
+        let frames = currentFrames()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.duration(Motion.standard)
+            context.timingFunction = Motion.curve
+            for (id, frame) in frames where id != drag?.id { tiles[id]?.animator().frame = frame.integral }
+        }
+        updateHandles()
+    }
+
+    // MARK: - Dividers
+
+    private func updateHandles() {
+        let dividers = multiTile && drag == nil ? (trees[mode]?.dividers(in: tileArea) ?? []) : []
+        while handles.count > dividers.count { handles.removeLast().removeFromSuperview() }
+        while handles.count < dividers.count {
+            let handle = DividerHandle()
+            handle.onDrag = { [weak self, weak handle] point in
+                guard let self, let handle, let divider = handle.divider else { return }
+                self.moveDivider(divider, to: point)
+            }
+            handle.onEnd = { [weak self] in self?.saveTree() }
+            handle.onReset = { [weak self, weak handle] in
+                guard let self, let divider = handle?.divider, var tree = self.trees[self.mode] else { return }
+                tree.evenOut(divider)
+                self.trees[self.mode] = tree
+                self.saveTree()
+                self.animateToLayout()
+            }
+            addSubview(handle, positioned: .above, relativeTo: nil)
+            handles.append(handle)
+        }
+        for (handle, divider) in zip(handles, dividers) {
+            handle.divider = divider
+            // The grab area is wider than the gap so the edge is easy to catch.
+            let grab: CGFloat = 10
+            handle.frame = divider.axis == .horizontal
+                ? divider.frame.insetBy(dx: -(grab - divider.frame.width) / 2, dy: 0)
+                : divider.frame.insetBy(dx: 0, dy: -(grab - divider.frame.height) / 2)
+        }
+    }
+
+    private func moveDivider(_ divider: LayoutDivider, to point: NSPoint) {
+        guard var tree = trees[mode] else { return }
+        let fraction = LayoutTree.snapped(LayoutTree.fraction(for: point, divider: divider), divider: divider)
+        tree.move(divider, to: fraction)
+        trees[mode] = tree
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+
+    private func saveTree() {
+        if let tree = trees[mode] { LayoutTreeStore.save(tree, mode.rawValue) }
     }
 
     // MARK: - Drag to rearrange
 
-    /// The tile follows the pointer; when its center is nearest another slot, it takes that
-    /// slot and the others slide over.
+    /// The tile follows the pointer; dropped over another tile, the two trade places.
     private func dragTile(_ id: UUID, by translation: CGSize) {
-        guard mode != .focus, visibleOrder.count > 1, let tile = tiles[id] else { return }
+        guard multiTile, let tile = tiles[id] else { return }
         if drag == nil {
             drag = (id, tile.frame)
             tile.setLifted(true)
             onSelectTile?(id)
+            updateHandles()
         }
         guard let origin = drag?.origin else { return }
         // SwiftUI's global space grows downward; this view's grows upward.
         tile.frame.origin = CGPoint(x: origin.minX + translation.width, y: origin.minY - translation.height)
-        let slots = Self.frames(count: visibleOrder.count, in: tileArea, mode: mode)
         let center = CGPoint(x: tile.frame.midX, y: tile.frame.midY)
-        func distance(_ rect: NSRect) -> CGFloat { hypot(rect.midX - center.x, rect.midY - center.y) }
-        guard let target = slots.indices.min(by: { distance(slots[$0]) < distance(slots[$1]) }),
-              let current = visibleOrder.firstIndex(of: id), target != current else { return }
-        visibleOrder.remove(at: current)
-        visibleOrder.insert(id, at: target)
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            for (other, frame) in zip(visibleOrder, slots) where other != id {
-                tiles[other]?.animator().frame = frame.integral
-            }
-        }
+        for other in tiles.values where other !== tile && !other.isHidden { other.setDropTarget(false) }
+        if let target = dropTarget(for: id, at: center) { tiles[target]?.setDropTarget(true) }
+    }
+
+    private func dropTarget(for id: UUID, at point: CGPoint) -> UUID? {
+        guard let frames = trees[mode]?.frames(in: tileArea) else { return nil }
+        return frames.first { $0.key != id && $0.value.contains(point) }?.key
     }
 
     private func endDrag(_ id: UUID) {
         guard drag?.id == id, let tile = tiles[id] else { return }
-        drag = nil
-        let slots = Self.frames(count: visibleOrder.count, in: tileArea, mode: mode)
-        if let index = visibleOrder.firstIndex(of: id), slots.indices.contains(index) {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
-                tile.animator().frame = slots[index].integral
-            } completionHandler: {
-                MainActor.assumeIsolated { tile.setLifted(false) }
-            }
-        } else {
-            tile.setLifted(false)
+        let center = CGPoint(x: tile.frame.midX, y: tile.frame.midY)
+        tiles.values.forEach { $0.setDropTarget(false) }
+        if let target = dropTarget(for: id, at: center), var tree = trees[mode] {
+            tree.swap(id, target)
+            trees[mode] = tree
+            saveTree()
         }
-        onReorder?(visibleOrder)
+        drag = nil
+        let frames = currentFrames()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.duration(Motion.standard)
+            context.timingFunction = Motion.curve
+            for (other, frame) in frames { tiles[other]?.animator().frame = frame.integral }
+        } completionHandler: {
+            MainActor.assumeIsolated { tile.setLifted(false) }
+        }
+        updateHandles()
+        if let order = trees[mode]?.leaves {
+            visibleOrder = order
+            onReorder?(order)
+        }
     }
 
     // MARK: - Geometry
@@ -207,51 +300,76 @@ final class TerminalAreaView: NSView {
         var seen = Set<UUID>()
         return requested.filter { mounted.contains($0) && seen.insert($0).inserted }
     }
+}
 
-    nonisolated static func frames(count: Int, in bounds: NSRect, mode: LayoutMode) -> [NSRect] {
-        guard count > 0 else { return [] }
-        // Panes always float inset from the window edges, like content panes in Apple's apps.
-        let gap = min(CGFloat(10), max(0, min(bounds.width, bounds.height) / 2))
-        if mode == .focus || count == 1 { return [bounds.insetBy(dx: gap, dy: gap)] }
-        let area = bounds.insetBy(dx: gap, dy: gap)
-        let (columns, rows) = gridShape(count: count, aspect: area.width / max(area.height, 1))
-        let rowGap = min(gap, area.height / CGFloat(max(rows - 1, 1)))
-        let cellHeight = max(0, (area.height - rowGap * CGFloat(rows - 1)) / CGFloat(rows))
-        var frames: [NSRect] = []
-        for row in 0..<rows {
-            let start = row * columns
-            let itemsInRow = min(columns, count - start)
-            guard itemsInRow > 0 else { break }
-            // The last row stretches so there are no empty holes.
-            let columnGap = min(gap, area.width / CGFloat(max(itemsInRow - 1, 1)))
-            let cellWidth = max(0, (area.width - columnGap * CGFloat(itemsInRow - 1)) / CGFloat(itemsInRow))
-            let y = area.maxY - CGFloat(row + 1) * cellHeight - CGFloat(row) * rowGap
-            for column in 0..<itemsInRow {
-                let x = area.minX + CGFloat(column) * (cellWidth + columnGap)
-                frames.append(NSRect(x: x, y: y, width: cellWidth, height: cellHeight))
-            }
-        }
-        return frames
+/// The grab area over a gap between tiles. Shows a resize cursor, a hairline while hovered or
+/// dragged, and evens out its split on double-click.
+@MainActor
+final class DividerHandle: NSView {
+    var divider: LayoutDivider? {
+        didSet { if divider?.axis != oldValue?.axis { window?.invalidateCursorRects(for: self) } }
+    }
+    var onDrag: ((NSPoint) -> Void)?
+    var onEnd: (() -> Void)?
+    var onReset: (() -> Void)?
+    private let line = CALayer()
+    private var hovering = false { didSet { updateLine() } }
+    private var dragging = false { didSet { updateLine() } }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        line.backgroundColor = Ink.accent.cgColor
+        line.cornerRadius = 1
+        line.opacity = 0
+        layer?.addSublayer(line)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.splitter)
+        setAccessibilityLabel("Tile divider")
     }
 
-    /// Picks the column count whose cells are closest to a comfortable terminal shape. Slightly
-    /// wide of square: agent TUIs want height, and side-by-side reads better than stacked.
-    nonisolated static func gridShape(count: Int, aspect: CGFloat) -> (columns: Int, rows: Int) {
-        guard count > 0 else { return (0, 0) }
-        let aspect = max(aspect.isFinite ? aspect : 1, 0.001)
-        let target: CGFloat = 1.1
-        var best = (columns: 1, rows: count)
-        var bestScore = CGFloat.greatestFiniteMagnitude
-        for columns in 1...count {
-            let rows = Int(ceil(Double(count) / Double(columns)))
-            let cellAspect = aspect * CGFloat(rows) / CGFloat(columns)
-            let empty = CGFloat(columns * rows - count) * 0.35
-            let score = abs(log(cellAspect / target)) + empty
-            if score < bestScore {
-                bestScore = score
-                best = (columns, rows)
-            }
-        }
-        return best
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: divider?.axis == .vertical ? .resizeUpDown : .resizeLeftRight)
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        line.frame = divider?.axis == .vertical
+            ? NSRect(x: 0, y: bounds.midY - 1, width: bounds.width, height: 2)
+            : NSRect(x: bounds.midX - 1, y: 0, width: 2, height: bounds.height)
+        CATransaction.commit()
+    }
+
+    private func updateLine() {
+        line.opacity = dragging ? 0.9 : hovering ? 0.45 : 0
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 { onReset?(); return }
+        dragging = true
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let superview else { return }
+        onDrag?(superview.convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if dragging { onEnd?() }
+        dragging = false
     }
 }
