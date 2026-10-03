@@ -130,10 +130,10 @@ struct NewSessionView: View {
         let label = "@" + (draft.label.isEmpty ? labelPlaceholder : normalizeLabel(draft.label))
         switch draft.kind {
         case .claude: return "Runs Claude Code named \(label). Other agents can message it by that name."
-        case .codex: return "Runs Codex as \(label). Agents reach it through Hyperterm's MCP tools."
+        case .codex: return "Runs Codex as \(label). Agents reach it through Kuronami's MCP tools."
         case .server: return "Runs the command as \(label). Ports appear in the sidebar; agents can read its logs or restart it."
         case .shell: return "A login shell labeled \(label)."
-        case .browser: return "A Chromium browser labeled \(label). Agents can drive it by that name; it shares logins with your other Hyperterm browsers."
+        case .browser: return "A Chromium browser labeled \(label). Agents can drive it by that name; it shares logins with your other Kuronami browsers."
         }
     }
 

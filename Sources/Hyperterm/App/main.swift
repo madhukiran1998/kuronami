@@ -1,7 +1,7 @@
 import AppKit
 import CCefAppKit
 
-/// Variables that identify a specific agent session. If Hyperterm is launched from inside an
+/// Variables that identify a specific agent session. If Kuronami is launched from inside an
 /// agent (e.g. `open` run by Claude Code), every terminal would inherit them and agents started
 /// there would think they're child sessions of it.
 private func scrubInheritedSessionEnvironment() {

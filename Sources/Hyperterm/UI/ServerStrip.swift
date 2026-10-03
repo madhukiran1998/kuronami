@@ -44,8 +44,7 @@ private struct ShelvedChip: View {
     var body: some View {
         Button { store.select(session) } label: {
             HStack(spacing: 5) {
-                Image(systemName: session.kind.symbol)
-                    .font(.system(size: 9.5, weight: .semibold))
+                KindMark(kind: session.kind, size: 10.5)
                     .foregroundStyle(session.kind.tint)
                 Text(session.label).font(.system(size: 11.5, weight: .medium))
                 Circle().fill(Palette.status(session.state)).frame(width: 5, height: 5)
@@ -153,36 +152,53 @@ private struct QueueItem: View {
     let count: Int
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "hand.raised.fill").foregroundStyle(Palette.attention)
+        HStack(spacing: 9) {
+            Circle().fill(Palette.attention).frame(width: 7, height: 7)
             Button { store.select(session) } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
                     Text(session.label).fontWeight(.semibold)
-                    Text(session.pendingRequest.map { "wants to run \($0)" } ?? "needs you")
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    if let request = session.pendingRequest {
+                        Text("wants to run").foregroundStyle(.secondary)
+                        Text(request)
+                            .font(.system(size: 12, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    } else {
+                        Text("needs you").foregroundStyle(.secondary)
+                    }
                 }
             }
             .buttonStyle(.plain)
-            .help("Go to \(session.label) (⌘J)")
+            .help("Go to \(session.label) (⇧⌘U)")
             if count > 1 {
-                Text("1 of \(count)").font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
+                Text("+\(count - 1)").font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(.tertiary)
             }
-            Button("Allow") { _ = store.answer(session, .approve) }
-                .buttonStyle(.borderedProminent)
-                .tint(Palette.attention)
-                .help("Allow (⌥⌘Y)")
-            Button("Deny") { _ = store.answer(session, .deny) }
-                .help("Deny (⌥⌘N)")
+            Button { _ = store.answer(session, .approve) } label: {
+                Text("Allow")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: Ink.floor))
+                    .padding(.horizontal, 12)
+                    .frame(height: 24)
+                    .background(Capsule().fill(Palette.attention))
+            }
+            .buttonStyle(.plain)
+            .help("Allow (⌥⌘Y)")
+            Button { _ = store.answer(session, .deny) } label: {
+                Text("Deny")
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 10)
+                    .frame(height: 24)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Deny (⌥⌘N)")
         }
-        .controlSize(.small)
-        .font(.system(size: 12))
-        .padding(.leading, 10)
+        .font(.system(size: 12.5))
+        .padding(.leading, 12)
         .padding(.trailing, 4)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(Palette.attention.opacity(0.12)))
-        .overlay(Capsule().strokeBorder(Palette.attention.opacity(0.3), lineWidth: 0.5))
-        .frame(maxWidth: 560)
+        .frame(height: 32)
+        .background(Capsule().fill(Palette.attention.opacity(0.1)))
+        .overlay(Capsule().strokeBorder(Palette.attention.opacity(0.45), lineWidth: 1))
+        .frame(maxWidth: 620)
     }
 }

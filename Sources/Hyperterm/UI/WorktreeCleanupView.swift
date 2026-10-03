@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Worktrees Hyperterm or Claude created, with whether their work already landed, so leftovers
+/// Worktrees Kuronami or Claude created, with whether their work already landed, so leftovers
 /// can be archived without guessing.
 struct WorktreeEntry: Identifiable, Equatable {
     var id: String { path }

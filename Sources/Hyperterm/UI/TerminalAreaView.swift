@@ -92,6 +92,15 @@ final class TerminalAreaView: NSView {
         let visibleSet = Set(visibleOrder)
         for (id, tile) in tiles {
             let isVisible = visibleSet.contains(id)
+            // Tiles arriving on screen fade in rather than pop.
+            if isVisible && tile.isHidden {
+                tile.alphaValue = 0
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.22
+                    context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    tile.animator().alphaValue = 1
+                }
+            }
             tile.isHidden = !isVisible
             tile.session.surface.setOccluded(!isVisible)
             // One tile gets the whole area without chrome, whatever the layout.

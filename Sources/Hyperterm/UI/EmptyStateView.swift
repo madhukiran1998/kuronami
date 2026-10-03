@@ -4,18 +4,20 @@ import SwiftUI
 /// start each kind of terminal.
 struct EmptyStateView: View {
     var body: some View {
-        VStack(spacing: 26) {
-            VStack(spacing: 10) {
+        VStack(spacing: 28) {
+            VStack(spacing: 12) {
                 Image(nsImage: NSApp.applicationIconImage ?? NSImage())
                     .resizable()
-                    .frame(width: 96, height: 96)
-                    .shadow(color: .black.opacity(0.25), radius: 18, y: 8)
-                Text("Run agents side by side")
-                    .font(.system(size: 22, weight: .semibold))
-                Text("Each terminal gets a label like @api. Hyperterm shows what every agent is doing,\nbrings you the ones that need you, and lets them message each other.")
+                    .frame(width: 104, height: 104)
+                    .shadow(color: .black.opacity(0.5), radius: 24, y: 10)
+                Text("All quiet.")
+                    .font(.system(size: 24, weight: .semibold))
+                    .tracking(-0.3)
+                Text("Start an agent and it shows up here. Kuronami keeps every agent in view, calls you\nover when one needs you, and gives each one a browser you can watch.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .lineSpacing(2)
             }
             HStack(spacing: 12) {
                 ForEach(SessionKind.allCases) { kind in
@@ -26,12 +28,12 @@ struct EmptyStateView: View {
                 shortcut("⌘N", "New terminal")
                 shortcut("⌘P", "Go to anything")
                 shortcut("⌘⇧U", "Next waiting")
+                shortcut("⇧⌘B", "New browser")
                 shortcut("⌥⌘R", "Review")
             }
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background)
     }
 
     private func shortcut(_ keys: String, _ title: String) -> some View {
@@ -40,7 +42,8 @@ struct EmptyStateView: View {
                 .font(.caption.monospaced().weight(.medium))
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(RoundedRectangle(cornerRadius: 4).fill(.quaternary))
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: Ink.surface)))
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: Ink.hairline)))
             Text(title).font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -61,8 +64,9 @@ private struct StartButton: View {
                 Text(kind.displayName).font(.callout.weight(.medium))
             }
             .frame(width: 118, height: 92)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(hovering ? kind.tint.opacity(0.6) : Color.primary.opacity(0.08)))
+            .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(hovering ? kind.tint.opacity(0.6) : Color(nsColor: Ink.hairline)))
+            .shadow(color: hovering ? kind.tint.opacity(0.25) : .clear, radius: 14)
             .scaleEffect(hovering ? 1.03 : 1)
             .animation(.spring(duration: 0.25), value: hovering)
         }

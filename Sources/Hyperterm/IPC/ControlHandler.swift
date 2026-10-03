@@ -3,10 +3,10 @@ import AppKit
 /// Maps control requests to store operations and enforces who may do what.
 ///
 /// The caller comes from the kernel (`CallerIdentity`), never from the request. Fail closed:
-/// - The user is a process outside Hyperterm, or one traced to a shell/server terminal.
+/// - The user is a process outside Kuronami, or one traced to a shell/server terminal.
 /// - Agents (traced to an agent terminal) may message other agents, read agents and servers,
 ///   restart servers, start servers with the user's OK, and rename only themselves.
-/// - Anything else from inside Hyperterm (detached, unknown) gets read-only access.
+/// - Anything else from inside Kuronami (detached, unknown) gets read-only access.
 /// Only the user may press keys, answer prompts, close terminals, or type raw text: those would
 /// let one agent answer another's permission prompts or run commands outside its own checks.
 @MainActor
@@ -215,7 +215,7 @@ struct ControlHandler {
             guard target.kind.isAgent else {
                 return .failure("@\(target.label) is a \(target.kind.displayName.lowercased()); agents can read it or restart it, not type into it")
             }
-            let framed = "Message from @\(sender.label) (\(sender.kind.displayName), via Hyperterm): \(singleLine(text))"
+            let framed = "Message from @\(sender.label) (\(sender.kind.displayName), via Kuronami): \(singleLine(text))"
             return .success(text: target.deliver(framed, from: sender.label))
         }
         guard isUser else { return .failure("not allowed from a detached process") }
@@ -266,7 +266,7 @@ struct ControlHandler {
 
     // MARK: - Approvals
 
-    /// PermissionRequest hook: hold the hook open until the user decides in Hyperterm, the agent
+    /// PermissionRequest hook: hold the hook open until the user decides in Kuronami, the agent
     /// moves on (answered in its own terminal), or the hook times out.
     private func handlePermission(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
         guard let agent = callerAgent else {

@@ -55,8 +55,8 @@ targets:
     info:
       path: Sources/Hyperterm/App/Info.plist
       properties:
-        CFBundleName: Hyperterm
-        CFBundleDisplayName: Hyperterm
+        CFBundleName: Kuronami
+        CFBundleDisplayName: Kuronami
         CFBundleIconFile: AppIcon
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
@@ -71,7 +71,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.hyperterm.app
-        PRODUCT_NAME: Hyperterm
+        # The product is Kuronami; the Swift module keeps its original name.
+        PRODUCT_NAME: Kuronami
+        PRODUCT_MODULE_NAME: Hyperterm
         OTHER_LDFLAGS: "-lc++"
     postBuildScripts:
       - name: Embed ht CLI
@@ -115,7 +117,7 @@ targets:
       - target: Hyperterm
     settings:
       base:
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Hyperterm.app/Contents/MacOS/Hyperterm"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Kuronami.app/Contents/MacOS/Kuronami"
         BUNDLE_LOADER: "$(TEST_HOST)"
         GENERATE_INFOPLIST_FILE: YES
 schemes:

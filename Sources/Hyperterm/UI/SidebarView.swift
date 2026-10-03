@@ -55,18 +55,10 @@ struct SidebarView: View {
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
-            .overlay {
-                if store.sessions.isEmpty {
-                    ContentUnavailableView {
-                        Label("No terminals", systemImage: "terminal")
-                    } description: {
-                        Text("Dispatch a task above, or press ⌘N.")
-                    }
-                }
-            }
             SidebarFooter(store: store, actions: actions)
         }
-        // Vibrancy comes from the split view's sidebar material.
+        .background(Color(nsColor: Ink.deep).ignoresSafeArea())
+        .tint(Palette.working)
     }
 }
 
@@ -93,9 +85,8 @@ private struct DispatchField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: kind.symbol)
+                KindMark(kind: kind, size: 12)
                     .foregroundStyle(kind.tint)
-                    .font(.system(size: 12, weight: .semibold))
                 TextField("New agent in \(URL(fileURLWithPath: targetFolder).lastPathComponent)…", text: $text, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...4)
@@ -123,8 +114,8 @@ private struct DispatchField: View {
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 7)
-            .background(.background.opacity(0.55), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(focused ? Color.accentColor.opacity(0.6) : Color.primary.opacity(0.08)))
+            .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(focused ? Palette.working.opacity(0.55) : Color(nsColor: Ink.hairline)))
             if focused || !text.isEmpty {
                 Text("\(kind.displayName) · \(shortPath(targetFolder)) · own worktree · ⏎ to start")
                     .font(.caption)
@@ -291,38 +282,41 @@ struct AgentAvatar: View {
     let kind: SessionKind
     let state: AgentState
 
-    private var tint: Color {
+    /// Color here means state; with no state worth flagging, the mark wears the agent's own tint.
+    private var stateColor: Color? {
         switch state {
+        case .working, .starting: return Palette.working
         case .needsInput: return Palette.attention
         case .failed: return Palette.failed
-        case .exited: return .secondary
-        default: return kind.tint
+        default: return nil
         }
     }
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(state.needsAttention ? AnyShapeStyle(Palette.attention.gradient) : AnyShapeStyle(tint.gradient.opacity(state == .idle || state == .exited(0) ? 0.14 : 0.24)))
-                .frame(width: 26, height: 26)
-            Image(systemName: state.needsAttention ? "hand.raised.fill" : kind.symbol)
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(state.needsAttention ? Color.white : tint.opacity(state == .idle ? 0.75 : 1))
+        let needsYou = state.needsAttention
+        KindMark(kind: kind, size: 12)
+            .foregroundStyle(needsYou ? Color(nsColor: Ink.floor) : (stateColor ?? kind.tint.opacity(state == .exited(0) ? 0.45 : 0.9)))
+            .frame(width: 26, height: 26)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(needsYou ? AnyShapeStyle(Palette.attention) : AnyShapeStyle(Color(nsColor: Ink.surface))))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(needsYou ? Color.clear : (stateColor?.opacity(0.6) ?? Color(nsColor: Ink.hairline)), lineWidth: 1))
+            .frame(width: 30, height: 30)
+            .accessibilityLabel(state.phrase)
+    }
+}
+
+/// One glyph language everywhere: agents are monograms (C, X), everything else a plain symbol.
+struct KindMark: View {
+    let kind: SessionKind
+    var size: CGFloat = 12
+
+    var body: some View {
+        if let letter = kind.monogram {
+            Text(letter).font(.system(size: size, weight: .bold, design: .rounded))
+        } else {
+            Image(systemName: kind.symbol).font(.system(size: size - 1, weight: .medium))
         }
-        .frame(width: 31, height: 31)
-        .overlay(alignment: .bottomTrailing) {
-            if state == .working {
-                // The system spinner as a corner badge: AppKit animates it natively, and it reads
-                // as "busy" without drawing a shape around the avatar.
-                ProgressView()
-                    .controlSize(.mini)
-                    .scaleEffect(0.8)
-                    .frame(width: 13, height: 13)
-                    .background(Circle().fill(.background))
-                    .offset(x: 2, y: 2)
-            }
-        }
-        .accessibilityLabel(state.phrase)
     }
 }
 
@@ -398,8 +392,7 @@ private struct UtilityRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: session.kind.symbol)
-                .font(.system(size: 11, weight: .medium))
+            KindMark(kind: session.kind, size: 12)
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
             Text(session.label)
@@ -563,7 +556,7 @@ struct PortChips: View {
                     Button("Open in Browser") {
                         if let url = URL(string: "http://localhost:" + String(port)) { NSWorkspace.shared.open(url) }
                     }
-                    Button("Open in Hyperterm") {
+                    Button("Open in Kuronami") {
                         NSApp.sendAction(#selector(AppDelegate.openPreview(_:)), to: nil, from: PortSender(port: port))
                     }
                 }

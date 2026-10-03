@@ -19,7 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if handOffToRunningInstance() { return }
         guard GhosttyRuntime.shared.start() else {
             let alert = NSAlert()
-            alert.messageText = "Hyperterm couldn't start the terminal engine"
+            alert.messageText = "Kuronami couldn't start the terminal engine"
             alert.informativeText = "libghostty failed to initialize. Check Console for messages from hyperterm."
             alert.runModal()
             NSApp.terminate(nil)
@@ -56,8 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let busy = store.sessions.filter { $0.state == .working || $0.state.needsAttention }
         guard !busy.isEmpty else { return .terminateNow }
         let alert = NSAlert()
-        alert.messageText = "Quit Hyperterm?"
-        alert.informativeText = "\(busy.map { "@" + $0.label }.joined(separator: ", ")) \(busy.count == 1 ? "is" : "are") still working. Agent conversations resume the next time you open Hyperterm."
+        alert.messageText = "Quit Kuronami?"
+        alert.informativeText = "\(busy.map { "@" + $0.label }.joined(separator: ", ")) \(busy.count == 1 ? "is" : "are") still working. Agent conversations resume the next time you open Kuronami."
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
@@ -76,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// One Hyperterm owns the socket and the session list. A second copy (another build, a
+    /// One Kuronami owns the socket and the session list. A second copy (another build, a
     /// double launch) activates the first and quits instead of stealing them.
     private func handOffToRunningInstance() -> Bool {
         guard (try? sendControlRequest(ControlRequest(cmd: .list)))?.ok == true else { return false }
@@ -227,14 +227,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PreviewWindowController.show(port: port)
     }
     /// Channels only load servers from Claude's own MCP config, so turning this on registers
-    /// Hyperterm there with `claude mcp add --scope user` (and off removes it), after asking.
+    /// Kuronami there with `claude mcp add --scope user` (and off removes it), after asking.
     @objc func toggleChannels(_ sender: NSMenuItem) {
         let enabling = !SessionStore.channelsEnabled
         let alert = NSAlert()
         alert.messageText = enabling ? "Deliver messages via Claude channels?" : "Stop using Claude channels?"
         alert.informativeText = enabling
-            ? "Messages from other agents arrive in Claude as channel events instead of typed text. This registers Hyperterm in your Claude config (claude mcp add --scope user hyperterm), and Claude asks you to confirm the development channel when each session starts. Applies to new or restarted sessions."
-            : "Removes Hyperterm from your Claude config (claude mcp remove --scope user hyperterm). Messages go back to being typed in."
+            ? "Messages from other agents arrive in Claude as channel events instead of typed text. This registers Kuronami in your Claude config (claude mcp add --scope user hyperterm), and Claude asks you to confirm the development channel when each session starts. Applies to new or restarted sessions."
+            : "Removes Kuronami from your Claude config (claude mcp remove --scope user hyperterm). Messages go back to being typed in."
         alert.addButton(withTitle: enabling ? "Turn On" : "Turn Off")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -247,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 MainActor.assumeIsolated {
                     if output == nil && enabling {
                         let failure = NSAlert()
-                        failure.messageText = "Couldn't register Hyperterm with Claude"
+                        failure.messageText = "Couldn't register Kuronami with Claude"
                         failure.informativeText = "Running `\(command)` failed. Check that `claude` is on your PATH."
                         failure.runModal()
                         return
@@ -266,7 +266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let session = store.selected else { NSSound.beep(); return }
         store.setMinimized(session, !session.isMinimized)
     }
-    /// Agents use Hyperterm's browsers by default; this also lets Claude agents use the
+    /// Agents use Kuronami's browsers by default; this also lets Claude agents use the
     /// user's own Chrome (Claude in Chrome). Applies to agents started afterwards.
     @objc func toggleOutsideChrome(_ sender: NSMenuItem) {
         AgentBrowser.agentsMayUseOutsideChrome.toggle()
@@ -317,7 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func installCLI(_ sender: Any?) {
         let alert = NSAlert()
         alert.messageText = "Use ht from any terminal"
-        alert.informativeText = "Add this line to your ~/.zshrc:\n\nexport PATH=\"$HOME/.hyperterm/bin:$PATH\"\n\nThen run `ht ls` to list terminals or `ht send @api \"…\"` to message one. The Claude and Codex wrappers in that folder add Hyperterm's hooks automatically."
+        alert.informativeText = "Add this line to your ~/.zshrc:\n\nexport PATH=\"$HOME/.hyperterm/bin:$PATH\"\n\nThen run `ht ls` to list terminals or `ht send @api \"…\"` to message one. The Claude and Codex wrappers in that folder add Kuronami's hooks automatically."
         alert.addButton(withTitle: "Copy Line")
         alert.addButton(withTitle: "Done")
         if alert.runModal() == .alertFirstButtonReturn {

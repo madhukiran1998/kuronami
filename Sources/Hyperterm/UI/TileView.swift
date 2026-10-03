@@ -56,8 +56,7 @@ final class TileView: NSView {
         wantsLayer = true
         layer?.masksToBounds = false
         content.wantsLayer = true
-        // Matches the terminal's 0.9 background opacity so the padding blends with the glass.
-        content.layer?.backgroundColor = Theme.terminalBackground.withAlphaComponent(0.9).cgColor
+        content.layer?.backgroundColor = Theme.terminalBackground.cgColor
         content.layer?.cornerCurve = .continuous
         content.layer?.masksToBounds = true
         addSubview(content)
@@ -154,10 +153,10 @@ final class TileView: NSView {
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.18)
         if showsHeader && isFocusedTile {
-            border.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.9).cgColor
-            border.borderWidth = 1.5
+            border.borderColor = NSColor(Palette.working).withAlphaComponent(0.75).cgColor
+            border.borderWidth = 1.25
         } else {
-            border.borderColor = NSColor.white.withAlphaComponent(Theme.isDark ? 0.09 : 0.5).cgColor
+            border.borderColor = Ink.hairline.cgColor
             border.borderWidth = 0.5
         }
         CATransaction.commit()
@@ -295,8 +294,7 @@ struct TileHeader: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: session.kind.symbol)
-                .font(.system(size: 9.5, weight: .semibold))
+            KindMark(kind: session.kind, size: 11)
                 .foregroundStyle(session.kind.tint.opacity(model.focused ? 1 : 0.7))
             Text(session.label)
                 .font(.system(size: 12, weight: .medium))
@@ -372,14 +370,11 @@ struct StatusCapsule: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 15)) { context in
             let color = Palette.status(session.state)
-            HStack(spacing: 4) {
-                Circle().fill(color).frame(width: 5, height: 5)
+            HStack(spacing: 6) {
+                Circle().fill(color).frame(width: 6, height: 6)
                 Text(text(now: context.date))
             }
-            .font(.system(size: 10, weight: .medium).monospacedDigit())
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(session.state.needsAttention ? 0.25 : 0.12)))
+            .font(.system(size: 11, weight: session.state.needsAttention ? .semibold : .regular).monospacedDigit())
             .foregroundStyle(session.state.needsAttention ? Palette.attention : Color.secondary)
         }
     }

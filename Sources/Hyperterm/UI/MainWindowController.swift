@@ -16,12 +16,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             contentRect: NSRect(x: 0, y: 0, width: 1360, height: 840),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
-        window.title = "Hyperterm"
+        window.title = "Kuronami"
         window.toolbarStyle = .unified
-        // Glass window: the desktop blurs through the chrome and canvas (system vibrancy), and
-        // terminals float on it as rounded panes. Chrome follows the system appearance.
-        window.isOpaque = false
-        window.backgroundColor = .clear
+        // Graphite: one opaque surface that terminals float on as rounded panes. Always dark,
+        // and no live blur behind every tile.
+        window.isOpaque = true
+        window.backgroundColor = Ink.floor
+        window.appearance = NSAppearance(named: .darkAqua)
         window.titlebarAppearsTransparent = true
         window.minSize = NSSize(width: 760, height: 440)
         window.tabbingMode = .disallowed
@@ -68,10 +69,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         split.addSplitViewItem(sidebarItem)
 
         let detail = NSViewController()
-        let container = NSVisualEffectView()
-        container.material = .sidebar
-        container.blendingMode = .behindWindow
-        container.state = .followsWindowActiveState
+        let container = InkCanvas()
         terminalArea.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(terminalArea)
         NSLayoutConstraint.activate([
@@ -87,7 +85,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         let inspectorHost = NSHostingController(rootView: InspectorView(store: store, actions: actions))
         inspectorHost.sizingOptions = []
-        let inspector = NSSplitViewItem(inspectorWithViewController: Self.glass(inspectorHost, material: .sidebar))
+        let inspector = NSSplitViewItem(inspectorWithViewController: Self.solid(inspectorHost, color: Ink.deep))
         inspector.minimumThickness = 340
         inspector.maximumThickness = 640
         inspector.canCollapse = true
@@ -100,13 +98,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         return split
     }
 
-    /// Wraps a view controller's view in a behind-window vibrancy material.
-    private static func glass(_ child: NSViewController, material: NSVisualEffectView.Material) -> NSViewController {
+    /// Wraps a view controller's view in a solid backing color.
+    private static func solid(_ child: NSViewController, color: NSColor) -> NSViewController {
         let wrapper = NSViewController()
-        let effect = NSVisualEffectView()
-        effect.material = material
-        effect.blendingMode = .behindWindow
-        effect.state = .followsWindowActiveState
+        let effect = NSView()
+        effect.wantsLayer = true
+        effect.layer?.backgroundColor = color.cgColor
         wrapper.addChild(child)
         child.view.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(child.view)
@@ -193,7 +190,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             title = session.label
             subtitle = [session.git?.project, session.git?.branch].compactMap { $0 }.joined(separator: " · ")
         } else {
-            title = "Hyperterm"
+            title = "Kuronami"
             subtitle = store.windowSubtitle
         }
         // Setting these relayouts the titlebar even when unchanged.

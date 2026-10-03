@@ -30,23 +30,23 @@ enum MainMenu {
     }
 
     private static func appMenu(_ target: AppDelegate) -> NSMenu {
-        let menu = NSMenu(title: "Hyperterm")
-        menu.addItem(item("About Hyperterm", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+        let menu = NSMenu(title: "Kuronami")
+        menu.addItem(item("About Kuronami", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
         menu.addItem(.separator())
         menu.addItem(item("Use ht in Your Shell…", #selector(AppDelegate.installCLI(_:)), target: target))
         let channels = item("Deliver Messages via Claude Channels", #selector(AppDelegate.toggleChannels(_:)), target: target)
         channels.state = SessionStore.channelsEnabled ? .on : .off
         menu.addItem(channels)
-        menu.addItem(item("Enable Codex Approvals in Hyperterm…", #selector(AppDelegate.enableCodexApprovals(_:)), target: target))
+        menu.addItem(item("Enable Codex Approvals in Kuronami…", #selector(AppDelegate.enableCodexApprovals(_:)), target: target))
         let outsideChrome = item("Let Agents Use My Chrome", #selector(AppDelegate.toggleOutsideChrome(_:)), target: target)
         outsideChrome.state = AgentBrowser.agentsMayUseOutsideChrome ? .on : .off
-        outsideChrome.toolTip = "Off: agents browse only in Hyperterm's browsers. On: Claude agents may also use your own Chrome through Claude in Chrome."
+        outsideChrome.toolTip = "Off: agents browse only in Kuronami's browsers. On: Claude agents may also use your own Chrome through Claude in Chrome."
         menu.addItem(outsideChrome)
         menu.addItem(.separator())
-        menu.addItem(item("Hide Hyperterm", #selector(NSApplication.hide(_:)), "h"))
+        menu.addItem(item("Hide Kuronami", #selector(NSApplication.hide(_:)), "h"))
         menu.addItem(item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]))
         menu.addItem(.separator())
-        menu.addItem(item("Quit Hyperterm", #selector(NSApplication.terminate(_:)), "q"))
+        menu.addItem(item("Quit Kuronami", #selector(NSApplication.terminate(_:)), "q"))
         return menu
     }
 

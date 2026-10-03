@@ -2,7 +2,7 @@ import AppKit
 import CefSwiftUI
 import Observation
 
-/// Hyperterm's Chromium runtime, shared by every browser session. It starts on first use (a
+/// Kuronami's Chromium runtime, shared by every browser session. It starts on first use (a
 /// browser session opening, or an agent's first browser tool call), never at app launch.
 ///
 /// Agents drive browsers through `chrome-devtools-mcp` attached to Chromium's DevTools port,
@@ -21,7 +21,7 @@ final class AgentBrowser {
     static var profileDirectory: URL { ControlPaths.supportDirectory.appendingPathComponent("browser") }
 
     /// Opt-in: agents may also use the user's own Chrome (Claude in Chrome). Off by default so
-    /// agents stay inside Hyperterm's browsers.
+    /// agents stay inside Kuronami's browsers.
     nonisolated static var agentsMayUseOutsideChrome: Bool {
         get { UserDefaults.standard.bool(forKey: "agentsUseOutsideChrome") }
         set { UserDefaults.standard.set(newValue, forKey: "agentsUseOutsideChrome") }

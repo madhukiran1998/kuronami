@@ -1,13 +1,13 @@
 import Foundation
 
 /// `ht browser-mcp`: an agent's browser tools. Proxies `chrome-devtools-mcp`, which is attached
-/// to Hyperterm's Chromium and sees every Hyperterm browser, and scopes it to this agent:
+/// to Kuronami's Chromium and sees every Kuronami browser, and scopes it to this agent:
 ///
 /// - Chromium (and this agent's browser session, @<agent>-web) starts on the first tool call.
 /// - `pageId` defaults to the agent's own browser and stops being required, so agents never act
 ///   on another agent's page by accident; passing another browser's pageId is still allowed.
-/// - `list_pages` names each page's Hyperterm browser, so agents can find others by @label.
-/// - `new_page`/`close_page` are refused: Hyperterm browsers are sessions the user can see.
+/// - `list_pages` names each page's Kuronami browser, so agents can find others by @label.
+/// - `new_page`/`close_page` are refused: Kuronami browsers are sessions the user can see.
 func runBrowserMCP(port: Int) -> Never {
     let proxy = BrowserProxy(port: port)
     proxy.run()
@@ -85,11 +85,11 @@ private final class BrowserProxy: @unchecked Sendable {
         var params = message["params"] as? [String: Any] ?? [:]
         let tool = params["name"] as? String ?? ""
         if tool == "new_page" || tool == "close_page" {
-            replyError(id: id, "Hyperterm browsers are sessions the user can see, so pages aren't opened or closed from here. Navigate your own browser with navigate_page; ask the user to open another browser (⇧⌘B) if you need two.")
+            replyError(id: id, "Kuronami browsers are sessions the user can see, so pages aren't opened or closed from here. Navigate your own browser with navigate_page; ask the user to open another browser (⇧⌘B) if you need two.")
             return
         }
         guard let own = ensureBrowser(tool: tool) else {
-            replyError(id: id, "Hyperterm's browser isn't available right now. Ask the user to check the browser in Hyperterm.")
+            replyError(id: id, "Kuronami's browser isn't available right now. Ask the user to check the browser in Kuronami.")
             return
         }
         if tool == "list_pages" {
@@ -99,7 +99,7 @@ private final class BrowserProxy: @unchecked Sendable {
             var arguments = params["arguments"] as? [String: Any] ?? [:]
             if staleMap() || ownPage(own) == nil { refreshPageMap() }
             let requested = arguments["pageId"] as? Int
-            // Explicitly naming another Hyperterm browser is allowed; anything else means "mine".
+            // Explicitly naming another Kuronami browser is allowed; anything else means "mine".
             if requested == nil || label(ofPage: requested!) == nil, let page = ownPage(own) {
                 arguments["pageId"] = page
             }
@@ -109,7 +109,7 @@ private final class BrowserProxy: @unchecked Sendable {
         sendToChild(message)
     }
 
-    // MARK: - Hyperterm
+    // MARK: - Kuronami
 
     /// Starts Chromium and this agent's browser on the first call (blocking only that call);
     /// afterwards just reports the action for the "@agent · click" indicator.
@@ -132,7 +132,7 @@ private final class BrowserProxy: @unchecked Sendable {
         return label
     }
 
-    /// Learns which chrome-devtools-mcp page number is which Hyperterm browser: Hyperterm tags
+    /// Learns which chrome-devtools-mcp page number is which Kuronami browser: Kuronami tags
     /// each page with its label, and each page is asked for its tag.
     private func refreshPageMap(alreadyMarked: Bool = false) {
         if !alreadyMarked {
@@ -214,7 +214,7 @@ private final class BrowserProxy: @unchecked Sendable {
         guard var result = message["result"] as? [String: Any] else { return message }
         switch rewrite {
         case .initialize:
-            let note = "Each Hyperterm agent has its own browser, shown to the user as a session. Tools act on yours by default, so leave out pageId. list_pages names every Hyperterm browser by @label; pass another browser's pageId only when you mean to use it."
+            let note = "Each Kuronami agent has its own browser, shown to the user as a session. Tools act on yours by default, so leave out pageId. list_pages names every Kuronami browser by @label; pass another browser's pageId only when you mean to use it."
             let existing = result["instructions"] as? String
             result["instructions"] = existing.map { note + "\n\n" + $0 } ?? note
         case .toolsList:
@@ -226,7 +226,7 @@ private final class BrowserProxy: @unchecked Sendable {
                 scoped.insert(tools[index]["name"] as? String ?? "")
                 schema["required"] = (schema["required"] as? [String] ?? []).filter { $0 != "pageId" }
                 if var pageId = properties["pageId"] as? [String: Any] {
-                    pageId["description"] = "Optional. Defaults to your own Hyperterm browser; pass another page's id (see list_pages) to use that browser."
+                    pageId["description"] = "Optional. Defaults to your own Kuronami browser; pass another page's id (see list_pages) to use that browser."
                     properties["pageId"] = pageId
                 }
                 schema["properties"] = properties

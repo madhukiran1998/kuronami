@@ -1,4 +1,5 @@
-// Renders Resources/AppIcon.icns. Run: swift scripts/make-icon.swift
+// Renders Resources/AppIcon.icns: Kuronami, a black wave.
+// Run from the repository root: swift scripts/make-icon.swift
 import AppKit
 
 let size: CGFloat = 1024
@@ -10,49 +11,76 @@ let ctx = NSGraphicsContext.current!.cgContext
 let body = NSRect(x: 100, y: 100, width: 824, height: 824)
 let shape = NSBezierPath(roundedRect: body, xRadius: 186, yRadius: 186)
 ctx.saveGState()
-ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 28, color: NSColor.black.withAlphaComponent(0.35).cgColor)
-NSColor(srgbRed: 0.08, green: 0.085, blue: 0.10, alpha: 1).setFill()
+ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 28, color: NSColor.black.withAlphaComponent(0.4).cgColor)
+NSColor(srgbRed: 0.043, green: 0.043, blue: 0.047, alpha: 1).setFill()
 shape.fill()
 ctx.restoreGState()
-
 shape.addClip()
-let gradient = NSGradient(colors: [NSColor(srgbRed: 0.17, green: 0.18, blue: 0.21, alpha: 1),
-                                   NSColor(srgbRed: 0.07, green: 0.075, blue: 0.09, alpha: 1)])!
-gradient.draw(in: body, angle: -90)
+
+// Graphite: a slight lift toward the top, nothing tinted.
+NSGradient(colors: [NSColor(srgbRed: 0.125, green: 0.125, blue: 0.137, alpha: 1),
+                    NSColor(srgbRed: 0.043, green: 0.043, blue: 0.047, alpha: 1)])!
+    .draw(in: body, angle: -90)
+
+/// A true sine across the mark, so the wave reads as one clean stroke at every size.
+func wave(centerY: CGFloat, amplitude: CGFloat, from x0: CGFloat, to x1: CGFloat, periods: CGFloat) -> NSBezierPath {
+    let path = NSBezierPath()
+    let steps = 240
+    for step in 0...steps {
+        let t = CGFloat(step) / CGFloat(steps)
+        let x = x0 + (x1 - x0) * t
+        let y = centerY + amplitude * sin(t * periods * 2 * .pi)
+        step == 0 ? path.move(to: NSPoint(x: x, y: y)) : path.line(to: NSPoint(x: x, y: y))
+    }
+    path.lineCapStyle = .round
+    path.lineJoinStyle = .round
+    return path
+}
+
+let ink = NSColor(srgbRed: 0.93, green: 0.93, blue: 0.94, alpha: 1)
+let echo = wave(centerY: 410, amplitude: 46, from: 262, to: 762, periods: 1.5)
+echo.lineWidth = 30
+ink.withAlphaComponent(0.26).setStroke()
+echo.stroke()
+
+let crest = wave(centerY: 540, amplitude: 70, from: 240, to: 784, periods: 1.5)
+crest.lineWidth = 54
+ink.setStroke()
+crest.stroke()
+
+// The one color: the same blue that means "working" in the app.
+NSColor(srgbRed: 0.357, green: 0.549, blue: 1.0, alpha: 1).setFill()
+NSBezierPath(ovalIn: NSRect(x: 716, y: 700, width: 64, height: 64)).fill()
+
+// A hairline rim.
 NSColor.white.withAlphaComponent(0.08).setStroke()
 let rim = NSBezierPath(roundedRect: body.insetBy(dx: 2, dy: 2), xRadius: 184, yRadius: 184)
 rim.lineWidth = 4
 rim.stroke()
-
-// Prompt chevron + cursor.
-let ink = NSColor(srgbRed: 0.93, green: 0.94, blue: 0.96, alpha: 1)
-let chevron = NSBezierPath()
-chevron.move(to: NSPoint(x: 268, y: 618))
-chevron.line(to: NSPoint(x: 430, y: 500))
-chevron.line(to: NSPoint(x: 268, y: 382))
-chevron.lineWidth = 58
-chevron.lineCapStyle = .round
-chevron.lineJoinStyle = .round
-ink.setStroke()
-chevron.stroke()
-ink.withAlphaComponent(0.9).setFill()
-NSBezierPath(roundedRect: NSRect(x: 486, y: 352, width: 236, height: 58), xRadius: 29, yRadius: 29).fill()
-
-// Three agents: working, waiting on you, running.
-let dots: [(NSColor, CGFloat)] = [
-    (NSColor(srgbRed: 0.36, green: 0.62, blue: 1.0, alpha: 1), 560),
-    (NSColor(srgbRed: 1.0, green: 0.62, blue: 0.20, alpha: 1), 652),
-    (NSColor(srgbRed: 0.30, green: 0.80, blue: 0.50, alpha: 1), 744),
-]
-for (color, x) in dots {
-    color.setFill()
-    NSBezierPath(ovalIn: NSRect(x: x - 34, y: 700 - 34, width: 68, height: 68)).fill()
-}
 image.unlockFocus()
 
-let tiff = image.tiffRepresentation!
-let png = NSBitmapImageRep(data: tiff)!.representation(using: .png, properties: [:])!
+// Master PNG, then every size the .icns needs.
+let png = NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!
 let master = URL(fileURLWithPath: "build/icon-1024.png")
-try FileManager.default.createDirectory(at: master.deletingLastPathComponent(), withIntermediateDirectories: true)
+let iconset = URL(fileURLWithPath: "build/AppIcon.iconset")
+try? FileManager.default.removeItem(at: iconset)
+try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
 try png.write(to: master)
-print(master.path)
+
+func run(_ path: String, _ args: [String]) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: path)
+    process.arguments = args
+    process.standardOutput = FileHandle.nullDevice
+    try! process.run()
+    process.waitUntilExit()
+}
+for points in [16, 32, 128, 256, 512] {
+    for scale in [1, 2] {
+        let pixels = points * scale
+        let name = "icon_\(points)x\(points)\(scale == 2 ? "@2x" : "").png"
+        run("/usr/bin/sips", ["-z", "\(pixels)", "\(pixels)", master.path, "--out", iconset.appendingPathComponent(name).path])
+    }
+}
+run("/usr/bin/iconutil", ["-c", "icns", iconset.path, "-o", "Resources/AppIcon.icns"])
+print("Resources/AppIcon.icns")

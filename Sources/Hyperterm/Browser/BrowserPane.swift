@@ -32,7 +32,7 @@ struct BrowserPane: View {
         .background(Color(nsColor: Theme.terminalBackground))
     }
 
-    /// Dev servers running in Hyperterm, offered as one-click destinations.
+    /// Dev servers running in Kuronami, offered as one-click destinations.
     private var servers: [(label: String, port: Int)] {
         store.sessions.flatMap { session in session.ports.map { (label: session.label, port: $0) } }
     }
@@ -293,7 +293,7 @@ private struct BrowserStartPage: View {
             VStack(spacing: 6) {
                 Text(error == nil ? "@\(label)" : "Browser unavailable")
                     .font(.system(size: 16, weight: .semibold, design: error == nil ? .monospaced : .default))
-                Text(error ?? "Agents drive this browser as @\(label) and you can step in anytime. Every Hyperterm browser shares one set of logins.")
+                Text(error ?? "Agents drive this browser as @\(label) and you can step in anytime. Every Kuronami browser shares one set of logins.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

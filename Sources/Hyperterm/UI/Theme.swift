@@ -32,6 +32,20 @@ enum Theme {
     }
 }
 
+/// Kuronami's Graphite palette: neutral black and charcoal, so color on screen always means
+/// something: an agent's state, which agent it is, or where focus is.
+enum Ink {
+    /// Window and canvas: the deepest layer.
+    static let floor = NSColor(srgbRed: 0.043, green: 0.043, blue: 0.047, alpha: 1)
+    /// Sidebar and inspector.
+    static let deep = NSColor(srgbRed: 0.055, green: 0.055, blue: 0.063, alpha: 1)
+    /// Cards, fields, bars.
+    static let surface = NSColor(srgbRed: 0.082, green: 0.082, blue: 0.090, alpha: 1)
+    /// Selected rows, active segments.
+    static let raised = NSColor(srgbRed: 0.110, green: 0.110, blue: 0.122, alpha: 1)
+    static let hairline = NSColor(srgbRed: 0.149, green: 0.149, blue: 0.165, alpha: 1)
+}
+
 @MainActor
 enum ChromeColors {
     static var chrome: Color { Color(nsColor: Theme.chrome) }
@@ -40,10 +54,12 @@ enum ChromeColors {
 }
 
 enum Palette {
-    static let working = Color(red: 0.36, green: 0.62, blue: 1.0)
-    static let attention = Color(red: 1.0, green: 0.62, blue: 0.20)
-    static let failed = Color(red: 1.0, green: 0.36, blue: 0.33)
-    static let running = Color(red: 0.30, green: 0.80, blue: 0.50)
+    /// An agent at work, and focus.
+    static let working = Color(red: 0.357, green: 0.549, blue: 1.0)
+    /// Something needs you.
+    static let attention = Color(red: 0.961, green: 0.647, blue: 0.141)
+    static let failed = Color(red: 0.949, green: 0.333, blue: 0.353)
+    static let running = Color(red: 0.247, green: 0.812, blue: 0.557)
     static let idle = Color.secondary.opacity(0.55)
     static let claude = Color(red: 0.85, green: 0.47, blue: 0.34)
     static let codex = Color(red: 0.55, green: 0.60, blue: 1.0)
@@ -63,11 +79,20 @@ enum Palette {
 extension SessionKind {
     var symbol: String {
         switch self {
-        case .claude: return "sparkle"
-        case .codex: return "hexagon"
+        case .claude: return "c.square"
+        case .codex: return "x.square"
         case .shell: return "terminal"
-        case .server: return "bolt.horizontal"
+        case .server: return "bolt"
         case .browser: return "globe"
+        }
+    }
+
+    /// Agents are drawn as a letter rather than a symbol.
+    var monogram: String? {
+        switch self {
+        case .claude: return "C"
+        case .codex: return "X"
+        default: return nil
         }
     }
 
@@ -75,9 +100,7 @@ extension SessionKind {
         switch self {
         case .claude: return Palette.claude
         case .codex: return Palette.codex
-        case .shell: return .secondary
-        case .server: return Palette.running
-        case .browser: return Palette.working
+        case .shell, .server, .browser: return .secondary
         }
     }
 }
@@ -125,4 +148,15 @@ func elapsed(since date: Date, now: Date = Date()) -> String {
     if seconds < 3600 { return "\(seconds / 60)m" }
     if seconds < 86_400 { return "\(seconds / 3600)h" }
     return "\(seconds / 86_400)d"
+}
+
+/// The canvas terminals float on: flat graphite.
+final class InkCanvas: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = Ink.floor.cgColor
+    }
+
+    required init?(coder: NSCoder) { fatalError("not supported") }
 }

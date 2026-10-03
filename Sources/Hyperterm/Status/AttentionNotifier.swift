@@ -23,7 +23,7 @@ final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
-    /// `foreground` banners also show while Hyperterm is active (for sessions you aren't looking at).
+    /// `foreground` banners also show while Kuronami is active (for sessions you aren't looking at).
     func post(session: TerminalSession, title: String, body: String, foreground: Bool) {
         if NSApp.isActive && !foreground { return }
         // One banner per session per few seconds; agents can flap between states.

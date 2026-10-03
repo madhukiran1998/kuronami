@@ -12,12 +12,12 @@ struct ProcessSnapshot: Equatable {
 
 /// Who is on the other end of a control-socket connection, decided from kernel facts only.
 enum CallerIdentity: Sendable, Equatable {
-    /// Traced by process ancestry to a Hyperterm session.
+    /// Traced by process ancestry to a Kuronami session.
     case session(String)
-    /// Started from inside Hyperterm (macOS "responsible process" is Hyperterm) but no longer
+    /// Started from inside Kuronami (macOS "responsible process" is Kuronami) but no longer
     /// under any session: a backgrounded or double-forked child. Untrusted.
     case detachedInside
-    /// A process outside Hyperterm, e.g. the user's own terminal app.
+    /// A process outside Kuronami, e.g. the user's own terminal app.
     case external
     /// The peer is gone or unreadable. Untrusted.
     case unknown
@@ -64,7 +64,7 @@ final class ProcessInspector: @unchecked Sendable {
 
     // MARK: - Caller identity
 
-    /// Fail closed: only ancestry proves a session, and only processes Hyperterm did not spawn
+    /// Fail closed: only ancestry proves a session, and only processes Kuronami did not spawn
     /// count as the user. Callable from any thread; never waits on the polling queue.
     func identify(pid: pid_t) -> CallerIdentity {
         let mine = getpid()

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Minimal MCP server over stdio (newline-delimited JSON-RPC 2.0). Each tool call is forwarded
-/// to the Hyperterm app over the control socket, tagged with this terminal's session id so the
+/// to the Kuronami app over the control socket, tagged with this terminal's session id so the
 /// app knows who is asking and can apply its rules.
 func runMCPServer() -> Never {
     let selfLabel = ProcessInfo.processInfo.environment["HT_LABEL"]
@@ -49,7 +49,7 @@ private func currentSelf(_ sessionID: String?) -> SessionInfo? {
 
 private func instructions(selfLabel: String?, me: SessionInfo?) -> String {
     let label = me?.label ?? selfLabel
-    let intro = label.map { "You are running in the Hyperterm terminal labeled @\($0)." } ?? "You are running inside Hyperterm."
+    let intro = label.map { "You are running in the Kuronami terminal labeled @\($0)." } ?? "You are running inside Kuronami."
     let naming: String
     if me?.labelSource == "user" {
         naming = "The user chose this label; don't rename it."
@@ -73,7 +73,7 @@ private func instructions(selfLabel: String?, me: SessionInfo?) -> String {
 private let toolDefinitions: [[String: Any]] = [
     [
         "name": "list_terminals",
-        "description": "List every Hyperterm terminal: label, kind (claude/codex/shell/server), state (working, needs-input, idle, running, exited), what it's doing, cwd, and listening ports.",
+        "description": "List every Kuronami terminal: label, kind (claude/codex/shell/server), state (working, needs-input, idle, running, exited), what it's doing, cwd, and listening ports.",
         "inputSchema": ["type": "object", "properties": [:]],
     ],
     [
@@ -102,7 +102,7 @@ private let toolDefinitions: [[String: Any]] = [
     ],
     [
         "name": "set_status",
-        "description": "Post a one-line status to your card in the Hyperterm sidebar so the user can see what you're doing without opening your terminal, e.g. \"Migrating auth tables · 2 of 4 done\" or \"Blocked: need the staging DB URL\". Update it at milestones, not every step. Empty text clears it.",
+        "description": "Post a one-line status to your card in the Kuronami sidebar so the user can see what you're doing without opening your terminal, e.g. \"Migrating auth tables · 2 of 4 done\" or \"Blocked: need the staging DB URL\". Update it at milestones, not every step. Empty text clears it.",
         "inputSchema": [
             "type": "object",
             "properties": ["text": ["type": "string", "description": "Under ~80 characters"]],
@@ -111,7 +111,7 @@ private let toolDefinitions: [[String: Any]] = [
     ],
     [
         "name": "rename_terminal",
-        "description": "Rename your own Hyperterm terminal so its label reflects what you're working on now. Use a short kebab-case label (1–3 words, e.g. \"auth-refactor\"). Call it when you start a task and when your focus changes substantially. Your old label keeps working as an alias. Not allowed if the user named the terminal.",
+        "description": "Rename your own Kuronami terminal so its label reflects what you're working on now. Use a short kebab-case label (1–3 words, e.g. \"auth-refactor\"). Call it when you start a task and when your focus changes substantially. Your old label keeps working as an alias. Not allowed if the user named the terminal.",
         "inputSchema": [
             "type": "object",
             "properties": ["label": ["type": "string", "description": "New label, e.g. \"auth-refactor\""]],
@@ -129,7 +129,7 @@ private let toolDefinitions: [[String: Any]] = [
     ],
     [
         "name": "start_server",
-        "description": "Start a long-running command (dev server, watcher, worker) in a new labeled Hyperterm terminal instead of in the background of your own shell, so the user can see it and its ports. The user is asked to approve it in Hyperterm first.",
+        "description": "Start a long-running command (dev server, watcher, worker) in a new labeled Kuronami terminal instead of in the background of your own shell, so the user can see it and its ports. The user is asked to approve it in Kuronami first.",
         "inputSchema": [
             "type": "object",
             "properties": [
@@ -217,7 +217,7 @@ private func write(_ object: [String: Any]) {
     stdoutLock.unlock()
 }
 
-/// Channel mode: long-poll Hyperterm for messages addressed to this session and push each one
+/// Channel mode: long-poll Kuronami for messages addressed to this session and push each one
 /// into Claude as a `notifications/claude/channel` event.
 private func startChannelLoop() {
     Thread.detachNewThread {

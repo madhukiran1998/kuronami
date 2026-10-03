@@ -8,10 +8,10 @@ enum SocketClientError: Error, CustomStringConvertible {
 
     var description: String {
         switch self {
-        case .connectFailed(let path): return "Hyperterm isn't running (no socket at \(path))"
-        case .writeFailed: return "failed to write request to Hyperterm"
-        case .emptyResponse: return "Hyperterm closed the connection without replying"
-        case .badResponse(let raw): return "unreadable reply from Hyperterm: \(raw.prefix(200))"
+        case .connectFailed(let path): return "Kuronami isn't running (no socket at \(path))"
+        case .writeFailed: return "failed to write request to Kuronami"
+        case .emptyResponse: return "Kuronami closed the connection without replying"
+        case .badResponse(let raw): return "unreadable reply from Kuronami: \(raw.prefix(200))"
         }
     }
 }

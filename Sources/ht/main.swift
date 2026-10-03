@@ -1,6 +1,6 @@
 import Foundation
 
-// ht: command-line control for Hyperterm. Also the hook entry point for agents and the
+// ht: command-line control for Kuronami. Also the hook entry point for agents and the
 // stdio MCP server that lets agents talk to each other by @label.
 
 let usage = """
@@ -19,7 +19,7 @@ usage: ht <command>
   restart @label                   restart a terminal's process
   rename @label <new-label>
   close @label
-  whoami                           this terminal's label (inside Hyperterm)
+  whoami                           this terminal's label (inside Kuronami)
   mcp                              run the MCP server (used by agents)
   browser                          open the embedded browser; prints its DevTools endpoint
   browser-mcp [port]               run the browser MCP server (used by agents)
@@ -154,7 +154,7 @@ case "rename":
     print(requireOK(request(.rename) { $0.target = args[0]; $0.label = args[1] }).text ?? "renamed")
 
 case "whoami":
-    guard let label = env["HT_LABEL"] else { fail("not running inside Hyperterm") }
+    guard let label = env["HT_LABEL"] else { fail("not running inside Kuronami") }
     print("@" + label)
 
 case "hook":
@@ -177,7 +177,7 @@ case "hook":
     exit(0)
 
 case "permission":
-    // PermissionRequest hook: wait for the user's decision in Hyperterm and print it. Printing
+    // PermissionRequest hook: wait for the user's decision in Kuronami and print it. Printing
     // nothing leaves the CLI's own prompt in charge. Never fail the agent.
     let source = args.first ?? "claude"
     let payload = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
@@ -190,7 +190,7 @@ case "permission":
     exit(0)
 
 case "statusline":
-    // Claude statusLine: report telemetry to Hyperterm, then print the user's own statusline.
+    // Claude statusLine: report telemetry to Kuronami, then print the user's own statusline.
     let input = FileHandle.standardInput.readDataToEndOfFile()
     if callerSession != nil {
         var req = ControlRequest(cmd: .statusline)

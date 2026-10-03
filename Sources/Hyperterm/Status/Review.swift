@@ -111,7 +111,7 @@ enum Review {
         guard runGit(["-C", path, "push", "-u", "origin", branch]) != nil else { return .failure(.git("git push failed (is there an origin remote?)")) }
         let gh = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].first { FileManager.default.isExecutableFile(atPath: $0) }
         guard let gh else { return .failure(.git("GitHub CLI (gh) not found")) }
-        var args = ["pr", "create", "--title", title, "--body", "Opened from Hyperterm.", "--head", branch]
+        var args = ["pr", "create", "--title", title, "--body", "Opened from Kuronami.", "--head", branch]
         if let base { args += ["--base", base] }
         guard let url = runProcess(gh, args, timeout: 60, environment: ProcessInfo.processInfo.environment.merging(["GIT_DIR": ""]) { a, _ in a }),
               let line = url.split(separator: "\n").last else {
@@ -127,7 +127,7 @@ enum Review {
         guard (runGit(["-C", mainRoot, "status", "--porcelain"]) ?? "x").isEmpty else {
             return .failure(.git("the main checkout has uncommitted changes"))
         }
-        guard runGit(["-C", mainRoot, "merge", "--no-ff", "-m", "Merge \(branch) (Hyperterm)", branch]) != nil else {
+        guard runGit(["-C", mainRoot, "merge", "--no-ff", "-m", "Merge \(branch) (Kuronami)", branch]) != nil else {
             _ = runGit(["-C", mainRoot, "merge", "--abort"])
             return .failure(.git("merge conflicts; resolve them in the main checkout"))
         }
@@ -139,7 +139,7 @@ enum Review {
     static func archive(worktree path: String, mainRoot: String) -> Result<String, ReviewError> {
         if !(runGit(["-C", path, "status", "--porcelain"]) ?? "").isEmpty {
             _ = runGit(["-C", path, "add", "-A"])
-            _ = runGit(["-C", path, "-c", "commit.gpgsign=false", "commit", "-m", "Hyperterm snapshot before archiving"])
+            _ = runGit(["-C", path, "-c", "commit.gpgsign=false", "commit", "-m", "Kuronami snapshot before archiving"])
         }
         let branch = currentBranch(at: path) ?? "?"
         // Claude locks its worktrees while a session uses them; a lock whose process is gone is

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Wire protocol between the Hyperterm app and the `ht` CLI / hooks / MCP bridge.
+/// Wire protocol between the Kuronami app and the `ht` CLI / hooks / MCP bridge.
 /// One JSON object per line over a Unix domain socket, one request per connection.
 enum ControlCommand: String, Codable {
     case list          // list sessions

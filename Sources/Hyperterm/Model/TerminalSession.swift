@@ -57,7 +57,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     private var pendingInput: String?
     private var inputGeneration = 0
     /// A label Claude Code itself should adopt via /rename at its next idle prompt, so its
-    /// native SendMessage name matches the Hyperterm label.
+    /// native SendMessage name matches the Kuronami label.
     private var pendingNativeRename: String?
     weak var store: SessionStore?
 
@@ -208,7 +208,7 @@ final class TerminalSession: ObservableObject, Identifiable {
             return .failure(.noPromptOnScreen(label))
         }
         keys.forEach { _ = surface.pressKey(named: $0) }
-        record(.approval, answer == .deny ? "Denied in Hyperterm" : "Approved in Hyperterm")
+        record(.approval, answer == .deny ? "Denied in Kuronami" : "Approved in Kuronami")
         apply(.userSubmitted, source: "approval", force: answer == .deny ? .idle : .working)
         return .success(answer == .deny ? "denied" : "approved")
     }

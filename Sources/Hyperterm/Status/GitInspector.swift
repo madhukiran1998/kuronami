@@ -48,7 +48,7 @@ final class GitInspector: @unchecked Sendable {
     }
 }
 
-/// Runs git with repo-supplied hooks and fsmonitor disabled: Hyperterm runs git inside
+/// Runs git with repo-supplied hooks and fsmonitor disabled: Kuronami runs git inside
 /// agent-controlled repos and must not execute their config.
 func runGit(_ arguments: [String]) -> String? {
     let safety = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]

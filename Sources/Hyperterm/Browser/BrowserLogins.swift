@@ -12,15 +12,15 @@ import SQLite3
 enum BrowserLogins {
     static func importFromChrome(reload page: CefWebViewModel) {
         guard let profile = ChromeProfile.lastUsed() else {
-            alert("No Chrome profile found", "Hyperterm looks for Google Chrome's data in ~/Library/Application Support/Google/Chrome.")
+            alert("No Chrome profile found", "Kuronami looks for Google Chrome's data in ~/Library/Application Support/Google/Chrome.")
             return
         }
         let confirm = NSAlert()
         confirm.messageText = "Import your Chrome logins?"
         confirm.informativeText = """
-            Copies the cookies from your Chrome profile "\(profile.name)" into Hyperterm's browser, so sites you're signed in to in Chrome are signed in here.
+            Copies the cookies from your Chrome profile "\(profile.name)" into Kuronami's browser, so sites you're signed in to in Chrome are signed in here.
 
-            Your agents can act on those sites while they use the browser. macOS will ask to let Hyperterm read "Chrome Safe Storage"; choose Allow.
+            Your agents can act on those sites while they use the browser. macOS will ask to let Kuronami read "Chrome Safe Storage"; choose Allow.
             """
         confirm.addButton(withTitle: "Import")
         confirm.addButton(withTitle: "Cancel")
@@ -45,7 +45,7 @@ enum BrowserLogins {
             }.value
             switch outcome {
             case .success(let count):
-                alert("Imported \(count) cookies", "Every Hyperterm browser is now signed in where your Chrome is.")
+                alert("Imported \(count) cookies", "Every Kuronami browser is now signed in where your Chrome is.")
                 page.reload()
             case .failure(let error):
                 alert("Couldn't import Chrome logins", error.description)
