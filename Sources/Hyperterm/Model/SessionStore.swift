@@ -45,7 +45,7 @@ final class SessionStore: ObservableObject {
     /// Serializes checkpoint captures within a repository, so turns stay ordered, while separate
     /// repositories snapshot in parallel.
     var checkpointQueues: [String: DispatchQueue] = [:]
-    let checkpointQueue = DispatchQueue(label: "dev.hyperterm.checkpoints", qos: .utility)
+    let pruneQueue = DispatchQueue(label: "dev.hyperterm.checkpoints.prune", qos: .utility)
     private var layoutBeforeZoom: LayoutMode?
 
     /// Account-wide usage windows, from the most recent statusLine report of any Claude session.

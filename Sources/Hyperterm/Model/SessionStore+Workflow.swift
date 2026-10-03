@@ -202,7 +202,7 @@ extension SessionStore {
             let dropped = recentlyClosed.suffix(from: 15)
             recentlyClosed.removeLast(recentlyClosed.count - 15)
             let targets = dropped.map { (path: $0.workPath, id: $0.id.uuidString) }
-            checkpointQueue.async { for target in targets { Checkpoints.prune(at: target.path, session: target.id) } }
+            pruneQueue.async { for target in targets { Checkpoints.prune(at: target.path, session: target.id) } }
         }
         saveRecentlyClosed()
     }
