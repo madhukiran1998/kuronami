@@ -124,4 +124,13 @@ final class SafetyAndReviewTests: XCTestCase {
         XCTAssertTrue(files["src/a b/c.ts"]?.hasSuffix("+new") == true)
         XCTAssertEqual(PatchLine.parse(files["gone.txt"] ?? "").filter { $0.kind == .removed }.map(\.text), ["bye"])
     }
+
+    @MainActor
+    func testBrowserAddressResolution() {
+        XCTAssertEqual(resolveAddress("localhost:4123")?.absoluteString, "http://localhost:4123")
+        XCTAssertEqual(resolveAddress(":3000")?.absoluteString, "http://localhost:3000")
+        XCTAssertEqual(resolveAddress("example.com")?.absoluteString, "https://example.com")
+        XCTAssertEqual(resolveAddress("http://x.test/a")?.absoluteString, "http://x.test/a")
+        XCTAssertEqual(resolveAddress("how do flexbox gaps work")?.host(), "www.google.com")
+    }
 }

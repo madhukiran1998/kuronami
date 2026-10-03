@@ -388,8 +388,8 @@ enum TerminalSessionFactory {
     static func makeSurface(spec: LaunchSpec) -> any SessionSurface {
         if spec.kind == .browser, let store {
             // `ht new browser @docs -- <address>` passes the address as the command.
-            let address = spec.url ?? spec.command.map { $0.contains("://") ? $0 : "https://" + $0 }
-            return BrowserSurfaceView(url: address.flatMap(URL.init(string:)), label: spec.label, store: store)
+            let url = spec.url.flatMap(URL.init(string:)) ?? spec.command.flatMap(resolveAddress)
+            return BrowserSurfaceView(url: url, label: spec.label, store: store)
         }
         return TerminalSurfaceView(launch: AgentIntegration.surfaceLaunch(for: spec))
     }

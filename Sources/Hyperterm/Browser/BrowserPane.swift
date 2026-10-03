@@ -110,26 +110,9 @@ private struct BrowserBar: View {
         fieldFocused = true
     }
 
-    /// Bare hosts get a scheme (http for local dev servers); anything else is a search.
     private func navigate() {
-        let text = address.trimmingCharacters(in: .whitespaces)
         defer { fieldFocused = false }
-        guard !text.isEmpty else { return }
-        let local = text.hasPrefix("localhost") || text.hasPrefix("127.0.0.1") || text.hasPrefix(":")
-        let looksLikeAddress = !text.contains(" ") && (text.contains(".") || local || text.contains(":"))
-        let target: URL?
-        if text.contains("://") {
-            target = URL(string: text)
-        } else if text.hasPrefix(":"), let port = Int(text.dropFirst()) {
-            target = URL(string: "http://localhost:\(port)")
-        } else if looksLikeAddress {
-            target = URL(string: (local ? "http://" : "https://") + text)
-        } else {
-            var search = URLComponents(string: "https://www.google.com/search")
-            search?.queryItems = [URLQueryItem(name: "q", value: text)]
-            target = search?.url
-        }
-        if let target { model.load(target) }
+        if let target = resolveAddress(address) { model.load(target) }
     }
 
     // MARK: Menu
@@ -345,4 +328,19 @@ private struct AppKitLayer<Content: View>: NSViewRepresentable {
     func updateNSView(_ view: NSHostingView<Content>, context: Context) {
         view.rootView = content()
     }
+}
+
+/// What the user typed, as a URL: bare hosts get a scheme (http for local dev servers, so
+/// "localhost:3000" and ":3000" work), anything that isn't an address is a search.
+func resolveAddress(_ raw: String) -> URL? {
+    let text = raw.trimmingCharacters(in: .whitespaces)
+    guard !text.isEmpty else { return nil }
+    if text.contains("://") { return URL(string: text) }
+    if text.hasPrefix(":"), let port = Int(text.dropFirst()) { return URL(string: "http://localhost:\(port)") }
+    let local = text.hasPrefix("localhost") || text.hasPrefix("127.0.0.1") || text.hasPrefix("0.0.0.0")
+    let looksLikeAddress = !text.contains(" ") && (text.contains(".") || local || text.contains(":"))
+    if looksLikeAddress { return URL(string: (local ? "http://" : "https://") + text) }
+    var search = URLComponents(string: "https://www.google.com/search")
+    search?.queryItems = [URLQueryItem(name: "q", value: text)]
+    return search?.url
 }
