@@ -96,10 +96,30 @@ enum CommitWriter {
             try? writer.write(contentsOf: Data(input.utf8))
             try? writer.close()
         }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        // Read on another thread with a deadline: a helper the CLI spawned can keep the pipe open
+        // after the CLI itself is gone, and that must not hang the caller.
+        let output = Output()
+        let reader = stdout.fileHandleForReading
+        DispatchQueue.global().async {
+            output.finish(reader.readDataToEndOfFile())
+        }
+        guard output.done.wait(timeout: .now() + 95) == .success else {
+            if process.isRunning { process.terminate() }
+            return nil
+        }
         process.waitUntilExit()
         killer.cancel()
         guard process.terminationStatus == 0 else { return nil }
-        return String(decoding: data, as: UTF8.self)
+        return String(decoding: output.data, as: UTF8.self)
+    }
+
+    private final class Output: @unchecked Sendable {
+        let done = DispatchSemaphore(value: 0)
+        private(set) var data = Data()
+
+        func finish(_ data: Data) {
+            self.data = data
+            done.signal()
+        }
     }
 }
