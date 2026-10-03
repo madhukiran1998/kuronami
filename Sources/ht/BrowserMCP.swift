@@ -14,9 +14,13 @@ func runBrowserMCP(port: Int) -> Never {
 }
 
 private final class BrowserProxy: @unchecked Sendable {
-    private let child = Process()
-    private let toChild = Pipe()
-    private let fromChild = Pipe()
+    private var child = Process()
+    private var toChild = Pipe()
+    private var fromChild = Pipe()
+    /// Where chrome-devtools-mcp is attached; follows the browser if it had to take another port.
+    private var browserURL: String
+    /// The agent's handshake, replayed when the server is restarted on a new endpoint.
+    private var handshake: [String] = []
     private let outputLock = NSLock()
     private let stateLock = NSLock()
 
@@ -34,22 +38,11 @@ private final class BrowserProxy: @unchecked Sendable {
     private enum Rewrite { case initialize, toolsList, listPages }
 
     init(port: Int) {
-        child.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        child.arguments = ["npx", "-y", "chrome-devtools-mcp@1.10.1",
-                           "--browser-url", "http://127.0.0.1:\(port)",
-                           "--no-usage-statistics", "--no-performance-crux"]
-        var environment = ProcessInfo.processInfo.environment
-        environment["CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS"] = "1"
-        child.environment = environment
-        child.standardInput = toChild
-        child.standardOutput = fromChild
-        child.standardError = FileHandle.standardError
+        browserURL = "http://127.0.0.1:\(port)"
     }
 
     func run() -> Never {
-        child.terminationHandler = { exit($0.terminationStatus) }
-        do { try child.run() } catch { fail("ht: couldn't start chrome-devtools-mcp via npx: \(error)") }
-        Thread.detachNewThread { [self] in relayChildOutput() }
+        launchServer()
         while let line = readLine(strippingNewline: false) {
             handleAgentLine(line)
         }
@@ -58,11 +51,62 @@ private final class BrowserProxy: @unchecked Sendable {
         exit(child.terminationStatus)
     }
 
+    // MARK: - Server process
+
+    private func launchServer() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["npx", "-y", "chrome-devtools-mcp@1.10.1", "--browser-url", browserURL,
+                             "--no-usage-statistics", "--no-performance-crux"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS"] = "1"
+        process.environment = environment
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.standardError
+        process.terminationHandler = { exit($0.terminationStatus) }
+        do { try process.run() } catch { fail("ht: couldn't start chrome-devtools-mcp via npx: \(error)") }
+        child = process
+        toChild = input
+        fromChild = output
+        Thread.detachNewThread { [self] in relayChildOutput(from: output) }
+    }
+
+    /// The browser came up on a different port: restart the server there and replay the
+    /// agent's handshake so the agent never notices.
+    private func reattach(to endpoint: String) {
+        guard endpoint != browserURL else { return }
+        browserURL = endpoint
+        child.terminationHandler = nil
+        child.terminate()
+        launchServer()
+        for line in handshake {
+            guard var message = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
+            if message["id"] != nil {
+                // Its reply is ours to swallow: the agent already got one.
+                message["id"] = "ht-handshake"
+                let semaphore = DispatchSemaphore(value: 0)
+                withState { self.hiddenWaiters["ht-handshake"] = semaphore }
+                sendToChild(message)
+                _ = semaphore.wait(timeout: .now() + 20)
+                withState { self.hiddenReplies["ht-handshake"] = nil }
+            } else {
+                sendToChild(line)
+            }
+        }
+    }
+
     // MARK: - Agent → server
 
     private func handleAgentLine(_ line: String) {
         guard let message = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-              let method = message["method"] as? String, let id = message["id"] else {
+              let method = message["method"] as? String else {
+            sendToChild(line)
+            return
+        }
+        if method == "initialize" || method == "notifications/initialized" { handshake.append(line) }
+        guard let id = message["id"] else {
             sendToChild(line)
             return
         }
@@ -127,6 +171,7 @@ private final class BrowserProxy: @unchecked Sendable {
         guard let response = try? sendControlRequest(req, timeout: 30), response.ok, let label = response.text else {
             return nil
         }
+        if let endpoint = response.endpoint { reattach(to: endpoint) }
         withState { self.ownLabel = label }
         refreshPageMap(alreadyMarked: true)
         return label
@@ -179,8 +224,8 @@ private final class BrowserProxy: @unchecked Sendable {
 
     // MARK: - Server → agent
 
-    private func relayChildOutput() {
-        guard let stream = fdopen(fromChild.fileHandleForReading.fileDescriptor, "r") else { return }
+    private func relayChildOutput(from pipe: Pipe) {
+        guard let stream = fdopen(pipe.fileHandleForReading.fileDescriptor, "r") else { return }
         var buffer: UnsafeMutablePointer<CChar>?
         var capacity = 0
         while getline(&buffer, &capacity, stream) > 0, let buffer {

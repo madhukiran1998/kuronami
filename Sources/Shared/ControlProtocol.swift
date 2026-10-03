@@ -77,6 +77,8 @@ struct ControlResponse: Codable {
     var sessions: [SessionInfo]?
     var session: SessionInfo?
     var text: String?
+    /// For `browser`: the DevTools endpoint the browser is actually listening on.
+    var endpoint: String?
 
     static func success(text: String? = nil) -> ControlResponse {
         ControlResponse(ok: true, text: text)

@@ -58,7 +58,11 @@ struct ControlHandler {
             guard ready else { reply(.failure("browser unavailable: Chromium didn't come up")); return }
             store.markBrowsers()
             // Tags land asynchronously in each page's renderer.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { reply(.success(text: target.label)) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                var response = ControlResponse.success(text: target.label)
+                response.endpoint = AgentBrowser.endpoint
+                reply(response)
+            }
         }
     }
 

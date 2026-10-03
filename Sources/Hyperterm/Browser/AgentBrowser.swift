@@ -12,12 +12,15 @@ import Observation
 final class AgentBrowser {
     static let shared = AgentBrowser()
 
-    /// Fixed so agents' MCP config can name it before Chromium is running.
-    nonisolated static var port: Int {
+    /// Named in agents' MCP config before Chromium runs. If something else holds it, Chromium
+    /// takes the next free port and agents' tools follow (the `browser` reply carries it).
+    nonisolated static var preferredPort: Int {
         let stored = UserDefaults.standard.integer(forKey: "browserPort")
         return stored > 0 ? stored : 9339
     }
-    nonisolated static var endpoint: String { "http://127.0.0.1:\(port)" }
+    /// The port Chromium actually listens on once started.
+    private(set) static var port = preferredPort
+    static var endpoint: String { "http://127.0.0.1:\(port)" }
     static var profileDirectory: URL { ControlPaths.supportDirectory.appendingPathComponent("browser") }
 
     /// Opt-in: agents may also use the user's own Chrome (Claude in Chrome). Off by default so
@@ -45,10 +48,11 @@ final class AgentBrowser {
     func start() -> Bool {
         if isRunning { return true }
         if startError != nil { return false }
-        if Self.portIsTaken() {
-            startError = "Port \(Self.port) is in use by another program."
+        guard let free = (Self.preferredPort..<Self.preferredPort + 40).first(where: { !Self.portIsTaken($0) }) else {
+            startError = "No free port for the browser near \(Self.preferredPort)."
             return false
         }
+        Self.port = free
         var configuration = CefConfiguration()
         configuration.rootCachePath = Self.profileDirectory
         configuration.remoteDebuggingPort = Self.port
@@ -96,7 +100,7 @@ final class AgentBrowser {
     }
 
     /// Something else already listening on our port would receive the agents' CDP traffic.
-    private static func portIsTaken() -> Bool {
+    private static func portIsTaken(_ port: Int) -> Bool {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
         defer { close(fd) }

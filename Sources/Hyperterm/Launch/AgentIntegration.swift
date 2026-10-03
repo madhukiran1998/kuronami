@@ -50,7 +50,7 @@ enum AgentIntegration {
     private static func mcpConfig() -> String {
         json(["mcpServers": [
             "hyperterm": ["command": htPath, "args": ["mcp"]],
-            "browser": ["command": htPath, "args": ["browser-mcp", String(AgentBrowser.port)]],
+            "browser": ["command": htPath, "args": ["browser-mcp", String(AgentBrowser.preferredPort)]],
         ]])
     }
 
@@ -96,7 +96,7 @@ enum AgentIntegration {
           -c "mcp_servers.hyperterm.command=\\"$HT_DIR/bin/ht\\"" \\
           -c 'mcp_servers.hyperterm.args=["mcp"]' \\
           -c "mcp_servers.browser.command=\\"$HT_DIR/bin/ht\\"" \\
-          -c 'mcp_servers.browser.args=["browser-mcp","\(AgentBrowser.port)"]' \\
+          -c 'mcp_servers.browser.args=["browser-mcp","\(AgentBrowser.preferredPort)"]' \\
           "$@"
         """
     }
