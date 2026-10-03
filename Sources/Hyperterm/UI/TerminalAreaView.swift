@@ -272,10 +272,15 @@ final class TerminalAreaView: NSView {
         guard drag?.id == id, let tile = tiles[id] else { return }
         let center = CGPoint(x: tile.frame.midX, y: tile.frame.midY)
         tiles.values.forEach { $0.setDropTarget(false) }
+        var swapped = false
         if let target = dropTarget(for: id, at: center), var tree = trees[mode] {
             tree.swap(id, target)
             trees[mode] = tree
             saveTree()
+            // Before reconciling: an untouched tree is rebuilt from the visible order, which
+            // would put the two tiles straight back.
+            visibleOrder = tree.leaves
+            swapped = true
         }
         drag = nil
         let frames = currentFrames()
@@ -287,10 +292,7 @@ final class TerminalAreaView: NSView {
             MainActor.assumeIsolated { tile.setLifted(false) }
         }
         updateHandles()
-        if let order = trees[mode]?.leaves {
-            visibleOrder = order
-            onReorder?(order)
-        }
+        if swapped { onReorder?(visibleOrder) }
     }
 
     // MARK: - Geometry

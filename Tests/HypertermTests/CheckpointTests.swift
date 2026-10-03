@@ -124,6 +124,18 @@ final class CheckpointTests: XCTestCase {
         XCTAssertFalse(exists("src/a.swift"))
     }
 
+    func testRestoreHandlesNamesGitWouldQuote() throws {
+        try write("café.txt", "before\n")
+        Checkpoints.capture(at: repo, session: session, turn: 1, phase: .start, prompt: "one")
+        try write("café.txt", "after\n")
+        try write("naïve new.txt", "new\n")
+        let turn = try XCTUnwrap(Checkpoints.turns(at: repo, session: session).first)
+        XCTAssertEqual(Set(Checkpoints.changedFiles(at: repo, from: turn.start, to: nil)), ["café.txt", "naïve new.txt"])
+        guard case .success = Checkpoints.restore(at: repo, to: turn.start, session: session) else { return XCTFail("restore failed") }
+        XCTAssertEqual(read("café.txt"), "before\n")
+        XCTAssertFalse(exists("naïve new.txt"))
+    }
+
     func testRestoreLeavesIndexAlone() throws {
         Checkpoints.capture(at: repo, session: session, turn: 1, phase: .start, prompt: "one")
         try write("README.md", "staged change\n")

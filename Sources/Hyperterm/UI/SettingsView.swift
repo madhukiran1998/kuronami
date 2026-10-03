@@ -95,14 +95,14 @@ private struct GeneralSettings: View {
                 .onChange(of: editor) { UserDefaults.standard.set(editor, forKey: "preferredEditor") }
             }
             Hairline()
-            Toggle(isOn: $quickAsk) {
-                label("Quick Ask with ⌃⌥Space", detail: "Start an agent from any app without switching to Kuronami.")
+            setting("Quick Ask with ⌃⌥Space", detail: "Start an agent from any app without switching to Kuronami.") {
+                Toggle("", isOn: $quickAsk).labelsHidden()
+                    .onChange(of: quickAsk) { AppSettings.quickAskEnabled = quickAsk }
             }
-            .onChange(of: quickAsk) { AppSettings.quickAskEnabled = quickAsk }
-            Toggle(isOn: $checkpoints) {
-                label("Checkpoint every turn", detail: "Hidden Git snapshots power per-turn diffs and reverting files. Your index, branches and stash are never touched.")
+            setting("Checkpoint every turn", detail: "Hidden Git snapshots power per-turn diffs and reverting files. Your index, branches and stash are never touched.") {
+                Toggle("", isOn: $checkpoints).labelsHidden()
+                    .onChange(of: checkpoints) { AppSettings.checkpointsEnabled = checkpoints }
             }
-            .onChange(of: checkpoints) { AppSettings.checkpointsEnabled = checkpoints }
         }
         .toggleStyle(.switch)
         .padding(Space.xl)
@@ -129,17 +129,14 @@ private struct IntegrationSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.l) {
-            Toggle(isOn: $outsideChrome) {
-                VStack(alignment: .leading, spacing: Space.xxs) {
-                    Text("Let agents use my Chrome").font(Typeface.body)
-                    Text("Off: agents browse only in Kuronami's browsers. On: Claude agents may also use your own Chrome through Claude in Chrome.")
-                        .font(Typeface.caption).foregroundStyle(Tone.muted).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
-            .onChange(of: outsideChrome) {
-                AgentBrowser.agentsMayUseOutsideChrome = outsideChrome
-                AgentIntegration.install()
+            row("Let agents use my Chrome", detail: "Off: agents browse only in Kuronami's browsers. On: Claude agents may also use your own Chrome through Claude in Chrome.") {
+                Toggle("", isOn: $outsideChrome)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .onChange(of: outsideChrome) {
+                        AgentBrowser.agentsMayUseOutsideChrome = outsideChrome
+                        AgentIntegration.install()
+                    }
             }
             Hairline()
             row("Codex approvals", detail: "Answer Codex permission prompts from Kuronami's cards and notifications.") {

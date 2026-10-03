@@ -97,8 +97,7 @@ enum Checkpoints {
     static func changedFiles(at path: String, from: String, to: String?) -> [String] {
         let target = to ?? snapshot(at: path, message: "Kuronami: compare")
         guard let target else { return [] }
-        return (Git.run(["diff", "--name-only", "--no-renames", from, target], at: path) ?? "")
-            .split(separator: "\n").map(String.init)
+        return paths(at: path, from: from, to: target, filter: nil)
     }
 
     /// A unified diff between two snapshots, or between a snapshot and the live workspace.
@@ -118,16 +117,14 @@ enum Checkpoints {
             return .failure(.notARepository)
         }
         _ = Git.run(["update-ref", prefix(session: session) + "undo", before], at: path)
-        let added = (Git.run(["diff", "--name-only", "--no-renames", "--diff-filter=A", commit, before], at: path) ?? "")
-            .split(separator: "\n").map(String.init)
+        let added = paths(at: path, from: commit, to: before, filter: "A")
         guard let gitDir = Git.run(["rev-parse", "--absolute-git-dir"], at: path) else { return .failure(.notARepository) }
         let index = (gitDir as NSString).appendingPathComponent("kuronami-restore-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(atPath: index) }
         let environment = ["GIT_INDEX_FILE": index]
         // Only files that differ are written, so untouched files keep their modification times
         // and file watchers (dev servers, test runners) don't rebuild everything.
-        let changed = (Git.run(["diff", "--name-only", "--no-renames", "--diff-filter=DMT", commit, before], at: path) ?? "")
-            .split(separator: "\n").map(String.init)
+        let changed = paths(at: path, from: commit, to: before, filter: "DMT")
         guard Git.run(["read-tree", commit], at: path, environment: environment) != nil else {
             return .failure(.git("couldn't read the checkpoint"))
         }
@@ -157,6 +154,14 @@ enum Checkpoints {
     static func prune(at path: String, session: String) {
         guard let listing = Git.run(["for-each-ref", "--format=%(refname)", prefix(session: session)], at: path) else { return }
         for name in listing.split(separator: "\n") { _ = Git.run(["update-ref", "-d", String(name)], at: path) }
+    }
+
+    /// Paths (from the repository root) that differ between two commits. NUL-separated, so Git
+    /// never quotes a name ("\303\251.txt" for "é.txt") into one that doesn't exist.
+    private static func paths(at path: String, from: String, to: String, filter: String?) -> [String] {
+        var args = ["diff", "--name-only", "-z", "--no-renames"]
+        if let filter { args.append("--diff-filter=" + filter) }
+        return (Git.run(args + [from, to], at: path, trim: false) ?? "").split(separator: "\0").map(String.init)
     }
 
     private static func removeEmptyParents(of file: String, upTo root: String) {

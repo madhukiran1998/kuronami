@@ -203,8 +203,19 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     /// Called on each poll: delivers queued messages once the agent is free.
     func retryPendingMessages() {
-        guard !pendingMessages.isEmpty, kind.isAgent, !state.needsAttention, state != .working else { return }
+        guard !pendingMessages.isEmpty, kind.isAgent, atRest else { return }
         flushPendingMessages()
+    }
+
+    /// At its prompt between turns. Queued messages wait for this: not mid-turn, not before the
+    /// agent CLI is running (they'd run as shell commands), not after it exited. Codex stays
+    /// "starting" until its first turn, so a running CLI counts as ready.
+    private var atRest: Bool {
+        switch state {
+        case .idle, .failed: return true
+        case .starting: return agentProcessSeen
+        default: return false
+        }
     }
 
     // MARK: - Prompts (keystroke fallback)
@@ -304,15 +315,21 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     /// Sends a queued message right away instead of waiting for the turn to end.
     func sendQueuedNow(at index: Int) {
-        guard pendingMessages.indices.contains(index), !state.needsAttention, !dialogOnScreen, inputIsEmpty else { return }
+        guard pendingMessages.indices.contains(index), atRest || state == .working, !dialogOnScreen, inputIsEmpty else { return }
         type(pendingMessages.remove(at: index), submit: true)
     }
 
+    /// One flush in flight at a time: two landing together (the idle transition and the poll)
+    /// would both type before the first one's Return, merging two messages into one.
+    private var flushScheduled = false
+
     private func flushPendingMessages() {
-        guard !pendingMessages.isEmpty else { return }
+        guard !pendingMessages.isEmpty, !flushScheduled else { return }
+        flushScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(400)) { [weak self] in
+            self?.flushScheduled = false
             // One message per turn: the rest wait for the agent to finish the one just sent.
-            guard let self, !self.state.needsAttention, self.state != .working, !self.dialogOnScreen,
+            guard let self, self.atRest, !self.dialogOnScreen,
                   self.inputIsEmpty, !self.pendingMessages.isEmpty else { return }
             let message = self.pendingMessages.removeFirst()
             self.type(message, submit: true)

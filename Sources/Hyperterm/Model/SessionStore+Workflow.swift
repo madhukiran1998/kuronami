@@ -134,10 +134,13 @@ extension SessionStore {
         let losers = raceSiblings(of: winner).map { (session: $0, path: $0.spec.workPath, id: $0.id.uuidString,
                                                     isWorktree: $0.spec.worktreeBranch != nil || $0.spec.worktreeName != nil) }
         DispatchQueue.global(qos: .userInitiated).async {
+            // A failed commit (a pre-commit hook, say) must stop here: merging only what was
+            // committed and closing the others would quietly drop the winner's latest work.
+            var committed: Result<String, ReviewError> = .success("")
             if !(Git.run(["status", "--porcelain"], at: path) ?? "").isEmpty {
-                _ = Review.commit(at: path, message: "Work from @\(label) (Kuronami)")
+                committed = Review.commit(at: path, message: "Work from @\(label) (Kuronami)")
             }
-            let merged = Review.merge(branch: branch, into: base, mainRoot: root)
+            let merged = committed.flatMap { _ in Review.merge(branch: branch, into: base, mainRoot: root) }
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -218,8 +221,9 @@ extension SessionStore {
         session.resumeAt = reset
         session.record(.note, "Will continue at \(reset.formatted(date: .omitted, time: .shortened))")
         // A minute's grace: resets land on the minute, and the first request after one can still bounce.
+        // Wall time: the uptime clock stops while the Mac sleeps, which would push this past the reset.
         let delay = reset.timeIntervalSinceNow + 60
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak session] in
+        DispatchQueue.main.asyncAfter(wallDeadline: .now() + delay) { [weak session] in
             guard let session, session.resumeAt == reset else { return }
             session.resumeAt = nil
             _ = session.deliver("Your usage limit has reset. Continue where you left off.", from: nil)
