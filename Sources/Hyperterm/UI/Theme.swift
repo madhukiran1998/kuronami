@@ -67,6 +67,7 @@ extension SessionKind {
         case .codex: return "hexagon"
         case .shell: return "terminal"
         case .server: return "bolt.horizontal"
+        case .browser: return "globe"
         }
     }
 
@@ -76,6 +77,7 @@ extension SessionKind {
         case .codex: return Palette.codex
         case .shell: return .secondary
         case .server: return Palette.running
+        case .browser: return Palette.working
         }
     }
 }

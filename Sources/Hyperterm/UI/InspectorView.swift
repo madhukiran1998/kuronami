@@ -41,15 +41,17 @@ private struct InspectorContent: View {
             .padding(.horizontal, 14)
             .padding(.top, 12)
             .padding(.bottom, 10)
-            Picker("", selection: $store.inspectorTab) {
-                ForEach(InspectorTab.allCases) { Text($0.rawValue).tag($0) }
+            if session.kind != .browser {
+                Picker("", selection: $store.inspectorTab) {
+                    ForEach(InspectorTab.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 12)
-            .padding(.bottom, 10)
             Divider()
-            switch store.inspectorTab {
+            switch session.kind == .browser ? .info : store.inspectorTab {
             case .changes: ChangesView(session: session, store: store)
             case .activity: ActivityView(session: session)
             case .info: InfoView(session: session, store: store, actions: actions)
@@ -505,7 +507,14 @@ private struct InfoView: View {
                 group("Terminal") {
                     row("Kind", session.kind.displayName)
                     row("Status", session.statusWord + (session.state.detail.map { " · " + $0 } ?? ""))
-                    row("Folder", abbreviateHome(session.spec.workPath), mono: true)
+                    if session.kind == .browser {
+                        row("Page", session.spec.url ?? "New tab", mono: true)
+                        if let owner = session.spec.owner.flatMap({ id in store.sessions.first { $0.id == id } }) {
+                            row("Agent", "@" + owner.label, mono: true)
+                        }
+                    } else {
+                        row("Folder", abbreviateHome(session.spec.workPath), mono: true)
+                    }
                     if let branch = session.git?.branch { row("Branch", branch, mono: true) }
                     if let port = session.spec.port, store.sessions.contains(where: { $0.kind == .server && $0.spec.port == port }) {
                         row("Dev server", "localhost:\(port)", mono: true)

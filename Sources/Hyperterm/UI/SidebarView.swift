@@ -26,6 +26,20 @@ struct SidebarView: View {
                             AgentRow(session: session, store: store, actions: actions)
                                 .tag(session.id)
                                 .contextMenu { SessionMenu(session: session, actions: actions) }
+                            ForEach(store.browsers(ownedBy: session)) { browser in
+                                BrowserRow(session: browser, nested: true)
+                                    .tag(browser.id)
+                                    .contextMenu { SessionMenu(session: browser, actions: actions) }
+                            }
+                        }
+                    }
+                }
+                if !store.looseBrowsers.isEmpty {
+                    Section("Browsers") {
+                        ForEach(store.looseBrowsers) { browser in
+                            BrowserRow(session: browser, nested: false)
+                                .tag(browser.id)
+                                .contextMenu { SessionMenu(session: browser, actions: actions) }
                         }
                     }
                 }
@@ -395,6 +409,42 @@ private struct UtilityRow: View {
             PortChips(ports: session.ports, compact: true)
         }
         .help(session.foregroundProcess ?? session.spec.command ?? abbreviateHome(session.spec.cwd))
+    }
+}
+
+/// A browser: its page and, while an agent acts on it, who.
+private struct BrowserRow: View {
+    @ObservedObject var session: TerminalSession
+    let nested: Bool
+
+    private var activity: AgentBrowser.Activity? {
+        AgentBrowser.shared.activity.flatMap { $0.browser == session.label ? $0 : nil }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "globe")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(activity == nil ? Color.secondary : Palette.working)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(session.label)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .lineLimit(1)
+                Text(activity.map { "@\($0.agent) · \($0.action)" } ?? session.spec.url.map(abbreviateURL) ?? "New tab")
+                    .font(.system(size: 11))
+                    .foregroundStyle(activity == nil ? Color.secondary : Palette.working)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 4)
+            if activity != nil {
+                Circle().fill(Palette.working).frame(width: 6, height: 6)
+            }
+        }
+        .padding(.leading, nested ? 18 : 0)
+        .padding(.vertical, 1)
+        .help(session.summary ?? session.spec.url ?? session.label)
     }
 }
 

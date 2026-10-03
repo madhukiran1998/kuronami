@@ -13,6 +13,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
     private static let layout = NSToolbarItem.Identifier("layout")
     private static let newTerminal = NSToolbarItem.Identifier("new")
     private static let waiting = NSToolbarItem.Identifier("waiting")
+    private static let browser = NSToolbarItem.Identifier("browser")
 
     init(store: SessionStore, actions: SessionActions) {
         self.store = store
@@ -53,7 +54,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
     // MARK: - NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, Self.waiting, .flexibleSpace, Self.layout, Self.newTerminal,
+        [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, Self.waiting, .flexibleSpace, Self.layout, Self.newTerminal, Self.browser,
          .inspectorTrackingSeparator, .flexibleSpace, .toggleInspector]
     }
 
@@ -76,6 +77,14 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
             item.toolTip = "New terminal (⌘N)"
             item.target = self
             item.action = #selector(newTerminal(_:))
+            item.isBordered = true
+            return item
+        case Self.browser:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.image = NSImage(systemSymbolName: "globe", accessibilityDescription: "Browser")
+            item.label = "New Browser"
+            item.toolTip = "New browser (⇧⌘B)"
+            item.action = #selector(AppDelegate.newBrowser(_:))
             item.isBordered = true
             return item
         case Self.waiting:

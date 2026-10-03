@@ -173,7 +173,17 @@ final class SessionStore: ObservableObject {
         return order.map { (name: $0, agents: groups[$0] ?? []) }
     }
 
-    var utilities: [TerminalSession] { sessions.filter { !$0.kind.isAgent } }
+    var utilities: [TerminalSession] { sessions.filter { !$0.kind.isAgent && $0.kind != .browser } }
+
+    /// Browsers an agent owns sit under it in the sidebar; the rest get their own section.
+    func browsers(ownedBy agent: TerminalSession) -> [TerminalSession] {
+        sessions.filter { $0.kind == .browser && $0.spec.owner == agent.id }
+    }
+
+    var looseBrowsers: [TerminalSession] {
+        let agents = Set(sessions.filter(\.kind.isAgent).map(\.id))
+        return sessions.filter { $0.kind == .browser && !($0.spec.owner.map(agents.contains) ?? false) }
+    }
 
     // MARK: - Child changes
 
@@ -292,6 +302,7 @@ final class SessionStore: ObservableObject {
             session.spec.previousLabels = Array(previous.suffix(8))
             session.spec.label = label
             session.syncNativeName()
+            session.labelChanged()
         }
         session.spec.labelSource = source
         persist()
@@ -344,7 +355,9 @@ final class SessionStore: ObservableObject {
     }
 
     /// Sidebar order: agents by project, then servers and shells.
-    var navigationOrder: [TerminalSession] { projects.flatMap(\.agents) + utilities }
+    var navigationOrder: [TerminalSession] {
+        projects.flatMap { $0.agents.flatMap { [$0] + browsers(ownedBy: $0) } } + utilities + looseBrowsers
+    }
 
     func selectRelative(_ offset: Int) {
         let ordered = navigationOrder
@@ -435,6 +448,7 @@ final class SessionStore: ObservableObject {
         let folder = URL(fileURLWithPath: expandTilde(spec.cwd)).lastPathComponent
         switch spec.kind {
         case .server: return normalizeLabel(folder + "-server")
+        case .browser: return "web"
         case .shell: return normalizeLabel(folder)
         default: return normalizeLabel(folder)
         }

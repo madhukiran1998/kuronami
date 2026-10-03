@@ -289,7 +289,11 @@ struct TileHeader: View {
             }
             Spacer(minLength: 6)
             if !session.ports.isEmpty { PortChips(ports: session.ports, compact: true) }
-            StatusCapsule(session: session)
+            if session.kind == .browser {
+                BrowserDriverBadge(label: session.label)
+            } else {
+                StatusCapsule(session: session)
+            }
             Button(action: onZoom) {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                     .font(.system(size: 9, weight: .semibold))
@@ -339,6 +343,26 @@ struct StatusCapsule: View {
         switch session.state {
         case .working: return "Working \(elapsed(since: session.stateChangedAt, now: now))"
         default: return session.statusWord
+        }
+    }
+}
+
+/// A browser's tile shows who is driving it, not a process status.
+struct BrowserDriverBadge: View {
+    let label: String
+
+    var body: some View {
+        if let activity = AgentBrowser.shared.activity, activity.browser == label {
+            HStack(spacing: 4) {
+                Circle().fill(Palette.working).frame(width: 5, height: 5)
+                Text("@\(activity.agent) · \(activity.action)").lineLimit(1)
+            }
+            .font(.system(size: 10, weight: .medium))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Palette.working.opacity(0.18)))
+            .foregroundStyle(Palette.working)
+            .transition(.opacity)
         }
     }
 }

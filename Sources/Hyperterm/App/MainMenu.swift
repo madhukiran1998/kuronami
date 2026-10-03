@@ -38,6 +38,10 @@ enum MainMenu {
         channels.state = SessionStore.channelsEnabled ? .on : .off
         menu.addItem(channels)
         menu.addItem(item("Enable Codex Approvals in Hyperterm…", #selector(AppDelegate.enableCodexApprovals(_:)), target: target))
+        let outsideChrome = item("Let Agents Use My Chrome", #selector(AppDelegate.toggleOutsideChrome(_:)), target: target)
+        outsideChrome.state = AgentBrowser.agentsMayUseOutsideChrome ? .on : .off
+        outsideChrome.toolTip = "Off: agents browse only in Hyperterm's browsers. On: Claude agents may also use your own Chrome through Claude in Chrome."
+        menu.addItem(outsideChrome)
         menu.addItem(.separator())
         menu.addItem(item("Hide Hyperterm", #selector(NSApplication.hide(_:)), "h"))
         menu.addItem(item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]))
@@ -52,6 +56,7 @@ enum MainMenu {
         menu.addItem(item("New Shell Here", #selector(AppDelegate.newShellHere(_:)), "t", target: target))
         menu.addItem(item("New Claude Code Here", #selector(AppDelegate.newClaudeHere(_:)), "c", [.command, .shift], target: target))
         menu.addItem(item("New Codex Here", #selector(AppDelegate.newCodexHere(_:)), "x", [.command, .shift], target: target))
+        menu.addItem(item("New Browser", #selector(AppDelegate.newBrowser(_:)), "b", [.command, .shift], target: target))
         menu.addItem(.separator())
         menu.addItem(item("Rename…", #selector(AppDelegate.renameSession(_:)), "r", [.command, .shift], target: target))
         menu.addItem(item("Restart", #selector(AppDelegate.restartSession(_:)), "r", target: target))

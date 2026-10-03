@@ -112,6 +112,7 @@ struct NewSessionView: View {
         case .claude, .codex: return "Arguments"
         case .server: return "Command"
         case .shell: return "Run"
+        case .browser: return "Address"
         }
     }
 
@@ -121,6 +122,7 @@ struct NewSessionView: View {
         case .codex: return "optional · -m gpt-5"
         case .server: return "pnpm dev"
         case .shell: return "optional"
+        case .browser: return "localhost:3000"
         }
     }
 
@@ -131,6 +133,7 @@ struct NewSessionView: View {
         case .codex: return "Runs Codex as \(label). Agents reach it through Hyperterm's MCP tools."
         case .server: return "Runs the command as \(label). Ports appear in the sidebar; agents can read its logs or restart it."
         case .shell: return "A login shell labeled \(label)."
+        case .browser: return "A Chromium browser labeled \(label). Agents can drive it by that name; it shares logins with your other Hyperterm browsers."
         }
     }
 

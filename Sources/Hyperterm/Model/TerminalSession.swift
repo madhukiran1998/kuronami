@@ -49,7 +49,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     var lastHookSentAt: UInt64 = 0
     var lastHookAt = Date.distantPast
 
-    private(set) var surface: TerminalSurfaceView
+    private(set) var surface: any SessionSurface
     /// Messages for an agent that is blocked on a prompt; delivered when it unblocks so typed text
     /// can't land in a permission dialog.
     private var pendingMessages: [String] = []
@@ -72,6 +72,28 @@ final class TerminalSession: ObservableObject, Identifiable {
         self.summary = spec.summary.flatMap { $0.hasPrefix("~") || $0.count < 3 ? nil : $0 }
         if !spec.kind.isAgent { state = .running }
         scheduleInitialInput(resume: resume, task: task)
+        bindBrowser()
+    }
+
+    /// A browser's page is its status: the title becomes its summary, the address is persisted
+    /// so it reopens there.
+    private func bindBrowser() {
+        guard let browser = surface as? BrowserSurfaceView else { return }
+        browser.onNavigate = { [weak self] url, title in
+            guard let self else { return }
+            let address = url?.absoluteString == "about:blank" ? nil : url?.absoluteString
+            if self.spec.url != address {
+                self.spec.url = address
+                self.store?.persist()
+            }
+            let summary = title.isEmpty ? address.map(abbreviateURL) : title
+            if self.summary != summary { self.summary = summary }
+        }
+    }
+
+    /// Keeps a browser's page tag in step with its label.
+    func labelChanged() {
+        (surface as? BrowserSurfaceView)?.label = label
     }
 
     /// Typing before the shell is ready makes the tty echo the command above the prompt. Shell
@@ -104,6 +126,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         surface.removeFromSuperview()
         surface = TerminalSessionFactory.makeSurface(spec: spec)
         surface.events = self
+        bindBrowser()
         scheduleInitialInput(resume: true)
         ports = []
         agentProcessSeen = false
@@ -234,6 +257,9 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// Types `text` into the terminal and submits it. For agents, text never lands in a dialog
     /// or a half-typed prompt: it waits until the agent is at an empty prompt.
     func deliver(_ text: String, submit: Bool = true, from sender: String?) -> String {
+        if kind == .browser {
+            return "@\(label) is a browser; use the browser tools (pageId for @\(label)) to act on it"
+        }
         if submit, store?.pushViaChannel(text, to: self) == true {
             if let sender { record(.message, "Message from @\(sender)") }
             return "delivered to @\(label) (channel)"
@@ -355,9 +381,24 @@ extension TerminalSession: TerminalSurfaceEvents {
 
 @MainActor
 enum TerminalSessionFactory {
-    static func makeSurface(spec: LaunchSpec) -> TerminalSurfaceView {
-        TerminalSurfaceView(launch: AgentIntegration.surfaceLaunch(for: spec))
+    /// Set at launch; browsers offer the store's running servers on their start page.
+    static weak var store: SessionStore?
+
+    static func makeSurface(spec: LaunchSpec) -> any SessionSurface {
+        if spec.kind == .browser, let store {
+            // `ht new browser @docs -- <address>` passes the address as the command.
+            let address = spec.url ?? spec.command.map { $0.contains("://") ? $0 : "https://" + $0 }
+            return BrowserSurfaceView(url: address.flatMap(URL.init(string:)), label: spec.label, store: store)
+        }
+        return TerminalSurfaceView(launch: AgentIntegration.surfaceLaunch(for: spec))
     }
+}
+
+/// "https://github.com/acme/api/pulls" → "github.com/acme/api/pulls".
+func abbreviateURL(_ address: String) -> String {
+    guard let url = URL(string: address), let host = url.host() else { return address }
+    let path = url.path()
+    return host + (url.port.map { ":\($0)" } ?? "") + (path == "/" ? "" : path)
 }
 
 /// Ids typed into shells: letters, digits, dash, underscore, dot. No spaces or metacharacters.

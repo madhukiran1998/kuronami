@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         Theme.load(from: GhosttyRuntime.shared.config)
+        TerminalSessionFactory.store = store
         AgentIntegration.install()
         NSApp.mainMenu = MainMenu.build(target: self)
 
@@ -260,6 +261,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func enableCodexApprovals(_ sender: Any?) { AgentIntegration.installCodexApprovalHook() }
     @objc func cleanUpWorktrees(_ sender: Any?) { windowController?.presentWorktreeCleanup() }
     @objc func toggleInspectorPane(_ sender: Any?) { windowController?.toggleInspector() }
+    @objc func newBrowser(_ sender: Any?) { store.openBrowser() }
+    /// Agents use Hyperterm's browsers by default; this also lets Claude agents use the
+    /// user's own Chrome (Claude in Chrome). Applies to agents started afterwards.
+    @objc func toggleOutsideChrome(_ sender: NSMenuItem) {
+        AgentBrowser.agentsMayUseOutsideChrome.toggle()
+        sender.state = AgentBrowser.agentsMayUseOutsideChrome ? .on : .off
+        AgentIntegration.install()
+    }
     @objc func reviewSelected(_ sender: Any?) {
         if let session = store.selected { windowController?.showInspector(for: session) }
     }

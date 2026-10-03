@@ -1,4 +1,5 @@
 import AppKit
+import CCefAppKit
 
 /// Variables that identify a specific agent session. If Hyperterm is launched from inside an
 /// agent (e.g. `open` run by Claude Code), every terminal would inherit them and agents started
@@ -16,6 +17,11 @@ private func scrubInheritedSessionEnvironment() {
 scrubInheritedSessionEnvironment()
 
 MainActor.assumeIsolated {
+    // Chromium (the browser pane) needs NSApp to be its NSApplication subclass from the first
+    // event, even though Chromium itself only starts when a browser is first opened.
+    if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+        CEFApplication.install()
+    }
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate

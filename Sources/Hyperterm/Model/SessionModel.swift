@@ -1,7 +1,7 @@
 import Foundation
 
 enum SessionKind: String, Codable, CaseIterable, Identifiable {
-    case claude, codex, shell, server
+    case claude, codex, shell, server, browser
 
     var id: String { rawValue }
 
@@ -11,6 +11,7 @@ enum SessionKind: String, Codable, CaseIterable, Identifiable {
         case .codex: return "Codex"
         case .shell: return "Shell"
         case .server: return "Server"
+        case .browser: return "Browser"
         }
     }
 
@@ -20,6 +21,7 @@ enum SessionKind: String, Codable, CaseIterable, Identifiable {
         case .codex: return "codex"
         case .shell: return "sh"
         case .server: return "srv"
+        case .browser: return "web"
         }
     }
 
@@ -117,6 +119,10 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     var baseBranch: String?
     /// Port reserved for this workspace's dev server ($PORT).
     var port: Int?
+    /// Browser: the page it shows, kept current so it reopens there.
+    var url: String?
+    /// Browser: the agent it belongs to. Its tools act on this browser by default.
+    var owner: UUID?
 
     /// Where the agent's files actually live.
     var workPath: String {

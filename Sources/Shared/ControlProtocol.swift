@@ -20,6 +20,7 @@ enum ControlCommand: String, Codable {
     case permission    // PermissionRequest hook, held open until the user decides
     case statusline    // Claude statusLine JSON (cost, context, rate limits)
     case subscribe     // channel long-poll from an agent's MCP server: returns queued messages
+    case browser       // start the embedded browser if needed; text = its DevTools endpoint
 }
 
 struct ControlRequest: Codable {

@@ -21,6 +21,8 @@ usage: ht <command>
   close @label
   whoami                           this terminal's label (inside Hyperterm)
   mcp                              run the MCP server (used by agents)
+  browser                          open the embedded browser; prints its DevTools endpoint
+  browser-mcp [port]               run the browser MCP server (used by agents)
   hook <source> [payload]          forward an agent hook event (used by agents)
 """
 
@@ -200,6 +202,13 @@ case "statusline":
 
 case "mcp":
     runMCPServer()
+
+case "browser-mcp":
+    let port = args.first.flatMap(Int.init) ?? 9339
+    runBrowserMCP(port: port)
+
+case "browser":
+    print(requireOK(request(.browser) { $0.from = callerSession }).text ?? "")
 
 case "-h", "--help", "help":
     print(usage)

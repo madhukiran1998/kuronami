@@ -32,10 +32,41 @@ struct ControlHandler {
         }
     }
 
+    /// An agent's browser tools ask this before acting: Chromium is started, the caller's own
+    /// browser exists (created on first use), and every page is tagged with its session label so
+    /// the tools can tell browsers apart. Replies with the caller's browser label.
+    private func handleBrowser(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
+        guard callerSession != nil || isUser else { reply(.failure("not allowed from here")); return }
+        guard AgentBrowser.shared.start() else {
+            reply(.failure("browser unavailable: \(AgentBrowser.shared.startError ?? "Chromium didn't start")"))
+            return
+        }
+        let target: TerminalSession
+        if let agent = callerAgent {
+            target = store.browser(for: agent)
+        } else if let selected = store.selected, selected.kind == .browser {
+            target = selected
+        } else {
+            target = store.looseBrowsers.first ?? store.openBrowser()
+        }
+        if let tool = request.text, tool != "mark", let agent = callerAgent {
+            AgentBrowser.shared.noteActivity(agent: agent.label, browser: target.label, tool: tool)
+        }
+        let store = self.store
+        AgentBrowser.waitUntilReady({ store.isBrowserReady(target) }) { ready in
+            guard ready else { reply(.failure("browser unavailable: Chromium didn't come up")); return }
+            store.markBrowsers()
+            // Tags land asynchronously in each page's renderer.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { reply(.success(text: target.label)) }
+        }
+    }
+
     func handle(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
         switch request.cmd {
         case .permission:
             handlePermission(request, reply: reply)
+        case .browser:
+            handleBrowser(request, reply: reply)
         case .subscribe:
             guard let agent = callerAgent, agent.kind == .claude else { reply(.success()); return }
             store.subscribeChannel(agent, reply: reply)
@@ -112,7 +143,7 @@ struct ControlHandler {
             guard let target = callerSession ?? (isUser ? resolve(request.target) : nil) else { return notFound(request.target) }
             store.sessionWantsAttention(target, title: "@\(target.label)", body: sanitizeMessage(request.text ?? ""))
             return .success()
-        case .permission, .subscribe:
+        case .permission, .subscribe, .browser:
             return .success()
         }
     }

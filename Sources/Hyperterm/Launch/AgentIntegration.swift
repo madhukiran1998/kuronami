@@ -40,6 +40,7 @@ enum AgentIntegration {
         // Read-only and self-describing tools are safe to run without a prompt; messaging other
         // agents and starting servers still ask.
         let allow = ["list_terminals", "read_terminal", "rename_terminal", "set_status"].map { "mcp__hyperterm__" + $0 }
+            + browserReadOnlyTools.map { "mcp__browser__" + $0 }
         // statusLine feeds cost/context/rate limits to Hyperterm, then prints the user's own
         // statusline unchanged (`ht statusline` runs it).
         let statusLine: [String: Any] = ["type": "command", "command": "\(htPath) statusline", "padding": 0]
@@ -47,8 +48,18 @@ enum AgentIntegration {
     }
 
     private static func mcpConfig() -> String {
-        json(["mcpServers": ["hyperterm": ["command": htPath, "args": ["mcp"]]]])
+        json(["mcpServers": [
+            "hyperterm": ["command": htPath, "args": ["mcp"]],
+            "browser": ["command": htPath, "args": ["browser-mcp", String(AgentBrowser.port)]],
+        ]])
     }
+
+    /// Browser tools that only look: screenshots, page snapshots, console and network logs.
+    /// Navigating, clicking, typing, and running scripts still ask.
+    private static let browserReadOnlyTools = [
+        "list_pages", "take_snapshot", "take_screenshot", "list_console_messages", "get_console_message",
+        "list_network_requests", "get_network_request", "get_css_styles", "wait_for",
+    ]
 
     /// Strips our bin dir from PATH so `claude` resolves to the real binary, then adds Hyperterm's
     /// hooks and MCP server. User hooks still run: `--settings` merges with user settings.
@@ -61,7 +72,9 @@ enum AgentIntegration {
         export PATH
         CHANNEL=""
         [ "$HT_CHANNELS" = "1" ] && CHANNEL="--dangerously-load-development-channels server:hyperterm"
-        exec claude --settings "$HT_DIR/claude-settings.json" --mcp-config "$HT_DIR/mcp.json" $CHANNEL "$@"
+        # --no-chrome: agents here browse in Hyperterm's own browser (the "browser" MCP server),
+        # not the user's everyday Chrome through Claude in Chrome.
+        exec claude --settings "$HT_DIR/claude-settings.json" --mcp-config "$HT_DIR/mcp.json" \(AgentBrowser.agentsMayUseOutsideChrome ? "" : "--no-chrome ")$CHANNEL "$@"
         """
     }
 
@@ -82,6 +95,8 @@ enum AgentIntegration {
           -c 'tui.notification_condition="always"' \\
           -c "mcp_servers.hyperterm.command=\\"$HT_DIR/bin/ht\\"" \\
           -c 'mcp_servers.hyperterm.args=["mcp"]' \\
+          -c "mcp_servers.browser.command=\\"$HT_DIR/bin/ht\\"" \\
+          -c 'mcp_servers.browser.args=["browser-mcp","\(AgentBrowser.port)"]' \\
           "$@"
         """
     }
@@ -144,14 +159,16 @@ enum AgentIntegration {
             } else if let worktree = spec.worktreeName {
                 args += " --worktree \(shellQuote(worktree))"
             }
-            return "~/.hyperterm/bin/claude \(args)\(extra)\(prompt)\n"
+            return "\(shellQuote(binDirectory.appendingPathComponent("claude").path)) \(args)\(extra)\(prompt)\n"
         case .codex:
             if resume, let thread = spec.agentSessionId, isSafeIdentifier(thread) {
-                return "~/.hyperterm/bin/codex resume \(shellQuote(thread))\(extra)\n"
+                return "\(shellQuote(binDirectory.appendingPathComponent("codex").path)) resume \(shellQuote(thread))\(extra)\n"
             }
-            return "~/.hyperterm/bin/codex\(extra)\(prompt)\n"
+            return "\(shellQuote(binDirectory.appendingPathComponent("codex").path))\(extra)\(prompt)\n"
         case .server, .shell:
             return spec.command.map { $0 + "\n" }
+        case .browser:
+            return nil
         }
     }
 
