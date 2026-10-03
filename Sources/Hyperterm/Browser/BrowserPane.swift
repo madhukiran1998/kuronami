@@ -8,6 +8,8 @@ struct BrowserPane: View {
     let model: CefWebViewModel
     let label: String
     @ObservedObject var store: SessionStore
+    /// False until the tile is first shown (or an agent asks): no Chromium page exists yet.
+    var isLive = true
 
     private var isBlank: Bool { model.url == nil || model.url?.absoluteString == "about:blank" }
 
@@ -15,10 +17,10 @@ struct BrowserPane: View {
         VStack(spacing: 0) {
             BrowserBar(browser: browser, model: model, label: label)
             ZStack {
-                if browser.isRunning {
+                if isLive && browser.isRunning {
                     CefWebView(model: model)
                 }
-                if isBlank || !browser.isRunning {
+                if isLive && (isBlank || !browser.isRunning) {
                     // Hosted as its own AppKit view: Chromium's view would otherwise draw over it.
                     AppKitLayer {
                         BrowserStartPage(label: label, error: browser.isRunning ? nil : browser.startError,

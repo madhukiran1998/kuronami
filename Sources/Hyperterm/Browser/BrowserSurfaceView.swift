@@ -12,11 +12,14 @@ final class BrowserSurfaceView: NSView, SessionSurface {
     /// The session's label: tags the page so agents' tools can tell browsers apart.
     var label: String {
         didSet {
-            host?.rootView = BrowserPane(browser: AgentBrowser.shared, model: model, label: label, store: store)
+            host?.rootView = pane()
             mark()
         }
     }
     private let store: SessionStore
+    /// Chromium and this page start only once the tile is on screen or an agent asks for it,
+    /// so restored browsers nobody is looking at cost nothing.
+    private(set) var isLive = false
     /// Called with the page's address and title as they change, to persist and show them.
     var onNavigate: ((URL?, String) -> Void)?
     private var host: NSHostingView<BrowserPane>?
@@ -28,8 +31,7 @@ final class BrowserSurfaceView: NSView, SessionSurface {
         self.label = label
         self.store = store
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-        AgentBrowser.shared.start()
-        let pane = NSHostingView(rootView: BrowserPane(browser: AgentBrowser.shared, model: model, label: label, store: store))
+        let pane = NSHostingView(rootView: pane())
         pane.sizingOptions = []
         pane.autoresizingMask = [.width, .height]
         pane.frame = bounds
@@ -38,13 +40,38 @@ final class BrowserSurfaceView: NSView, SessionSurface {
         observeModel()
     }
 
+    private func pane() -> BrowserPane {
+        BrowserPane(browser: AgentBrowser.shared, model: model, label: label, store: store, isLive: isLive)
+    }
+
+    /// Starts Chromium if needed and creates the page, even while the tile is hidden (an agent
+    /// can use a browser nobody is looking at).
+    func goLive() {
+        guard !isLive, !destroyed else { return }
+        isLive = true
+        AgentBrowser.shared.start()
+        host?.rootView = pane()
+        // Chromium creates the page once its view is laid out in a window; hidden tiles don't
+        // lay out on their own.
+        if window != nil { host?.layoutSubtreeIfNeeded() }
+    }
+
     required init?(coder: NSCoder) { fatalError("not supported") }
 
-    /// Chromium creates the page once its view is in a window. Hidden tiles (other layouts)
-    /// don't lay out on their own, so force it: agents can use a browser nobody is looking at.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { host?.layoutSubtreeIfNeeded() }
+        guard window != nil else { return }
+        if isLive {
+            host?.layoutSubtreeIfNeeded()
+        } else if !isHiddenOrHasHiddenAncestor {
+            goLive()
+        }
+    }
+
+    /// Sent when this view or an ancestor (its tile) is unhidden: the user is now looking at it.
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        if window != nil, !isHiddenOrHasHiddenAncestor { goLive() }
     }
 
     // MARK: Page tag

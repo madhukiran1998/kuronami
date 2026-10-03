@@ -173,6 +173,9 @@ final class ProcessInspector: @unchecked Sendable {
         var roots: [String: [pid_t]] = [:]
         var alive = Set<pid_t>()
         for child in children[mine] ?? [] {
+            // Chromium's helper processes (renderer, GPU, …) are our children too, but never
+            // sessions; without this they'd be re-scanned for HT_SESSION_ID every poll.
+            if arguments(of: child)?.first?.contains(".app/Contents/Frameworks/") == true { continue }
             alive.insert(child.pid)
             lock.lock()
             var sessionID = rootCache[child.pid]

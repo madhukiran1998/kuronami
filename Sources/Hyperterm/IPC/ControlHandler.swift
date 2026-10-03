@@ -52,6 +52,7 @@ struct ControlHandler {
         if let tool = request.text, tool != "mark", let agent = callerAgent {
             AgentBrowser.shared.noteActivity(agent: agent.label, browser: target.label, tool: tool)
         }
+        store.wakeBrowser(target)
         let store = self.store
         AgentBrowser.waitUntilReady({ store.isBrowserReady(target) }) { ready in
             guard ready else { reply(.failure("browser unavailable: Chromium didn't come up")); return }

@@ -35,6 +35,11 @@ extension SessionStore {
         }
     }
 
+    /// Agents can use a browser that isn't on screen: create its page now.
+    func wakeBrowser(_ session: TerminalSession) {
+        (session.surface as? BrowserSurfaceView)?.goLive()
+    }
+
     func isBrowserReady(_ session: TerminalSession) -> Bool {
         (session.surface as? BrowserSurfaceView)?.model.browser != nil
     }
