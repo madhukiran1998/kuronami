@@ -33,6 +33,7 @@ enum MainMenu {
         let menu = NSMenu(title: "Kuronami")
         menu.addItem(item("About Kuronami", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
         menu.addItem(.separator())
+        menu.addItem(item("Accounts…", #selector(AccountsController.showAccounts(_:)), ",", target: AccountsController.shared))
         menu.addItem(item("Use ht in Your Shell…", #selector(AppDelegate.installCLI(_:)), target: target))
         let channels = item("Deliver Messages via Claude Channels", #selector(AppDelegate.toggleChannels(_:)), target: target)
         channels.state = SessionStore.channelsEnabled ? .on : .off
@@ -61,6 +62,11 @@ enum MainMenu {
         menu.addItem(item("Rename…", #selector(AppDelegate.renameSession(_:)), "r", [.command, .shift], target: target))
         menu.addItem(item("Restart", #selector(AppDelegate.restartSession(_:)), "r", target: target))
         menu.addItem(item("Minimize Tile", #selector(AppDelegate.minimizeTile(_:)), "m", [.command, .shift], target: target))
+        let move = NSMenuItem(title: "Move to Account", action: nil, keyEquivalent: "")
+        let accounts = NSMenu(title: "Move to Account")
+        accounts.delegate = AccountsController.shared
+        move.submenu = accounts
+        menu.addItem(move)
         menu.addItem(item("Close", #selector(AppDelegate.closeSession(_:)), "w", target: target))
         menu.addItem(.separator())
         menu.addItem(item("Review Changes", #selector(AppDelegate.reviewSelected(_:)), "r", [.command, .option], target: target))

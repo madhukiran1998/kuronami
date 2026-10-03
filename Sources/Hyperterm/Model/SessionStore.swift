@@ -297,6 +297,11 @@ final class SessionStore: ObservableObject {
         if let error = prepared.error { lastError = error }
         // Port reservation stays on the main actor, beside session insertion: overlapping
         // preparations can never assign the same workspace port.
+        // New agents start on the account picked for new agents; resumed ones keep theirs.
+        if spec.kind.isAgent, spec.account == nil, !resume {
+            let preferred = AccountStore.shared.preferredID(for: spec.kind)
+            if preferred != AgentAccount.defaultID { spec.account = preferred }
+        }
         if spec.kind.isAgent, spec.port == nil, let config = prepared.config {
             spec.port = Ports.allocate(config: config, taken: Set(sessions.compactMap(\.spec.port)))
         }

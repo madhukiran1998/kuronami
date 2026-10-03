@@ -125,6 +125,10 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     var owner: UUID?
     /// Parked on the shelf instead of taking a tile in split and grid.
     var minimized: Bool?
+    /// Agents: which Claude/Codex account it runs on (nil: the default account).
+    var account: String?
+    /// A shell opened to sign an account in: which kind of account `account` names.
+    var accountKind: SessionKind?
 
     /// Where the agent's files actually live.
     var workPath: String {

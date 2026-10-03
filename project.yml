@@ -83,6 +83,13 @@ targets:
           cp -f "$BUILT_PRODUCTS_DIR/ht" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/bin/ht"
           codesign --force --sign - "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/bin/ht"
         basedOnDependencyAnalysis: false
+      - name: Copy Kuronami terminal defaults
+        script: |
+          # The tracked config files are the source of truth; Resources/ghostty is only refreshed
+          # when libghostty is rebuilt, so copy them into the bundle on every build.
+          cp -f "$SRCROOT/Resources/hyperterm-style.conf" "$SRCROOT/Resources/hyperterm-defaults.conf" \
+            "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/ghostty/"
+        basedOnDependencyAnalysis: false
       - name: Embed Chromium
         script: |
           "$SRCROOT/scripts/embed-cef.sh"

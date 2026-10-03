@@ -141,6 +141,12 @@ enum AgentIntegration {
             environment["PORT"] = String(port)
             environment["HT_PORT"] = String(port)
         }
+        // The account's config root (CLAUDE_CONFIG_DIR / CODEX_HOME). A sign-in terminal for an
+        // account is a shell carrying the same variables.
+        if let id = spec.account {
+            let kind = spec.kind.isAgent ? spec.kind : (spec.accountKind ?? .claude)
+            environment.merge(MainActor.assumeIsolated { AccountStore.shared.account(id, kind: kind)?.environment ?? [:] }) { _, new in new }
+        }
         return SurfaceLaunch(workingDirectory: expandTilde(spec.cwd), command: nil, environment: environment)
     }
 

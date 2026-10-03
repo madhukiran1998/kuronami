@@ -45,6 +45,8 @@ struct ControlRequest: Codable {
     var keys: [String]?
     /// For `new`: give an agent its own git worktree and branch.
     var worktree: Bool?
+    /// For `new`: the Claude/Codex account an agent runs on.
+    var account: String?
     /// For `hook`: when the hook process started (continuous clock, ns), to order events.
     var sentAt: UInt64?
 }

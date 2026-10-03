@@ -9,7 +9,7 @@ usage: ht <command>
   ls [--json]                      list terminals with status, summary, ports
   send @label <text> [--no-enter]  type a message into a terminal and submit it
   read @label [-n lines]           print a terminal's recent output (default 60 lines)
-  new <claude|codex|shell|server> [@label] [--cwd dir] [--worktree] [--task "…"] [-- command…]
+  new <claude|codex|shell|server|browser> [@label] [--cwd dir] [--worktree] [--account name] [--task "…"] [-- command…]
   approve|always|deny @label        answer the prompt an agent is waiting on
   status <text>                    set this agent's card status (inside an agent terminal)
   key @label <key>…                press keys, e.g. `ht key @api down enter` (enter, esc, tab,
@@ -98,7 +98,7 @@ case "read":
     print(requireOK(request(.read) { $0.target = target; $0.lines = lines }).text ?? "")
 
 case "new":
-    guard let kind = args.first else { fail("usage: ht new <claude|codex|shell|server> [@label] [--cwd dir] [-- command…]") }
+    guard let kind = args.first else { fail("usage: ht new <claude|codex|shell|server|browser> [@label] [--cwd dir] [--account name] [-- command…]") }
     var rest = Array(args.dropFirst())
     var commandParts: [String] = []
     if let dash = rest.firstIndex(of: "--") {
@@ -112,6 +112,11 @@ case "new":
         cwd = (rest[index + 1] as NSString).expandingTildeInPath
         rest.removeSubrange(index...(index + 1))
     }
+    var account: String?
+    if let index = rest.firstIndex(of: "--account"), index + 1 < rest.count {
+        account = rest[index + 1]
+        rest.removeSubrange(index...(index + 1))
+    }
     let task = rest.firstIndex(of: "--task").flatMap { $0 + 1 < rest.count ? rest[$0 + 1] : nil }
     if let index = rest.firstIndex(of: "--task") { rest.removeSubrange(index...min(index + 1, rest.count - 1)) }
     let response = requireOK(request(.new) {
@@ -122,6 +127,7 @@ case "new":
         $0.command = commandParts.isEmpty ? nil : commandParts.joined(separator: " ")
         $0.from = callerSession
         $0.worktree = worktree
+        $0.account = account
     })
     print(response.text ?? "created")
 

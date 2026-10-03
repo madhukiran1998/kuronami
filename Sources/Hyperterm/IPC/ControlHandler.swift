@@ -178,6 +178,15 @@ struct ControlHandler {
         let cwd = request.cwd ?? callerSession?.spec.cwd ?? NSHomeDirectory()
         var spec = LaunchSpec(label: request.label ?? "", kind: kind, cwd: cwd, command: request.command)
         if callerAgent != nil && spec.labelSource == .user { spec.labelSource = .agent }
+        if let account = request.account {
+            guard AccountStore.shared.account(account, kind: kind) != nil else {
+                return .failure("no \(kind.displayName) account named \(account); add it in Accounts")
+            }
+            if account != AgentAccount.defaultID { spec.account = account }
+        } else if let parent = callerAgent, parent.kind == kind {
+            // An agent's helpers bill the same subscription it does.
+            spec.account = parent.spec.account
+        }
         let session = store.create(spec, select: isUser, worktree: request.worktree ?? false, task: request.text)
         var response = ControlResponse.success(text: "@\(session.label)")
         response.session = session.info()
