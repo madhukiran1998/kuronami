@@ -4,7 +4,7 @@
 
 **A native macOS terminal for running many coding agents at once.** Claude Code, Codex, shells and dev servers each get a labeled terminal (`@api`, `@landing-page`). Kuronami shows what every agent is doing, brings you the ones that need you, lets you approve and review their work without switching terminals, lets agents message each other by label, and gives each agent a real Chromium browser you can watch and take over.
 
-![Kuronami grid view with three agents and two dev servers](docs/screenshot.png)
+![Kuronami in grid view: a Claude agent, a test run, the repo's history, an agent's browser, and a dev server on the shelf](docs/screenshot.png)
 
 Terminals render with **libghostty**, Ghostty's own GPU (Metal) engine. Your `~/.config/ghostty/config` (fonts, theme, keybinds) applies as-is. Browsers are embedded **Chromium** (CEF), started only when first used. The app chrome is native AppKit and SwiftUI in a **Graphite** look: neutral black and charcoal, so color only ever means something (an agent's state, which agent it is, where focus is), with rounded floating panes, a unified toolbar, a shelf for servers and minimized tiles, and an inspector.
 
@@ -51,7 +51,7 @@ Running several agents in parallel moves the bottleneck from typing to **attenti
 Agents drive the browsers through [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) (Node.js required), attached to Chromium's DevTools port on 127.0.0.1. Read-only tools (snapshots, screenshots, console, network) run without asking; navigating, clicking, typing, and scripts ask first.
 
 ### Agents that talk to each other
-Every agent started in Kuronami gets a `hyperterm` MCP server:
+Every agent started in Kuronami gets a `hyperterm` MCP server (it keeps its original name so saved permissions keep working):
 
 | Tool | What it does |
 |---|---|
@@ -135,9 +135,11 @@ Requires macOS 15+, Xcode 16+, XcodeGen and Zig 0.15.2 (`brew install xcodegen z
 ```sh
 scripts/build-ghosttykit.sh   # once: builds libghostty (Ghostty v1.3.1, ReleaseFast) → GhosttyKit.xcframework
 scripts/run.sh                # build + launch the debug app (first build downloads Chromium, ~130 MB)
-scripts/install.sh            # optimized build → /Applications/Hyperterm.app
+scripts/install.sh            # optimized build → /Applications/Kuronami.app
 xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -derivedDataPath build/DerivedData test
 ```
+
+Kuronami was called Hyperterm until October 2026. Internal names keep the old spelling so existing setups carry over: the Xcode project and Swift module, the bundle id, `~/.hyperterm`, the `ht` CLI, and `HT_*` environment variables.
 
 Chromium comes from [CefSwift](https://github.com/Rajaniraiyn/CefSwift) (MIT, pinned in `project.yml`). `scripts/embed-cef.sh` runs after each build: it caches the CEF distribution in `~/Library/Caches/Hyperterm/cef` and assembles the framework plus the five helper apps Chromium needs. Agents' browser tools need Node.js (`npx chrome-devtools-mcp`).
 
