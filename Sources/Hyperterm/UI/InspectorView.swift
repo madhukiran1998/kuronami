@@ -1009,7 +1009,7 @@ private struct InfoView: View {
                 if let id = session.spec.agentSessionId {
                     section("Conversation") {
                         row("ID", id, mono: true)
-                        HStack(spacing: Space.s) {
+                        FlowLayout(spacing: Space.s) {
                             Button(copiedResume ? "Copied" : "Copy Resume Command") {
                                 let command = session.kind == .claude ? "claude --resume \(id)" : "codex resume \(id)"
                                 NSPasteboard.general.clearContents()
@@ -1024,7 +1024,7 @@ private struct InfoView: View {
                         .buttonStyle(PanelButtonStyle())
                     }
                 }
-                HStack(spacing: Space.s) {
+                FlowLayout(spacing: Space.s) {
                     if session.kind != .browser {
                         Button("Open in \(Editors.preferred?.name ?? "Editor")") { Editors.open(session.spec.workPath) }
                     }

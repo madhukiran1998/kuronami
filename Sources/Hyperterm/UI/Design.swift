@@ -163,6 +163,24 @@ enum Motion {
     }
 }
 
+// MARK: - Materials
+
+extension View {
+    /// Floating surfaces (the command palette, find bar, recap) are Liquid Glass on macOS 26
+    /// when built with its SDK, and solid graphite otherwise.
+    @ViewBuilder func floatingSurface(cornerRadius: CGFloat = Radius.pane, fallback: Color = Tone.surface) -> some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        } else {
+            self.background(fallback, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        }
+        #else
+        self.background(fallback, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        #endif
+    }
+}
+
 // MARK: - Components
 
 /// A key cap: "⌘N".

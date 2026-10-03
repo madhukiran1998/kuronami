@@ -12,15 +12,27 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            xcode: Xcode_16
+          # Xcode 26 compiles the Liquid Glass paths (#if compiler(>=6.2)).
+          - os: macos-26
+            xcode: Xcode_26
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
       - name: Xcode
         run: |
-          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$(ls -d /Applications/${{ matrix.xcode }}*.app | sort -V | tail -1)"
           xcodebuild -version
+          # Xcode 26 ships the Metal toolchain separately; libghostty's shaders need it.
+          if [ "${{ matrix.os }}" = "macos-26" ]; then xcodebuild -downloadComponent MetalToolchain || true; fi
 
       - name: Tools
         run: |
@@ -36,7 +48,7 @@ jobs:
             GhosttyKit.xcframework
             Resources/ghostty
             Resources/terminfo
-          key: ghosttykit-${{ hashFiles('scripts/build-ghosttykit.sh') }}
+          key: ghosttykit-${{ matrix.os }}-${{ hashFiles('scripts/build-ghosttykit.sh') }}
 
       - name: Build libghostty
         if: steps.ghostty.outputs.cache-hit != 'true'
@@ -72,6 +84,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: interface-captures
+          name: interface-captures-${{ matrix.os }}
           path: captures
           if-no-files-found: ignore

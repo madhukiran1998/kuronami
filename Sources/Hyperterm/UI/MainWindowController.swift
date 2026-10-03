@@ -26,6 +26,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.backgroundColor = Ink.floor
         window.appearance = NSAppearance(named: .darkAqua)
         window.titlebarAppearsTransparent = true
+        // The sidebar and inspector already say what's selected; the toolbar stays uncluttered.
+        window.titleVisibility = .hidden
         window.minSize = NSSize(width: 780, height: 520)
         window.tabbingMode = .disallowed
         super.init(window: window)

@@ -51,7 +51,7 @@ struct SearchBar: View {
         .padding(.leading, Space.m)
         .padding(.trailing, Space.xs)
         .padding(.vertical, Space.xs + 2)
-        .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.row + 2, style: .continuous))
+        .floatingSurface(cornerRadius: Radius.row + 2)
         .shadow(color: .black.opacity(0.3), radius: Space.m, y: Space.xs)
         .onAppear { focused = true }
     }

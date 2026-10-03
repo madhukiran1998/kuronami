@@ -435,8 +435,7 @@ struct RecapBanner: View {
             IconButton(symbol: "xmark", help: "Dismiss", action: onDismiss)
         }
         .padding(Space.m)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Radius.pane, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous).strokeBorder(Tone.hairline))
+        .floatingSurface()
         .shadow(color: .black.opacity(0.3), radius: Space.m, y: Space.xs)
     }
 }

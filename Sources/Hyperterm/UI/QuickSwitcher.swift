@@ -197,9 +197,8 @@ struct QuickSwitcherView: View {
         }
         .frame(width: 600)
         .foregroundStyle(Tone.text)
-        .background(Tone.deep)
+        .floatingSurface(fallback: Tone.deep)
         .clipShape(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous).strokeBorder(Tone.hairline))
         .onAppear { focused = true }
         .onChange(of: query) { selection = 0 }
         .onChange(of: results.map(\.id)) { selection = min(selection, max(results.count - 1, 0)) }

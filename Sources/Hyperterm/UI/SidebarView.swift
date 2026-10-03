@@ -162,6 +162,7 @@ private struct Composer: View {
                 } label: {
                     Text(agentTitle).foregroundStyle(kinds.count == 1 ? kinds[0].tint : Tone.text)
                 }
+                .fixedSize()
                 .help("Which agents take the task. Several agents each get their own worktree.")
                 Menu {
                     Picker("Permissions", selection: $mode) {
@@ -173,6 +174,7 @@ private struct Composer: View {
                     Image(systemName: mode?.symbol ?? "hand.raised")
                         .foregroundStyle(mode == nil ? Tone.faint : Tone.text)
                 }
+                .fixedSize()
                 .help(mode.map { "\($0.title): \($0.detail)" } ?? "Permissions: as configured in the agent")
                 Menu {
                     ForEach(folders, id: \.self) { dir in Button(abbreviateHome(dir)) { folder = dir } }
@@ -184,6 +186,7 @@ private struct Composer: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
+                .fixedSize()
                 .help("Project: " + abbreviateHome(targetFolder))
                 Spacer(minLength: 0)
                 if store.launchingCount > 0 { ProgressView().controlSize(.mini) }
@@ -201,7 +204,6 @@ private struct Composer: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .fixedSize(horizontal: false, vertical: true)
             .font(Typeface.caption.weight(.medium))
         }
         .padding(Space.m)

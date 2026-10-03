@@ -32,7 +32,25 @@ final class InterfaceSnapshotTests: XCTestCase {
                     name: "inspector-activity", output: output)
         store.inspectorTab = .info
         try capture(QuickSwitcherView(store: store, quickCreate: { _ in }, dismiss: {}),
-                    size: NSSize(width: 560, height: 428), name: "command-palette", output: output)
+                    size: NSSize(width: 600, height: 440), name: "command-palette", output: output)
+
+        let patch = PatchLine.parse("""
+        @@ -10,7 +10,8 @@ struct Workspace {
+             let sessions: [Session]
+        -    var layout: Layout = .grid
+        -    var focused: Session?
+        +    var layout: LayoutTree = LayoutTree()
+        +    /// The tile with keyboard focus.
+        +    var focused: Session.ID?
+             func arrange() {
+        -        grid.reflow()
+        +        layout.reconcile(visible: sessions.map(\\.id), in: bounds)
+             }
+        """)
+        try capture(DiffText(lines: patch, sideBySide: false, commented: [12], onComment: { _ in })
+                        .frame(width: 520, height: 240), size: NSSize(width: 520, height: 240), name: "diff-unified", output: output)
+        try capture(DiffText(lines: patch, sideBySide: true, commented: [], onComment: { _ in })
+                        .frame(width: 720, height: 260), size: NSSize(width: 720, height: 260), name: "diff-split", output: output)
 
         var draft = NewSessionDraft()
         draft.kind = .codex
