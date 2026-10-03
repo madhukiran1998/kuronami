@@ -330,95 +330,38 @@ private struct ChangesView: View {
 
     private var patchView: some View {
         let file = files.first { $0.path == selected } ?? files.first
-        // Index once per render; avoid scanning every review comment for every code line.
-        let fileComments = Dictionary(grouping: comments.filter { $0.path == file?.path }, by: \.line)
-        let lines = file.flatMap { parsed[$0.path] } ?? []
-        return ScrollView([.vertical]) {
-            if let file {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if sideBySide {
-                        ForEach(SplitRow.rows(from: lines)) { row in
-                            splitRow(row, file: file, lineComments: row.right?.newNumber.flatMap { fileComments[$0] } ?? [])
-                        }
-                    } else {
-                        ForEach(lines) { line in
-                            unifiedRow(line, file: file, lineComments: line.newNumber.flatMap { fileComments[$0] } ?? [])
-                        }
+        let fileComments = comments.filter { $0.path == file?.path }
+        return VStack(spacing: 0) {
+            DiffText(lines: file.flatMap { parsed[$0.path] } ?? [], sideBySide: sideBySide,
+                     commented: Set(fileComments.map(\.line))) { line in startComment(line) }
+            if !fileComments.isEmpty || draftLine != nil {
+                Hairline()
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    ForEach(fileComments) { comment in
+                        CommentBubble(line: comment.line, text: comment.text) { comments.removeAll { $0.id == comment.id } }
+                    }
+                    if let file, let number = draftLine, let line = parsed[file.path]?.first(where: { $0.newNumber == number && $0.kind != .removed }) {
+                        draft(for: line, file: file)
                     }
                 }
                 .padding(.vertical, Space.xs)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .background(Tone.deep)
             }
-        }
-        .background(Color(nsColor: Theme.terminalBackground))
-    }
-
-    @ViewBuilder private func unifiedRow(_ line: PatchLine, file: Review.FileDiff, lineComments: [ReviewComment]) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-            Text(line.kind == .removed ? (line.oldNumber.map(String.init) ?? "") : (line.newNumber.map(String.init) ?? ""))
-                .frame(width: 34, alignment: .trailing)
-                .foregroundStyle(Color(nsColor: Theme.terminalForeground).opacity(0.3))
-            codeText(line)
-        }
-        .modifier(PatchLineChrome(line: line))
-        .modifier(Commentable(line: line, start: { startComment(line) }))
-        comments(lineComments)
-        draft(for: line, file: file)
-    }
-
-    @ViewBuilder private func splitRow(_ row: SplitRow, file: Review.FileDiff, lineComments: [ReviewComment]) -> some View {
-        if let header = row.header {
-            codeText(header).modifier(PatchLineChrome(line: header))
-        } else {
-            HStack(alignment: .top, spacing: 0) {
-                half(row.left, number: row.left?.oldNumber)
-                Rectangle().fill(Tone.hairline).frame(width: Size.hairline)
-                half(row.right, number: row.right?.newNumber)
-                    .modifier(Commentable(line: row.right, start: { if let right = row.right { startComment(right) } }))
-            }
-            comments(lineComments)
-            if let right = row.right { draft(for: right, file: file) }
-        }
-    }
-
-    private func half(_ line: PatchLine?, number: Int?) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
-            Text(number.map(String.init) ?? "")
-                .frame(width: 30, alignment: .trailing)
-                .foregroundStyle(Color(nsColor: Theme.terminalForeground).opacity(0.3))
-            if let line { codeText(line) } else { Spacer(minLength: 0) }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .modifier(PatchLineChrome(line: line))
-    }
-
-    private func codeText(_ line: PatchLine) -> some View {
-        Text(line.text.isEmpty ? " " : line.text)
-            .font(Typeface.codeSmall)
-            .foregroundStyle(line.kind == .header ? Tone.faint : Color(nsColor: Theme.terminalForeground))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .textSelection(.enabled)
-    }
-
-    @ViewBuilder private func comments(_ lineComments: [ReviewComment]) -> some View {
-        ForEach(lineComments) { comment in
-            CommentBubble(text: comment.text) { comments.removeAll { $0.id == comment.id } }
         }
     }
 
     @ViewBuilder private func draft(for line: PatchLine, file: Review.FileDiff) -> some View {
-        if let number = line.newNumber, draftLine == number, line.kind != .header {
-            HStack(spacing: Space.xs) {
-                TextField("Comment for \(session.label)", text: $draftText)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { addComment(file: file, line: line) }
-                Button("Add") { addComment(file: file, line: line) }
-                    .disabled(draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("Cancel") { draftLine = nil }
-            }
-            .controlSize(.small)
-            .padding(Space.s)
+        HStack(spacing: Space.xs) {
+            Text("Line \(line.newNumber ?? 0)").font(Typeface.caption.monospacedDigit()).foregroundStyle(Tone.faint)
+            TextField("Comment for \(session.label)", text: $draftText)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { addComment(file: file, line: line) }
+            Button("Add") { addComment(file: file, line: line) }
+                .disabled(draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel") { draftLine = nil }
         }
+        .controlSize(.small)
+        .padding(.horizontal, Space.s)
     }
 
     private func startComment(_ line: PatchLine) {
@@ -613,42 +556,6 @@ private struct ChangesView: View {
     }
 }
 
-/// Tint for a changed line: a soft wash plus an edge bar.
-private struct PatchLineChrome: ViewModifier {
-    let line: PatchLine?
-
-    func body(content: Content) -> some View {
-        content
-            .padding(.vertical, 1)
-            .padding(.trailing, Space.s)
-            .background(alignment: .leading) {
-                if let tint = line?.kind.tint {
-                    ZStack(alignment: .leading) {
-                        tint.opacity(0.09)
-                        tint.opacity(0.8).frame(width: 2)
-                    }
-                }
-            }
-    }
-}
-
-/// Double-click (or the context menu) starts a review comment on a line of the new file.
-private struct Commentable: ViewModifier {
-    let line: PatchLine?
-    let start: () -> Void
-
-    private var commentable: Bool { line?.newNumber != nil && line?.kind != .header }
-
-    func body(content: Content) -> some View {
-        content
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) { if commentable { start() } }
-            .contextMenu {
-                if commentable { Button("Add Review Comment", action: start) }
-            }
-    }
-}
-
 /// Writes the message (with the agent's help), then commits.
 private struct CommitSheet: View {
     let session: TerminalSession
@@ -719,19 +626,18 @@ private struct CommitSheet: View {
 }
 
 private struct CommentBubble: View {
+    let line: Int
     let text: String
     let onDelete: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: Space.s) {
-            Image(systemName: "text.bubble.fill").foregroundStyle(Palette.accent)
+        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+            Circle().fill(Palette.accent).frame(width: 6, height: 6)
+            Text("Line \(line)").font(Typeface.caption.monospacedDigit()).foregroundStyle(Tone.faint)
             Text(text).font(Typeface.callout).frame(maxWidth: .infinity, alignment: .leading)
             IconButton(symbol: "xmark", help: "Remove comment", action: onDelete)
         }
-        .padding(Space.s)
-        .background(Palette.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
         .padding(.horizontal, Space.s)
-        .padding(.vertical, Space.xs)
     }
 }
 
