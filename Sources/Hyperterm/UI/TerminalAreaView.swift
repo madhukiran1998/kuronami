@@ -26,7 +26,6 @@ enum LayoutMode: String, CaseIterable, Codable {
 final class TerminalAreaView: NSView {
     private var tiles: [UUID: TileView] = [:]
     private var visibleOrder: [UUID] = []
-    private var focusedID: UUID?
     private var lastFocused: UUID?
     private var mode: LayoutMode = .focus
     private let emptyState = NSHostingViewFactory.emptyState()
@@ -47,7 +46,13 @@ final class TerminalAreaView: NSView {
             if let serverStrip { addSubview(serverStrip) }
         }
     }
-    var showsServerStrip = false { didSet { serverStrip?.isHidden = !showsServerStrip; needsLayout = true } }
+    var showsServerStrip = false {
+        didSet {
+            guard showsServerStrip != oldValue else { return }
+            serverStrip?.isHidden = !showsServerStrip
+            needsLayout = true
+        }
+    }
     private static let stripHeight: CGFloat = 32
     var onZoomTile: ((UUID) -> Void)?
 
@@ -80,36 +85,37 @@ final class TerminalAreaView: NSView {
         tiles[session.id]?.removeFromSuperview()
         tiles[session.id] = nil
         visibleOrder.removeAll { $0 == session.id }
+        if drag?.id == session.id { drag = nil }
+        needsLayout = true
     }
 
     /// Shows `visible` in `mode`, focusing `focused`. `takeFocus` moves keyboard focus into the
     /// focused terminal; status-driven refreshes pass false so they never steal it from a field.
     func apply(mode: LayoutMode, visible: [UUID], focused: UUID?, takeFocus: Bool = true) {
-        let changed = mode != self.mode || visible != visibleOrder
+        // Normalize first: stale IDs and duplicates must not force layout on every status poll.
+        let requested = Self.visibleIDs(visible, mounted: Set(tiles.keys))
+        // The store receives the new order on drop. Polls during the gesture must retain the
+        // order already shown by the moving tiles.
+        let preservesDrag = drag != nil && mode == self.mode && Set(requested) == Set(visibleOrder)
+        let nextVisible = preservesDrag ? visibleOrder : requested
+        if !preservesDrag, let drag {
+            tiles[drag.id]?.setLifted(false)
+            self.drag = nil
+        }
+        let changed = mode != self.mode || nextVisible != visibleOrder
         self.mode = mode
-        visibleOrder = visible.filter { tiles[$0] != nil }
-        focusedID = focused
+        visibleOrder = nextVisible
         let visibleSet = Set(visibleOrder)
         for (id, tile) in tiles {
             let isVisible = visibleSet.contains(id)
-            // Tiles arriving on screen fade in rather than pop.
-            if isVisible && tile.isHidden {
-                tile.alphaValue = 0
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.22
-                    context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                    tile.animator().alphaValue = 1
-                }
-            }
-            tile.isHidden = !isVisible
-            tile.session.surface.setOccluded(!isVisible)
+            tile.setVisible(isVisible)
             // One tile gets the whole area without chrome, whatever the layout.
             tile.showsHeader = mode != .focus && visibleSet.count > 1
             tile.isFocusedTile = id == focused
         }
         emptyState.isHidden = !tiles.isEmpty
         if changed { needsLayout = true; layoutSubtreeIfNeeded() }
-        if takeFocus || focused != lastFocused, let focused, let surface = tiles[focused]?.session.surface,
+        if takeFocus, let focused, visibleSet.contains(focused), let surface = tiles[focused]?.session.surface,
            window?.firstResponder !== surface {
             window?.makeFirstResponder(surface)
             if focused != lastFocused { tiles[focused]?.showRecapIfNeeded() }
@@ -128,7 +134,7 @@ final class TerminalAreaView: NSView {
     }
 
     func refreshAttention() {
-        tiles.values.forEach { $0.refreshAttention() }
+        for id in visibleOrder { tiles[id]?.refreshAttention() }
     }
 
     override func layout() {
@@ -137,12 +143,13 @@ final class TerminalAreaView: NSView {
         var area = bounds
         if showsServerStrip, let serverStrip {
             serverStrip.frame = NSRect(x: 0, y: 0, width: bounds.width, height: Self.stripHeight)
-            area = NSRect(x: 0, y: Self.stripHeight, width: bounds.width, height: bounds.height - Self.stripHeight)
+            area = NSRect(x: 0, y: Self.stripHeight, width: bounds.width, height: max(0, bounds.height - Self.stripHeight))
         }
         tileArea = area
         let frames = Self.frames(count: visibleOrder.count, in: area, mode: mode)
         for (id, frame) in zip(visibleOrder, frames) where id != drag?.id {
-            tiles[id]?.frame = frame.integral
+            let aligned = frame.integral
+            if tiles[id]?.frame != aligned { tiles[id]?.frame = aligned }
         }
     }
 
@@ -155,6 +162,7 @@ final class TerminalAreaView: NSView {
         if drag == nil {
             drag = (id, tile.frame)
             tile.setLifted(true)
+            onSelectTile?(id)
         }
         guard let origin = drag?.origin else { return }
         // SwiftUI's global space grows downward; this view's grows upward.
@@ -167,7 +175,7 @@ final class TerminalAreaView: NSView {
         visibleOrder.remove(at: current)
         visibleOrder.insert(id, at: target)
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             for (other, frame) in zip(visibleOrder, slots) where other != id {
                 tiles[other]?.animator().frame = frame.integral
@@ -181,7 +189,7 @@ final class TerminalAreaView: NSView {
         let slots = Self.frames(count: visibleOrder.count, in: tileArea, mode: mode)
         if let index = visibleOrder.firstIndex(of: id), slots.indices.contains(index) {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.18
+                context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
                 tile.animator().frame = slots[index].integral
             } completionHandler: {
                 MainActor.assumeIsolated { tile.setLifted(false) }
@@ -194,24 +202,32 @@ final class TerminalAreaView: NSView {
 
     // MARK: - Geometry
 
+    /// Preserves the user's order while ignoring IDs whose surfaces have gone away.
+    nonisolated static func visibleIDs(_ requested: [UUID], mounted: Set<UUID>) -> [UUID] {
+        var seen = Set<UUID>()
+        return requested.filter { mounted.contains($0) && seen.insert($0).inserted }
+    }
+
     nonisolated static func frames(count: Int, in bounds: NSRect, mode: LayoutMode) -> [NSRect] {
         guard count > 0 else { return [] }
         // Panes always float inset from the window edges, like content panes in Apple's apps.
-        let gap: CGFloat = 10
+        let gap = min(CGFloat(10), max(0, min(bounds.width, bounds.height) / 2))
         if mode == .focus || count == 1 { return [bounds.insetBy(dx: gap, dy: gap)] }
         let area = bounds.insetBy(dx: gap, dy: gap)
         let (columns, rows) = gridShape(count: count, aspect: area.width / max(area.height, 1))
-        let cellHeight = (area.height - gap * CGFloat(rows - 1)) / CGFloat(rows)
+        let rowGap = min(gap, area.height / CGFloat(max(rows - 1, 1)))
+        let cellHeight = max(0, (area.height - rowGap * CGFloat(rows - 1)) / CGFloat(rows))
         var frames: [NSRect] = []
         for row in 0..<rows {
             let start = row * columns
             let itemsInRow = min(columns, count - start)
             guard itemsInRow > 0 else { break }
             // The last row stretches so there are no empty holes.
-            let cellWidth = (area.width - gap * CGFloat(itemsInRow - 1)) / CGFloat(itemsInRow)
-            let y = area.maxY - CGFloat(row + 1) * cellHeight - CGFloat(row) * gap
+            let columnGap = min(gap, area.width / CGFloat(max(itemsInRow - 1, 1)))
+            let cellWidth = max(0, (area.width - columnGap * CGFloat(itemsInRow - 1)) / CGFloat(itemsInRow))
+            let y = area.maxY - CGFloat(row + 1) * cellHeight - CGFloat(row) * rowGap
             for column in 0..<itemsInRow {
-                let x = area.minX + CGFloat(column) * (cellWidth + gap)
+                let x = area.minX + CGFloat(column) * (cellWidth + columnGap)
                 frames.append(NSRect(x: x, y: y, width: cellWidth, height: cellHeight))
             }
         }
@@ -221,6 +237,8 @@ final class TerminalAreaView: NSView {
     /// Picks the column count whose cells are closest to a comfortable terminal shape. Slightly
     /// wide of square: agent TUIs want height, and side-by-side reads better than stacked.
     nonisolated static func gridShape(count: Int, aspect: CGFloat) -> (columns: Int, rows: Int) {
+        guard count > 0 else { return (0, 0) }
+        let aspect = max(aspect.isFinite ? aspect : 1, 0.001)
         let target: CGFloat = 1.1
         var best = (columns: 1, rows: count)
         var bestScore = CGFloat.greatestFiniteMagnitude

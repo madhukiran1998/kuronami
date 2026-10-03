@@ -13,6 +13,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var diffStatsInFlight = false
     private var gitInFlight = false
 
+    private struct DiffTarget: Hashable, Sendable {
+        let directory: String
+        let base: String?
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // As a unit-test host, don't spawn terminals or take over the live control socket.
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }
@@ -119,8 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private static let activePollInterval: TimeInterval = 2.5
-    private static let backgroundPollInterval: TimeInterval = 5
+    nonisolated private static let activePollInterval: TimeInterval = 2.5
+    nonisolated private static let backgroundPollInterval: TimeInterval = 5
 
     private func apply(_ snapshots: [String: ProcessSnapshot]) {
         pollCount += 1
@@ -164,14 +169,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard !agents.isEmpty else { return }
         diffStatsInFlight = true
-        let jobs = agents.map { ($0.id, $0.spec.workPath, $0.spec.baseBranch) }
+        let jobs = agents.map { ($0.id, DiffTarget(directory: $0.spec.workPath, base: $0.spec.baseBranch)) }
+        let targets = Set(jobs.map { $0.1 })
         DispatchQueue.global(qos: .utility).async {
-            let stats = jobs.map { ($0.0, Review.diffStat(at: $0.1, base: $0.2)) }
+            let stats = Dictionary(uniqueKeysWithValues: targets.map {
+                ($0, Review.diffStat(at: $0.directory, base: $0.base))
+            })
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.diffStatsInFlight = false
-                    for (id, stat) in stats {
-                        guard let session = self.store.sessions.first(where: { $0.id == id }), session.diffStat != stat else { continue }
+                    for (id, target) in jobs {
+                        let stat = stats[target] ?? nil
+                        guard let session = self.store.sessions.first(where: { $0.id == id }),
+                              session.spec.workPath == target.directory, session.spec.baseBranch == target.base,
+                              session.diffStat != stat else { continue }
                         session.diffStat = stat
                     }
                 }
@@ -183,14 +194,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !gitInFlight, !store.sessions.isEmpty else { return }
         gitInFlight = true
         let dirs = Dictionary(uniqueKeysWithValues: store.sessions.map { ($0.id, $0.spec.workPath) })
+        let uniqueDirs = Set(dirs.values)
         let git = gitInspector
         DispatchQueue.global(qos: .utility).async {
-            let infos = dirs.mapValues { git.info(for: $0) }
+            let infos = Dictionary(uniqueKeysWithValues: uniqueDirs.map { ($0, git.info(for: $0)) })
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.gitInFlight = false
                     for session in self.store.sessions {
-                        if let info = infos[session.id], session.git != info { session.git = info }
+                        guard dirs[session.id] == session.spec.workPath else { continue }
+                        let info = infos[session.spec.workPath] ?? nil
+                        if session.git != info { session.git = info }
                     }
                 }
             }
@@ -241,21 +255,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let command = enabling
             ? "claude mcp add --scope user hyperterm \(shellQuote(AgentIntegration.htPath)) mcp"
             : "claude mcp remove --scope user hyperterm"
-        DispatchQueue.global().async {
-            let output = runProcess("/bin/zsh", ["-lic", command], timeout: 30)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    if output == nil && enabling {
-                        let failure = NSAlert()
-                        failure.messageText = "Couldn't register Kuronami with Claude"
-                        failure.informativeText = "Running `\(command)` failed. Check that `claude` is on your PATH."
-                        failure.runModal()
-                        return
-                    }
-                    SessionStore.channelsEnabled = enabling
-                    sender.state = enabling ? .on : .off
-                }
+        Task { @MainActor in
+            let output = await Task.detached(priority: .userInitiated) {
+                runProcess("/bin/zsh", ["-lic", command], timeout: 30)
+            }.value
+            if output == nil && enabling {
+                let failure = NSAlert()
+                failure.messageText = "Couldn't register Kuronami with Claude"
+                failure.informativeText = "Running `\(command)` failed. Check that `claude` is on your PATH."
+                failure.runModal()
+                return
             }
+            SessionStore.channelsEnabled = enabling
+            sender.state = enabling ? .on : .off
         }
     }
     @objc func enableCodexApprovals(_ sender: Any?) { AgentIntegration.installCodexApprovalHook() }

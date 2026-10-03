@@ -46,6 +46,10 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private var focused = false
     private var pointerStyle: NSCursor = .iBeam
     private var trackingArea: NSTrackingArea?
+    private var windowOcclusionObserver: NSObjectProtocol?
+    private var hostOccluded = true
+    private var lastPixelSize: NSSize?
+    private var lastContentScale: NSSize?
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { false }
@@ -98,6 +102,10 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     /// Frees the surface, which terminates its process.
     func destroy() {
         LiveSurfaces.unregister(self)
+        if let windowOcclusionObserver {
+            NotificationCenter.default.removeObserver(windowOcclusionObserver)
+            self.windowOcclusionObserver = nil
+        }
         guard let surface else { return }
         self.surface = nil
         ghostty_surface_free(surface)
@@ -224,14 +232,32 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     /// Hidden sessions keep running; telling libghostty they're occluded stops wasted rendering.
     /// Arrangement runs on every status change, so only real transitions reach libghostty.
     func setOccluded(_ occluded: Bool) {
+        hostOccluded = occluded
+        updateOcclusion()
+    }
+
+    private var isOccluded: Bool?
+
+    private func updateOcclusion() {
+        let occluded = hostOccluded || window == nil || isHiddenOrHasHiddenAncestor
+            || window?.occlusionState.contains(.visible) != true
         guard let surface, occluded != isOccluded else { return }
         isOccluded = occluded
         ghostty_surface_set_occlusion(surface, !occluded)
     }
 
-    private var isOccluded: Bool?
+    override func viewDidHide() {
+        super.viewDidHide()
+        updateOcclusion()
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        updateOcclusion()
+    }
 
     override func setFrameSize(_ newSize: NSSize) {
+        guard frame.size != newSize else { return }
         super.setFrameSize(newSize)
         pushSize(newSize)
     }
@@ -239,7 +265,10 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private func pushSize(_ size: NSSize) {
         guard let surface, size.width > 0, size.height > 0 else { return }
         let scaled = convertToBacking(size)
-        ghostty_surface_set_size(surface, UInt32(scaled.width), UInt32(scaled.height))
+        let pixels = NSSize(width: scaled.width.rounded(), height: scaled.height.rounded())
+        guard pixels != lastPixelSize else { return }
+        lastPixelSize = pixels
+        ghostty_surface_set_size(surface, UInt32(pixels.width), UInt32(pixels.height))
     }
 
     override func viewDidChangeBackingProperties() {
@@ -250,14 +279,29 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
             layer?.contentsScale = window.backingScaleFactor
             CATransaction.commit()
         }
-        guard let surface, frame.width > 0 else { return }
+        guard let surface, frame.width > 0, frame.height > 0 else { return }
         let backing = convertToBacking(frame)
-        ghostty_surface_set_content_scale(surface, backing.width / frame.width, backing.height / frame.height)
+        let scale = NSSize(width: backing.width / frame.width, height: backing.height / frame.height)
+        if scale != lastContentScale {
+            lastContentScale = scale
+            lastPixelSize = nil
+            ghostty_surface_set_content_scale(surface, scale.width, scale.height)
+        }
         pushSize(frame.size)
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if let windowOcclusionObserver { NotificationCenter.default.removeObserver(windowOcclusionObserver) }
+        windowOcclusionObserver = nil
+        if let window {
+            windowOcclusionObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateOcclusion() }
+            }
+        }
+        updateOcclusion()
         guard let surface, let screen = window?.screen,
               let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else { return }
         ghostty_surface_set_display_id(surface, displayID)

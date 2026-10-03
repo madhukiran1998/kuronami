@@ -17,14 +17,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.title = "Kuronami"
-        window.toolbarStyle = .unified
+        window.toolbarStyle = .unifiedCompact
         // Graphite: one opaque surface that terminals float on as rounded panes. Always dark,
         // and no live blur behind every tile.
         window.isOpaque = true
         window.backgroundColor = Ink.floor
         window.appearance = NSAppearance(named: .darkAqua)
         window.titlebarAppearsTransparent = true
-        window.minSize = NSSize(width: 760, height: 440)
+        window.minSize = NSSize(width: 780, height: 520)
         window.tabbingMode = .disallowed
         super.init(window: window)
         window.delegate = self
@@ -54,16 +54,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Layout
 
-    /// Native three-pane layout: translucent sidebar, terminals, and an inspector for review,
+    /// Native three-pane layout: opaque sidebar, terminals, and an inspector for review,
     /// activity, and session info.
     private func makeSplitController() -> NSSplitViewController {
         let split = NSSplitViewController()
         // Hosting controllers must not drive the window size from SwiftUI's ideal size.
         let sidebarHost = NSHostingController(rootView: SidebarView(store: store, actions: actions))
         sidebarHost.sizingOptions = []
-        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarHost)
+        let sidebarItem = NSSplitViewItem(sidebarWithViewController: Self.solid(sidebarHost, color: Ink.deep))
         sidebarItem.minimumThickness = 280
         sidebarItem.maximumThickness = 460
+        sidebarItem.preferredThicknessFraction = 0.24
         sidebarItem.canCollapse = true
         sidebarItem.allowsFullHeightLayout = true
         split.addSplitViewItem(sidebarItem)
@@ -92,7 +93,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         inspector.isCollapsed = true
         split.addSplitViewItem(inspector)
         inspectorItem = inspector
-        split.splitView.autosaveName = "HypertermSplit3"
+        split.splitView.autosaveName = "KuronamiWorkspace.v3"
         // The inspector opens on demand (review chip, ⌥⌘R); don't restore it open and empty.
         DispatchQueue.main.async { inspector.isCollapsed = true }
         return split
@@ -119,25 +120,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func toggleInspector() {
         guard let inspectorItem else { return }
-        inspectorItem.animator().isCollapsed.toggle()
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { inspectorItem.isCollapsed.toggle() }
+        else { inspectorItem.animator().isCollapsed.toggle() }
     }
 
     func showInspector(for session: TerminalSession) {
         store.select(session)
         store.inspectorTab = .changes
-        if inspectorItem?.isCollapsed == true { inspectorItem?.animator().isCollapsed = false }
+        if inspectorItem?.isCollapsed == true {
+            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { inspectorItem?.isCollapsed = false }
+            else { inspectorItem?.animator().isCollapsed = false }
+        }
     }
 
     /// Quick dispatch: a task typed in the sidebar becomes a new, auto-named agent in its own
     /// worktree (when the folder is a git repo) with the task already sent.
     private func dispatch(_ task: String, kind: SessionKind, cwd: String) {
-        let isRepo = GitInspector.query(expandTilde(cwd)) != nil
         let spec = LaunchSpec(label: "", kind: kind, cwd: cwd)
-        store.create(spec, worktree: isRepo, task: task)
-        if let error = store.lastError {
-            store.lastError = nil
-            NSSound.beep()
-            NSLog("hyperterm: %@", error)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await store.launch(spec, isolateIfPossible: true, task: task)
+            reportLaunchError()
         }
     }
 
@@ -187,7 +190,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         terminalArea.refreshAttention()
         let title: String, subtitle: String
         if let session = store.selected {
-            title = session.label
+            title = "@" + session.label
             subtitle = [session.git?.project, session.git?.branch].compactMap { $0 }.joined(separator: " · ")
         } else {
             title = "Kuronami"
@@ -245,8 +248,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if let current = store.selected { draft.cwd = current.spec.cwd }
         if let kind { draft.kind = kind }
         // Default to a worktree when another agent already works in this repo.
-        let repo = GitInspector.query(expandTilde(draft.cwd))?.project
-        draft.worktree = repo != nil && store.sessions.contains { $0.kind.isAgent && $0.git?.project == repo }
+        let currentRoot = store.selected?.git.map(GitInfo.mainRoot)
+        draft.worktree = currentRoot != nil && store.sessions.contains {
+            $0.kind.isAgent && $0.git.map(GitInfo.mainRoot) == currentRoot
+        }
         let recents = Array(NSOrderedSet(array: store.sessions.map(\.spec.cwd).reversed()).array as? [String] ?? [])
         let view = NewSessionView(draft: draft, recentDirectories: recents,
             onCreate: { [weak self] draft in
@@ -267,7 +272,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     private func createSession(from draft: NewSessionDraft) {
         let spec = LaunchSpec(label: draft.label, kind: draft.kind, cwd: draft.cwd, command: draft.command)
-        store.create(spec, worktree: draft.worktree)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await store.launch(spec, worktree: draft.worktree)
+            reportLaunchError()
+        }
+    }
+
+    private func reportLaunchError() {
         if let error = store.lastError {
             store.lastError = nil
             let alert = NSAlert()
@@ -280,7 +292,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// One-keystroke creation in the current session's folder.
     func quickCreate(_ kind: SessionKind) {
         let cwd = store.selected?.spec.cwd ?? NSHomeDirectory()
-        store.create(LaunchSpec(label: "", kind: kind, cwd: cwd))
+        let spec = LaunchSpec(label: "", kind: kind, cwd: cwd)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await store.launch(spec)
+            reportLaunchError()
+        }
     }
 
     func presentRename(_ session: TerminalSession) {
@@ -339,7 +356,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
-        if let session = store.selected { window?.makeFirstResponder(session.surface) }
+        guard let window, window.firstResponder == nil || window.firstResponder === window else { return }
+        if let session = store.selected { window.makeFirstResponder(session.surface) }
     }
 }
-

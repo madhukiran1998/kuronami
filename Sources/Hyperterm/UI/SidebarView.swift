@@ -1,70 +1,198 @@
 import SwiftUI
 
-/// Native macOS sidebar: translucent, sectioned by project, system selection highlight.
+/// Stable project groups, explicit selection, and a composer that stays within reach.
 struct SidebarView: View {
     @ObservedObject var store: SessionStore
     let actions: SessionActions
-
-    private var selection: Binding<UUID?> {
-        Binding(
-            get: { store.selectedID },
-            set: { id in
-                if let id, let session = store.sessions.first(where: { $0.id == id }) { store.select(session) }
-            })
-    }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
+            workspaceHeader
+            WorkspacePulse(store: store, actions: actions)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 16)
             DispatchField(store: store, actions: actions)
-                .padding(.horizontal, 10)
-                .padding(.top, 6)
-                .padding(.bottom, 8)
-            List(selection: selection) {
-                ForEach(store.projects, id: \.name) { project in
-                    Section(project.name) {
-                        ForEach(project.agents) { session in
-                            AgentRow(session: session, store: store, actions: actions)
-                                .tag(session.id)
-                                .contextMenu { SessionMenu(session: session, actions: actions) }
-                            ForEach(store.browsers(ownedBy: session)) { browser in
-                                BrowserRow(session: browser, nested: true)
-                                    .tag(browser.id)
-                                    .contextMenu { SessionMenu(session: browser, actions: actions) }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 18)
+            Rectangle().fill(Color(nsColor: Ink.hairline).opacity(0.6)).frame(height: 1)
+                .padding(.horizontal, 14)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        ForEach(store.projects, id: \.name) { project in
+                            sectionHeader(project.name, count: project.agents.count, symbol: "folder")
+                            ForEach(project.agents) { session in
+                                AgentRow(session: session, store: store, actions: actions)
+                                    .id(session.id)
+                                    .contentShape(RoundedRectangle(cornerRadius: 10))
+                                    .onTapGesture { store.select(session) }
+                                    .accessibilityAddTraits(.isButton)
+                                    .accessibilityAction { store.select(session) }
+                                    .contextMenu { SessionMenu(session: session, actions: actions) }
+                                ForEach(store.browsers(ownedBy: session)) { browser in
+                                    browserRow(browser, nested: true)
+                                }
                             }
                         }
-                    }
-                }
-                if !store.looseBrowsers.isEmpty {
-                    Section("Browsers") {
-                        ForEach(store.looseBrowsers) { browser in
-                            BrowserRow(session: browser, nested: false)
-                                .tag(browser.id)
-                                .contextMenu { SessionMenu(session: browser, actions: actions) }
+                        if !store.looseBrowsers.isEmpty {
+                            sectionHeader("Browsers", count: store.looseBrowsers.count, symbol: "globe")
+                            ForEach(store.looseBrowsers) { browser in browserRow(browser, nested: false) }
+                        }
+                        if !store.utilities.isEmpty {
+                            sectionHeader("Servers & shells", count: store.utilities.count, symbol: "terminal")
+                            ForEach(store.utilities) { session in
+                                UtilityRow(session: session)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 9)
+                                    .background(selectionFill(session), in: RoundedRectangle(cornerRadius: 8))
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { store.select(session) }
+                                    .accessibilityAddTraits(.isButton)
+                                    .accessibilityAction { store.select(session) }
+                                    .contextMenu { SessionMenu(session: session, actions: actions) }
+                                    .id(session.id)
+                            }
+                        }
+                        if store.sessions.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("A place for every agent.")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(Color(nsColor: Ink.muted))
+                                Text("Your agents, browsers, and servers\nwill appear here, grouped by project.")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Color(nsColor: Ink.faint))
+                                    .lineSpacing(3)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.top, 22)
                         }
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 16)
                 }
-                if !store.utilities.isEmpty {
-                    Section("Servers & Shells") {
-                        ForEach(store.utilities) { session in
-                            UtilityRow(session: session)
-                                .tag(session.id)
-                                .contextMenu { SessionMenu(session: session, actions: actions) }
-                        }
-                    }
+                .scrollIndicators(.hidden)
+                .onChange(of: store.selectedID) { _, id in
+                    guard let id else { return }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { proxy.scrollTo(id) }
                 }
             }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
             SidebarFooter(store: store, actions: actions)
         }
         .background(Color(nsColor: Ink.deep).ignoresSafeArea())
-        .tint(Palette.working)
+        .foregroundStyle(Color(nsColor: Ink.text))
+        .tint(Palette.accent)
+    }
+
+    private var workspaceHeader: some View {
+        HStack(spacing: 10) {
+            WaveMark().frame(width: 30, height: 30)
+                .padding(5)
+                .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 11))
+                .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(Color(nsColor: Ink.hairline)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("KURONAMI")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .tracking(2.2)
+                    .foregroundStyle(Color(nsColor: Ink.muted))
+                Text("Workspace").font(.system(size: 20, weight: .semibold)).tracking(-0.6)
+            }
+            Spacer(minLength: 0)
+            Button { NSApp.sendAction(#selector(AppDelegate.showSwitcher(_:)), to: nil, from: nil) } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color(nsColor: Ink.muted))
+                    .frame(width: 28, height: 30)
+            }
+            .buttonStyle(.plain)
+            .help("Search sessions and commands (⌘P)")
+            .accessibilityLabel("Search sessions and commands")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
+        .padding(.bottom, 18)
+    }
+
+    private func sectionHeader(_ title: String, count: Int, symbol: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol).font(.system(size: 10, weight: .medium))
+            Text(title.uppercased()).font(.system(size: 10, weight: .semibold)).tracking(0.8).lineLimit(1)
+            Spacer(minLength: 4)
+            Text(String(count)).font(.system(size: 10, design: .monospaced))
+        }
+        .foregroundStyle(Color(nsColor: Ink.faint))
+        .padding(.horizontal, 10)
+        .padding(.top, 18)
+        .padding(.bottom, 4)
+    }
+
+    private func selectionFill(_ session: TerminalSession) -> Color {
+        Color(nsColor: store.selectedID == session.id ? Ink.raised : Ink.deep)
+    }
+
+    private func browserRow(_ browser: TerminalSession, nested: Bool) -> some View {
+        BrowserRow(session: browser, nested: nested)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(selectionFill(browser), in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+            .onTapGesture { store.select(browser) }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { store.select(browser) }
+            .contextMenu { SessionMenu(session: browser, actions: actions) }
+            .id(browser.id)
+    }
+}
+
+private struct WorkspacePulse: View {
+    @ObservedObject var store: SessionStore
+    let actions: SessionActions
+
+    var body: some View {
+        HStack(spacing: 0) {
+            metric("Working", value: store.sessions.filter { $0.state == .working }.count, color: Palette.working) {
+                if let session = store.sessions.first(where: { $0.state == .working }) { store.select(session) }
+            }
+            separator
+            metric("Needs you", value: store.attentionCount, color: Palette.attention) { store.selectNextNeedingAttention() }
+            separator
+            metric("To review", value: store.reviewCount, color: Palette.running) {
+                if let session = store.sessions.first(where: \.readyForReview) { actions.review(session) }
+            }
+        }
+        .padding(.vertical, 10)
+        .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color(nsColor: Ink.hairline).opacity(0.65)))
+    }
+
+    private var separator: some View {
+        Rectangle().fill(Color(nsColor: Ink.hairline)).frame(width: 1, height: 24)
+    }
+
+    private func metric(_ title: String, value: Int, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 5) {
+                    Circle().fill(value > 0 ? color : Color(nsColor: Ink.faint)).frame(width: 4, height: 4)
+                    Text(String(value)).font(.system(size: 18, weight: .medium, design: .rounded).monospacedDigit())
+                        .foregroundStyle(value > 0 ? Color(nsColor: Ink.text) : Color(nsColor: Ink.faint))
+                }
+                Text(title).font(.system(size: 10, weight: .medium)).foregroundStyle(Color(nsColor: Ink.muted))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(value == 0)
+        .help("Go to \(title.lowercased())")
+        .accessibilityLabel("\(value) \(title.lowercased())")
     }
 }
 
 // MARK: - Dispatch
 
-/// Type a task, press Return: a new agent starts on it in its own worktree.
+/// Type a task, press Return: a new agent starts in the chosen project.
 private struct DispatchField: View {
     @ObservedObject var store: SessionStore
     let actions: SessionActions
@@ -83,46 +211,71 @@ private struct DispatchField: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                KindMark(kind: kind, size: 12)
-                    .foregroundStyle(kind.tint)
-                TextField("New agent in \(URL(fileURLWithPath: targetFolder).lastPathComponent)…", text: $text, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...4)
-                    .focused($focused)
-                    .onSubmit(submit)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(store.launchingCount > 0 ? "LAUNCHING \(store.launchingCount) SESSION\(store.launchingCount == 1 ? "" : "S")…" : "LAUNCH AN AGENT")
+                    .font(.system(size: 9, weight: .semibold)).tracking(1)
+                    .foregroundStyle(Color(nsColor: Ink.faint))
+                Spacer()
+                if store.launchingCount > 0 {
+                    ProgressView().controlSize(.mini).frame(width: 12, height: 12)
+                } else {
+                    Image(systemName: "arrow.up.right").font(.system(size: 10)).foregroundStyle(Color(nsColor: Ink.faint))
+                }
+            }
+            TextField("What are we building?", text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .lineLimit(2...4)
+                .focused($focused)
+                .onSubmit(submit)
+                .accessibilityLabel("Task for a new agent")
+            HStack(spacing: 7) {
                 Menu {
                     Picker("Agent", selection: $kind) {
                         Label("Claude Code", systemImage: SessionKind.claude.symbol).tag(SessionKind.claude)
                         Label("Codex", systemImage: SessionKind.codex.symbol).tag(SessionKind.codex)
                     }
                     .pickerStyle(.inline)
-                    Section("Folder") {
-                        ForEach(folders, id: \.self) { dir in
-                            Button(abbreviateHome(dir)) { folder = dir }
-                        }
-                        Button("Choose…") { chooseFolder() }
-                    }
                 } label: {
-                    Image(systemName: "slider.horizontal.3")
+                    Text(kind == .claude ? "Claude" : "Codex")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(kind.tint)
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Agent and folder")
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
-            .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(focused ? Palette.working.opacity(0.55) : Color(nsColor: Ink.hairline)))
-            if focused || !text.isEmpty {
-                Text("\(kind.displayName) · \(shortPath(targetFolder)) · own worktree · ⏎ to start")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 4)
+                .menuStyle(.borderlessButton).fixedSize()
+                .help("Choose agent")
+                Menu {
+                    ForEach(folders, id: \.self) { dir in Button(abbreviateHome(dir)) { folder = dir } }
+                    if !folders.isEmpty { Divider() }
+                    Button("Choose Folder…") { chooseFolder() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder").font(.system(size: 10))
+                        Text(URL(fileURLWithPath: targetFolder).lastPathComponent).font(.system(size: 10))
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                    .foregroundStyle(Color(nsColor: Ink.muted))
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                .help("Project: " + abbreviateHome(targetFolder))
+                Spacer(minLength: 0)
+                Button(action: submit) {
+                    Image(systemName: "arrow.up").font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(nsColor: Ink.faint) : Color(nsColor: Ink.floor))
+                        .frame(width: 25, height: 25)
+                        .background(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(nsColor: Ink.raised) : Palette.accent,
+                                    in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help("Launch agent (Return)")
+                .accessibilityLabel("Launch agent")
             }
         }
+        .padding(12)
+        .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(focused ? Palette.accent.opacity(0.7) : Color(nsColor: Ink.hairline)))
     }
 
     private func submit() {
@@ -136,6 +289,7 @@ private struct DispatchField: View {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
+        panel.directoryURL = URL(fileURLWithPath: expandTilde(targetFolder))
         if panel.runModal() == .OK, let url = panel.url { folder = url.path }
     }
 }
@@ -146,19 +300,33 @@ struct AgentRow: View {
     @ObservedObject var session: TerminalSession
     let store: SessionStore
     let actions: SessionActions
+    @State private var hovering = false
+
+    private var selected: Bool { store.selectedID == session.id }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 9) {
             AgentAvatar(kind: session.kind, state: session.state)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(session.label)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(Color(nsColor: Ink.text))
                         .lineLimit(1)
                         .layoutPriority(1)
                     Spacer(minLength: 4)
+                    if session.unread {
+                        Circle().fill(Palette.accent).frame(width: 5, height: 5)
+                            .accessibilityLabel("Unread activity")
+                    }
+                }
+                HStack(spacing: 4) {
                     trailing
+                    Spacer(minLength: 0)
+                    if session.isMinimized {
+                        Image(systemName: "minus.square").font(.system(size: 10))
+                            .foregroundStyle(Color(nsColor: Ink.faint))
+                    }
                 }
                 if session.state.needsAttention {
                     ApprovalStrip(session: session, store: store)
@@ -167,14 +335,28 @@ struct AgentRow: View {
                 }
             }
         }
-        .padding(.vertical, 5)
-        .opacity(session.isMinimized ? 0.55 : 1)
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: selected ? Ink.raised : hovering ? Ink.surface : Ink.deep),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(session.state.needsAttention ? Palette.attention.opacity(0.4)
+                          : selected ? Palette.accent.opacity(0.35) : Color.clear))
+        .overlay(alignment: .leading) {
+            if selected {
+                Capsule().fill(Palette.accent).frame(width: 2, height: 20).padding(.leading, 1)
+            }
+        }
+        .opacity(session.isMinimized ? 0.65 : 1)
+        .onHover { hovering = $0 }
+        .accessibilityLabel("\(session.label), \(session.statusWord)")
+        .accessibilityValue(selected ? "Selected" : "")
     }
 
     @ViewBuilder private var trailing: some View {
         if session.readyForReview, let stat = session.diffStat, stat.files > 0 {
             Button { actions.review(session) } label: {
-                Text("\(stat.files) changed")
+                Label("Review \(stat.files) file\(stat.files == 1 ? "" : "s")", systemImage: "arrow.up.right")
                     .font(.caption2.weight(.semibold))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -185,9 +367,9 @@ struct AgentRow: View {
             .help("Review the changes (⌥⌘R)")
         } else {
             // Only the clock ticks; the rest of the row re-renders when the session changes.
-            TimelineView(.periodic(from: .now, by: 15)) { context in
+            TimelineView(.periodic(from: .now, by: session.state == .working ? 15 : 60)) { context in
                 Text(elapsedLabel(now: context.date))
-                    .font(.system(size: 11.5, weight: session.state.needsAttention ? .semibold : .regular).monospacedDigit())
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
                     .foregroundStyle(statusColor)
             }
         }
@@ -209,7 +391,7 @@ struct AgentRow: View {
         case .working, .starting: return Palette.working
         case .needsInput: return Palette.attention
         case .failed: return Palette.failed
-        default: return Color.secondary.opacity(0.75)
+        default: return Color(nsColor: Ink.muted)
         }
     }
 
@@ -289,8 +471,7 @@ struct AgentRow: View {
     }
 }
 
-/// The agent's mark, carrying its status: orange when it needs you, a spinning arc while it
-/// works, muted when idle. This is the one place the sidebar shows state.
+/// The agent's mark carries a static, legible state. Nothing animates while the app rests.
 struct AgentAvatar: View {
     let kind: SessionKind
     let state: AgentState
@@ -309,7 +490,7 @@ struct AgentAvatar: View {
         let needsYou = state.needsAttention
         KindMark(kind: kind, size: 12)
             .foregroundStyle(needsYou ? Color(nsColor: Ink.floor) : (stateColor ?? kind.tint.opacity(state == .exited(0) ? 0.45 : 0.9)))
-            .frame(width: 26, height: 26)
+            .frame(width: 28, height: 28)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(needsYou ? AnyShapeStyle(Palette.attention) : AnyShapeStyle(Color(nsColor: Ink.surface))))
             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -387,7 +568,8 @@ private struct ApprovalStrip: View {
             }
         }
         .padding(8)
-        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Palette.attention.opacity(0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.attention.opacity(0.16)))
     }
 
     private func answer(_ choice: PromptAnswer) {
@@ -464,29 +646,47 @@ private struct SidebarFooter: View {
     let actions: SessionActions
 
     var body: some View {
-        HStack(spacing: 10) {
+        VStack(spacing: 12) {
+            Rectangle().fill(Color(nsColor: Ink.hairline).opacity(0.6)).frame(height: 1)
             if let limits = store.rateLimits {
-                UsageMeter(limits: limits)
-            }
-            Spacer(minLength: 0)
-            Menu {
-                Button("New Terminal…") { actions.newSession() }
-                Divider()
-                ForEach(SessionKind.allCases) { kind in
-                    Button { NSApp.sendAction(#selector(AppDelegate.newSessionOfKind(_:)), to: nil, from: KindSender(kind: kind)) } label: {
-                        Label("New \(kind.displayName)", systemImage: kind.symbol)
-                    }
+                HStack {
+                    UsageMeter(limits: limits)
+                    Spacer(minLength: 0)
                 }
-            } label: {
-                Image(systemName: "plus")
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("New terminal")
+            HStack(spacing: 8) {
+                Button(action: actions.newSession) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus").font(.system(size: 12, weight: .medium))
+                        Text("New session").font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        KeyboardHint(keys: "⌘N")
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: Ink.hairline)))
+                }
+                .buttonStyle(.plain)
+                .help("Configure a new terminal (⌘N)")
+                Menu {
+                    Button("New Terminal…") { actions.newSession() }
+                    Divider()
+                    ForEach(SessionKind.allCases) { kind in
+                        Button { NSApp.sendAction(#selector(AppDelegate.newSessionOfKind(_:)), to: nil, from: KindSender(kind: kind)) } label: {
+                            Label("New \(kind.displayName)", systemImage: kind.symbol)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis").frame(width: 24, height: 30)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Quick launch")
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 14)
     }
 }
 
@@ -509,7 +709,7 @@ struct UsageMeter: View {
                     .frame(width: 44, height: 4)
                     .overlay(alignment: .leading) {
                         Capsule().fill(percent > 80 ? Palette.attention : Color.secondary)
-                            .frame(width: 44 * min(percent, 100) / 100, height: 4)
+                            .frame(width: 44 * max(0, min(percent, 100)) / 100, height: 4)
                     }
                 Text("\(Int(percent))%").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
             }
@@ -523,7 +723,6 @@ struct UsageMeter: View {
 struct StatusDot: View {
     let state: AgentState
     var size: CGFloat = 8
-    @State private var pulse = false
 
     var body: some View {
         Circle()
@@ -534,15 +733,7 @@ struct StatusDot: View {
                     Circle().stroke(Palette.attention.opacity(0.45), lineWidth: 2).frame(width: size + 5, height: size + 5)
                 }
             }
-            .opacity(state == .working && pulse ? 0.35 : 1)
-            .onAppear { updatePulse() }
-            .onChange(of: state) { updatePulse() }
             .accessibilityLabel(state.phrase)
-    }
-
-    private func updatePulse() {
-        guard state == .working else { pulse = false; return }
-        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { pulse = true }
     }
 }
 

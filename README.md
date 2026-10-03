@@ -107,7 +107,7 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 |---|---|
 | ⌘N / ⌘T / ⇧⌘C / ⇧⌘X | New terminal / shell here / Claude here / Codex here |
 | ⌘P | Go to a terminal, run an action, or `@label message` |
-| ⇧⌘U | Jump to the agent waiting longest |
+| ⌘J | Jump to the agent waiting longest |
 | ⌥⌘R / ⌥⌘I | Review changes / toggle inspector |
 | ⌘⌥1 · 2 · 3, ⌘⏎ | Focus · split · grid, zoom tile |
 | ⇧⌘M | Minimize the selected tile to the shelf (again to restore) |

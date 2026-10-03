@@ -32,18 +32,21 @@ enum Theme {
     }
 }
 
-/// Kuronami's Graphite palette: neutral black and charcoal, so color on screen always means
-/// something: an agent's state, which agent it is, or where focus is.
+/// Opaque, cool graphite layers. Semantic color is reserved for focus and session state.
 enum Ink {
     /// Window and canvas: the deepest layer.
-    static let floor = NSColor(srgbRed: 0.043, green: 0.043, blue: 0.047, alpha: 1)
+    static let floor = NSColor(srgbRed: 0.035, green: 0.039, blue: 0.055, alpha: 1)
     /// Sidebar and inspector.
-    static let deep = NSColor(srgbRed: 0.055, green: 0.055, blue: 0.063, alpha: 1)
+    static let deep = NSColor(srgbRed: 0.055, green: 0.059, blue: 0.078, alpha: 1)
     /// Cards, fields, bars.
-    static let surface = NSColor(srgbRed: 0.082, green: 0.082, blue: 0.090, alpha: 1)
+    static let surface = NSColor(srgbRed: 0.080, green: 0.086, blue: 0.110, alpha: 1)
     /// Selected rows, active segments.
-    static let raised = NSColor(srgbRed: 0.110, green: 0.110, blue: 0.122, alpha: 1)
-    static let hairline = NSColor(srgbRed: 0.149, green: 0.149, blue: 0.165, alpha: 1)
+    static let raised = NSColor(srgbRed: 0.115, green: 0.122, blue: 0.157, alpha: 1)
+    static let hairline = NSColor(srgbRed: 0.170, green: 0.184, blue: 0.231, alpha: 1)
+    static let text = NSColor(srgbRed: 0.91, green: 0.93, blue: 0.98, alpha: 1)
+    static let muted = NSColor(srgbRed: 0.59, green: 0.63, blue: 0.72, alpha: 1)
+    static let faint = NSColor(srgbRed: 0.40, green: 0.44, blue: 0.53, alpha: 1)
+    static let accent = NSColor(srgbRed: 0.64, green: 0.66, blue: 1, alpha: 1)
 }
 
 @MainActor
@@ -54,6 +57,7 @@ enum ChromeColors {
 }
 
 enum Palette {
+    static let accent = Color(nsColor: Ink.accent)
     /// An agent at work, and focus.
     static let working = Color(red: 0.357, green: 0.549, blue: 1.0)
     /// Something needs you.
@@ -73,6 +77,62 @@ enum Palette {
         case .idle: return idle
         case .exited: return Color.secondary.opacity(0.3)
         }
+    }
+}
+
+/// Small, consistent keyboard hints used across the workspace and command palette.
+struct KeyboardHint: View {
+    let keys: String
+
+    var body: some View {
+        Text(keys)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .foregroundStyle(Color(nsColor: Ink.muted))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .background(Color(nsColor: Ink.raised), in: RoundedRectangle(cornerRadius: 4))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: Ink.hairline)))
+            .fixedSize()
+            .accessibilityLabel(keys)
+    }
+}
+
+/// Shared button treatment: lightweight opaque fills with native keyboard focus behavior.
+struct ChromeButtonStyle: ButtonStyle {
+    var accent = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(accent ? Color(nsColor: Ink.floor) : Color(nsColor: Ink.text))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(accent ? Palette.accent.opacity(configuration.isPressed ? 0.75 : 1)
+                        : Color(nsColor: configuration.isPressed ? Ink.raised : Ink.surface),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(accent ? Color.clear : Color(nsColor: Ink.hairline)))
+            .opacity(isEnabled ? 1 : 0.4)
+    }
+}
+
+/// Kuronami's wave mark, drawn once with three cubic curves; no image assets or animation.
+struct WaveMark: View {
+    var body: some View {
+        Canvas { context, size in
+            for row in 0..<3 {
+                let y = size.height * (0.28 + CGFloat(row) * 0.22)
+                var path = Path()
+                path.move(to: CGPoint(x: size.width * 0.08, y: y))
+                path.addCurve(to: CGPoint(x: size.width * 0.92, y: y),
+                              control1: CGPoint(x: size.width * 0.36, y: y - size.height * 0.36),
+                              control2: CGPoint(x: size.width * 0.64, y: y + size.height * 0.36))
+                context.stroke(path, with: .color(Palette.accent.opacity(1 - Double(row) * 0.2)),
+                               style: StrokeStyle(lineWidth: max(1.4, size.width * 0.055), lineCap: .round))
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 

@@ -16,10 +16,13 @@ struct InspectorView: View {
                 InspectorContent(session: session, store: store, actions: actions)
                     .id(session.id)
             } else {
-                Text("Select a terminal").foregroundStyle(.secondary).padding(.top, 40)
+                InspectorEmptyState(symbol: "sidebar.right", title: "Your workspace, in detail", detail: "Select a session to review changes, follow its activity, and see what’s running.")
             }
         }
         .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .foregroundStyle(Color(nsColor: Ink.text))
+        .background(Color(nsColor: Ink.deep))
+        .tint(Palette.accent)
     }
 }
 
@@ -30,33 +33,93 @@ private struct InspectorContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                AgentAvatar(kind: session.kind, state: session.state)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("@" + session.label).font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    Text(shortPath(session.spec.workPath)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+            VStack(alignment: .leading, spacing: 14) {
+                Text("INSPECTOR")
+                    .font(.system(size: 9, weight: .semibold))
+                    .tracking(1.3)
+                    .foregroundStyle(Color(nsColor: Ink.faint))
+                HStack(spacing: 10) {
+                    AgentAvatar(kind: session.kind, state: session.state)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("@" + session.label)
+                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                            .lineLimit(1)
+                        Text(session.kind == .browser ? (session.spec.url ?? "New browser tab") : shortPath(session.spec.workPath))
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Color(nsColor: Ink.muted))
+                            .lineLimit(1).truncationMode(.head)
+                    }
+                    Spacer(minLength: 0)
                 }
-                Spacer()
+                HStack(spacing: 6) {
+                    Circle().fill(Palette.status(session.state)).frame(width: 5, height: 5)
+                    Text(session.statusWord)
+                        .foregroundStyle(session.state.needsAttention ? Palette.attention : Color(nsColor: Ink.muted))
+                    Spacer()
+                    Text(session.kind.displayName).foregroundStyle(Color(nsColor: Ink.faint))
+                }
+                .font(.system(size: 10.5, weight: .medium))
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
+            .padding(16)
             if session.kind != .browser {
-                Picker("", selection: $store.inspectorTab) {
-                    ForEach(InspectorTab.allCases) { Text($0.rawValue).tag($0) }
+                HStack(spacing: 4) {
+                    ForEach(InspectorTab.allCases) { tab in
+                        Button { store.inspectorTab = tab } label: {
+                            Text(tab.rawValue)
+                                .font(.system(size: 11.5, weight: store.inspectorTab == tab ? .semibold : .medium))
+                                .foregroundStyle(store.inspectorTab == tab ? Color(nsColor: Ink.text) : Color(nsColor: Ink.muted))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 30)
+                                .background(store.inspectorTab == tab ? Color(nsColor: Ink.raised) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(store.inspectorTab == tab ? Color(nsColor: Ink.hairline) : .clear, lineWidth: 1))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(store.inspectorTab == tab ? .isSelected : [])
+                    }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
+                .padding(4)
+                .background(Color(nsColor: Ink.floor), in: RoundedRectangle(cornerRadius: 9))
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
             }
-            Divider()
+            inspectorRule
             switch session.kind == .browser ? .info : store.inspectorTab {
             case .changes: ChangesView(session: session, store: store)
             case .activity: ActivityView(session: session)
             case .info: InfoView(session: session, store: store, actions: actions)
             }
         }
+    }
+}
+
+private var inspectorRule: some View {
+    Rectangle().fill(Color(nsColor: Ink.hairline)).frame(height: 1)
+}
+
+private struct InspectorEmptyState: View {
+    let symbol: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(spacing: 13) {
+            Image(systemName: symbol)
+                .font(.system(size: 23, weight: .light))
+                .foregroundStyle(Palette.accent.opacity(0.8))
+                .frame(width: 56, height: 56)
+                .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 15))
+                .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(Color(nsColor: Ink.hairline), lineWidth: 1))
+            Text(title).font(.system(size: 13, weight: .semibold))
+            Text(detail)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Color(nsColor: Ink.muted))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 38)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -83,6 +146,8 @@ private struct ChangesView: View {
     @State private var draftText = ""
     @State private var result: String?
     @State private var working = false
+    @State private var totals = DiffStat(added: 0, removed: 0, files: 0)
+    @State private var loadRequest = UUID()
 
     private var path: String { session.spec.workPath }
     private var isWorktree: Bool { session.spec.worktreeBranch != nil || session.git?.isWorktree == true }
@@ -90,32 +155,16 @@ private struct ChangesView: View {
     var body: some View {
         VStack(spacing: 0) {
             summary
-            Divider()
+            inspectorRule
             if files.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: loading ? "hourglass" : "checkmark.circle")
-                        .font(.system(size: 22, weight: .light))
-                        .foregroundStyle(.tertiary)
-                    Text(loading ? "Loading changes…" : "No changes yet")
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    if !loading {
-                        Text("When @\(session.label) edits files, the diff shows up here for review.")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .multilineTextAlignment(.center)
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 36)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                InspectorEmptyState(symbol: loading ? "hourglass" : "checkmark.circle", title: loading ? "Loading changes…" : "A clean working tree", detail: loading ? "Reading this session’s latest changes." : "File changes from @\(session.label) appear here. Review a diff and leave comments for the agent.")
             } else {
                 fileList
-                Divider()
+                inspectorRule
                 patchView
             }
             if !files.isEmpty || !comments.isEmpty {
-                Divider()
+                inspectorRule
                 footer
             }
         }
@@ -124,24 +173,39 @@ private struct ChangesView: View {
     }
 
     private var summary: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
                 if !files.isEmpty {
-                    let added = files.reduce(0) { $0 + $1.added }, removed = files.reduce(0) { $0 + $1.removed }
-                    Text(DiffStat(added: added, removed: removed, files: files.count).text).font(.headline.monospacedDigit())
+                    Text("\(files.count) changed file\(files.count == 1 ? "" : "s")")
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer(minLength: 4)
+                    Text("+\(totals.added)").foregroundStyle(Palette.running)
+                    Text("−\(totals.removed)").foregroundStyle(Palette.failed)
                 } else {
-                    Text(files.isEmpty ? "Working tree clean" : "\(files.count) changed file\(files.count == 1 ? "" : "s")")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
+                    Text(loading ? "Reading changes" : "Working tree clean")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color(nsColor: Ink.muted))
+                    Spacer()
                 }
-                Spacer()
-                Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
+                Button { Task { await load() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
                     .buttonStyle(.borderless)
-                    .help("Refresh")
+                    .foregroundStyle(Color(nsColor: Ink.muted))
+                    .disabled(loading)
+                    .help("Refresh changes")
+                    .accessibilityLabel("Refresh changes")
             }
-            HStack(spacing: 10) {
+            .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+            VStack(alignment: .leading, spacing: 6) {
                 if let branch = session.git?.branch {
                     Label(session.spec.baseBranch.map { "\(branch) → \($0)" } ?? branch, systemImage: "arrow.triangle.branch")
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(branch)
                 }
                 if let evidence = session.testEvidence {
                     Label(evidence.summary, systemImage: evidence.passed ? "checkmark.circle.fill" : "xmark.circle.fill")
@@ -149,45 +213,73 @@ private struct ChangesView: View {
                         .lineLimit(1)
                 }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(.system(size: 10.5))
+            .foregroundStyle(Color(nsColor: Ink.muted))
         }
-        .padding(10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
     }
 
     private var fileList: some View {
-        List(files, selection: $selected) { file in
-            HStack(spacing: 6) {
-                Image(systemName: "doc.text").foregroundStyle(.secondary)
-                Text(file.path).lineLimit(1).truncationMode(.head)
-                Spacer()
-                Text("+\(file.added)").foregroundStyle(Palette.running)
-                Text("−\(file.removed)").foregroundStyle(Palette.failed)
+        ScrollView {
+            LazyVStack(spacing: 3) {
+                ForEach(files) { file in
+                    Button { selected = file.path; draftLine = nil } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "doc.text")
+                                .foregroundStyle(selected == file.path ? Palette.accent : Color(nsColor: Ink.faint))
+                            Text(file.path).lineLimit(1).truncationMode(.head)
+                                .foregroundStyle(Color(nsColor: selected == file.path ? Ink.text : Ink.muted))
+                            Spacer(minLength: 4)
+                            Text("+\(file.added)").foregroundStyle(Palette.running)
+                            Text("−\(file.removed)").foregroundStyle(Palette.failed)
+                        }
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .padding(.horizontal, 9)
+                        .frame(height: 31)
+                        .background(selected == file.path ? Color(nsColor: Ink.raised) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(file.path)
+                    .accessibilityAddTraits(selected == file.path ? .isSelected : [])
+                }
             }
-            .font(.caption.monospaced())
-            .tag(file.path)
+            .padding(8)
         }
-        .listStyle(.inset)
-        .frame(height: min(CGFloat(files.count) * 24 + 12, 170))
+        .frame(height: min(CGFloat(files.count) * 34 + 13, 183))
     }
 
     private var patchView: some View {
         let file = files.first { $0.path == selected } ?? files.first
-        return ScrollView(.vertical) {
-            if let file {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(parsed[file.path] ?? []) { line in
-                        patchRow(line, file: file)
-                    }
-                }
-                .padding(.vertical, 4)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+        // Index once per render; avoid scanning every review comment for every code line.
+        let fileComments = Dictionary(grouping: comments.filter { $0.path == file?.path }, by: \.line)
+        return VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "text.bubble")
+                Text("Double-click a line to comment")
+                Spacer(minLength: 0)
             }
+            .font(.system(size: 9.5))
+            .foregroundStyle(Color(nsColor: Ink.faint))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            ScrollView(.vertical) {
+                if let file {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(parsed[file.path] ?? []) { line in
+                            patchRow(line, file: file, lineComments: line.newNumber.flatMap { fileComments[$0] } ?? [])
+                        }
+                    }
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+            .background(Color(nsColor: Theme.terminalBackground))
         }
-        .background(Color(nsColor: Theme.terminalBackground))
     }
 
-    @ViewBuilder private func patchRow(_ line: PatchLine, file: Review.FileDiff) -> some View {
+    @ViewBuilder private func patchRow(_ line: PatchLine, file: Review.FileDiff, lineComments: [ReviewComment]) -> some View {
         let commentable = line.newNumber != nil && line.kind != .header
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(line.newNumber.map(String.init) ?? "")
@@ -217,7 +309,12 @@ private struct ChangesView: View {
             draftText = ""
         }
         .help(commentable ? "Double-click to comment on this line" : "")
-        ForEach(comments.filter { $0.path == file.path && $0.line == line.newNumber }) { comment in
+        .contextMenu {
+            if commentable {
+                Button("Add review comment") { draftLine = line.newNumber; draftText = "" }
+            }
+        }
+        ForEach(lineComments) { comment in
             CommentBubble(text: comment.text) { comments.removeAll { $0.id == comment.id } }
         }
         if draftLine == line.newNumber, commentable {
@@ -226,6 +323,7 @@ private struct ChangesView: View {
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { addComment(file: file, line: line) }
                 Button("Add") { addComment(file: file, line: line) }
+                    .disabled(draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Cancel") { draftLine = nil }
             }
             .controlSize(.small)
@@ -245,9 +343,13 @@ private struct ChangesView: View {
                 .buttonStyle(.borderedProminent)
             }
             HStack {
-                Button("Commit…") { commit() }
+                Button { commit() } label: { Label("Commit…", systemImage: "checkmark") }
+                    .buttonStyle(.bordered)
                 Menu("More") {
-                    Button("Open Pull Request") { run { Review.openPullRequest(at: path, base: session.spec.baseBranch, title: commitTitle).map { "Opened \($0)" } } }
+                    Button("Open Pull Request") {
+                        let directory = path, base = session.spec.baseBranch, title = commitTitle
+                        run { Review.openPullRequest(at: directory, base: base, title: title).map { "Opened \($0)" } }
+                    }
                     if let base = session.spec.baseBranch, let branch = session.git?.branch, isWorktree {
                         Button("Merge into \(base)") {
                             let root = session.git.map(GitInfo.mainRoot) ?? path
@@ -259,16 +361,23 @@ private struct ChangesView: View {
                         Button("Archive Worktree…") { archive() }
                     }
                 }
+                .menuStyle(.borderlessButton)
                 .fixedSize()
                 Spacer()
                 if working { ProgressView().controlSize(.small) }
             }
             .disabled(working || files.isEmpty && session.diffStat?.isEmpty != false)
             if let result {
-                Text(result).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(result)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color(nsColor: Ink.muted))
+                    .textSelection(.enabled)
             }
         }
-        .padding(10)
+        .font(.system(size: 11.5))
+        .controlSize(.small)
+        .padding(12)
+        .background(Color(nsColor: Ink.surface))
     }
 
     private var commitTitle: String {
@@ -277,14 +386,19 @@ private struct ChangesView: View {
     }
 
     private func load() async {
+        let request = UUID()
+        loadRequest = request
         loading = true
         let path = self.path, base = session.spec.baseBranch
         let (loaded, lines) = await Task.detached {
             let diffs = Review.fileDiffs(at: path, base: base)
             return (diffs, Dictionary(diffs.map { ($0.path, PatchLine.parse($0.patch)) }, uniquingKeysWith: { first, _ in first }))
         }.value
+        // A refresh triggered while Git was reading may finish first. Keep the latest load.
+        guard loadRequest == request else { return }
         files = loaded
         parsed = lines
+        totals = DiffStat(added: loaded.reduce(0) { $0 + $1.added }, removed: loaded.reduce(0) { $0 + $1.removed }, files: loaded.count)
         if selected == nil || !loaded.contains(where: { $0.path == selected }) { selected = loaded.first?.path }
         loading = false
     }
@@ -315,8 +429,8 @@ private struct ChangesView: View {
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let message = field.stringValue
-        run { Review.commit(at: path, message: message).map { "Committed \($0)" } }
+        let message = field.stringValue, directory = path
+        run { Review.commit(at: directory, message: message).map { "Committed \($0)" } }
     }
 
     private func archive() {
@@ -326,8 +440,8 @@ private struct ChangesView: View {
         alert.addButton(withTitle: "Archive")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let root = session.git.map(GitInfo.mainRoot) ?? path
-        run { Review.archive(worktree: path, mainRoot: root) }
+        let directory = path, root = session.git.map(GitInfo.mainRoot) ?? path
+        run { Review.archive(worktree: directory, mainRoot: root) }
     }
 
     private func run(_ operation: @escaping @Sendable () -> Result<String, ReviewError>) {
@@ -355,14 +469,20 @@ private struct CommentBubble: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "text.bubble.fill").foregroundStyle(Palette.attention)
-            Text(text).font(.callout).frame(maxWidth: .infinity, alignment: .leading)
-            Button(action: onDelete) { Image(systemName: "xmark") }.buttonStyle(.borderless)
+            Image(systemName: "text.bubble.fill").foregroundStyle(Palette.accent)
+            Text(text).font(.system(size: 11.5)).frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: onDelete) {
+                Image(systemName: "xmark").font(.system(size: 10)).frame(width: 20, height: 20)
+            }
+            .buttonStyle(.borderless)
+            .help("Remove review comment")
+            .accessibilityLabel("Remove review comment")
         }
-        .padding(8)
-        .background(Palette.attention.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
+        .padding(10)
+        .background(Palette.accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Palette.accent.opacity(0.22), lineWidth: 1))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
     }
 }
 
@@ -421,31 +541,63 @@ private struct ActivityView: View {
 
     var body: some View {
         let recent = session.timeline.filter { $0.date > session.lastViewedAt }
-        List {
-            if !recent.isEmpty {
-                Section("Since you last looked · \(elapsed(since: session.lastViewedAt)) ago") {
-                    Text(Recap.sentence(for: recent)).font(.callout)
-                }
-            }
-            Section("Timeline") {
-                if session.timeline.isEmpty {
-                    Text("Nothing yet. Prompts, tools, approvals, and test runs appear here.")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(session.timeline.reversed()) { event in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Image(systemName: Recap.symbol(event.kind))
-                            .foregroundStyle(Recap.color(event.kind))
-                            .frame(width: 16)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(event.text).font(.callout).lineLimit(3)
-                            Text(event.date.formatted(date: .omitted, time: .shortened)).font(.caption2).foregroundStyle(.tertiary)
+        if session.timeline.isEmpty {
+            InspectorEmptyState(symbol: "clock", title: "The story starts here", detail: "Prompts, commands, approvals, and test results appear as this session gets to work.")
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    if !recent.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("SINCE YOU LAST LOOKED", systemImage: "clock.arrow.circlepath")
+                                .font(.system(size: 9, weight: .semibold))
+                                .tracking(0.5)
+                                .foregroundStyle(Palette.accent)
+                            Text(Recap.sentence(for: recent))
+                                .font(.system(size: 12))
+                                .fixedSize(horizontal: false, vertical: true)
                         }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Palette.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+                        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Palette.accent.opacity(0.18), lineWidth: 1))
+                    }
+                    HStack {
+                        Text("TIMELINE").tracking(0.9)
+                        Spacer()
+                        Text("\(session.timeline.count) events").monospacedDigit()
+                    }
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: Ink.faint))
+                    ForEach(session.timeline.reversed()) { event in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: Recap.symbol(event.kind))
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Recap.color(event.kind))
+                                .frame(width: 28, height: 28)
+                                .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 7))
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack {
+                                    Text(event.kind.rawValue.capitalized)
+                                        .foregroundStyle(Color(nsColor: Ink.muted))
+                                    Spacer(minLength: 4)
+                                    Text(event.date.formatted(date: .omitted, time: .shortened))
+                                        .foregroundStyle(Color(nsColor: Ink.faint))
+                                }
+                                .font(.system(size: 9.5, weight: .medium))
+                                Text(event.text)
+                                    .font(.system(size: 11.5))
+                                    .lineLimit(4)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                                    .help(event.text)
+                            }
+                        }
+                        .padding(.bottom, 1)
                     }
                 }
+                .padding(14)
             }
         }
-        .listStyle(.inset)
     }
 }
 
@@ -500,11 +652,12 @@ private struct InfoView: View {
     @ObservedObject var session: TerminalSession
     let store: SessionStore
     let actions: SessionActions
+    @State private var copiedResume = false
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                group("Terminal") {
+            VStack(alignment: .leading, spacing: 14) {
+                group(session.kind == .browser ? "Browser" : "Session details") {
                     row("Kind", session.kind.displayName)
                     row("Status", session.statusWord + (session.state.detail.map { " · " + $0 } ?? ""))
                     if session.kind == .browser {
@@ -525,50 +678,85 @@ private struct InfoView: View {
                         row("Model", session.usage.model ?? "—")
                         row("Cost", session.usage.costUSD.map { String(format: "$%.2f", $0) } ?? "—")
                         if let context = session.usage.contextPercent {
-                            HStack {
-                                Text("Context").foregroundStyle(.secondary).frame(width: 84, alignment: .leading)
-                                ProgressView(value: min(context, 100), total: 100).controlSize(.small)
-                                Text("\(Int(context))%").monospacedDigit().foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Context").foregroundStyle(Color(nsColor: Ink.muted))
+                                    Spacer()
+                                    Text("\(Int(context))%")
+                                        .monospacedDigit()
+                                        .foregroundStyle(context >= 90 ? Palette.attention : Color(nsColor: Ink.text))
+                                }
+                                ProgressView(value: min(max(context, 0), 100), total: 100)
+                                    .controlSize(.small)
+                                    .tint(context >= 90 ? Palette.attention : Palette.accent)
                             }
+                            .padding(.top, 4)
                         }
                     }
                 }
                 if let id = session.spec.agentSessionId {
-                    group("Session") {
+                    group("Resume") {
                         row("ID", id, mono: true)
-                    }
-                }
-                HStack(spacing: 8) {
-                    if let id = session.spec.agentSessionId {
-                        Button("Copy Resume") {
+                        Button {
                             let command = session.kind == .claude ? "claude --resume \(id)" : "codex resume \(id)"
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(command, forType: .string)
+                            copiedResume = true
+                        } label: {
+                            Label(copiedResume ? "Copied resume command" : "Copy resume command", systemImage: copiedResume ? "checkmark" : "doc.on.doc")
+                                .frame(maxWidth: .infinity)
                         }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .padding(.top, 5)
                     }
-                    if session.kind == .claude { Button("On Phone") { session.openRemoteControl() }.help("Continue with Claude Remote Control") }
-                    Button("Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.spec.workPath)]) }
                 }
+                HStack(spacing: 8) {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.spec.workPath)])
+                    } label: {
+                        Label("Open in Finder", systemImage: "folder")
+                            .frame(maxWidth: .infinity)
+                    }
+                    if session.kind == .claude {
+                        Button { session.openRemoteControl() } label: { Label("On phone", systemImage: "iphone") }
+                            .help("Continue with Claude Remote Control")
+                    }
+                }
+                .buttonStyle(.bordered)
                 .controlSize(.small)
             }
             .padding(14)
             .font(.system(size: 12))
         }
-    }
-
-    private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased()).font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary).tracking(0.5)
-            VStack(alignment: .leading, spacing: 5) { content() }
+        .task(id: copiedResume) {
+            guard copiedResume else { return }
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            copiedResume = false
         }
     }
 
+    private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Text(title.uppercased())
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(Color(nsColor: Ink.faint))
+                .tracking(0.9)
+            VStack(alignment: .leading, spacing: 10) { content() }
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color(nsColor: Ink.hairline), lineWidth: 1))
+    }
+
     private func row(_ label: String, _ value: String, mono: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label).foregroundStyle(.secondary).frame(width: 84, alignment: .leading)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label).foregroundStyle(Color(nsColor: Ink.muted)).frame(width: 62, alignment: .leading)
             Text(value)
                 .font(mono ? .system(size: 11.5, design: .monospaced) : .system(size: 12))
-                .lineLimit(1)
+                .lineLimit(2)
                 .truncationMode(.middle)
                 .textSelection(.enabled)
                 .help(value)

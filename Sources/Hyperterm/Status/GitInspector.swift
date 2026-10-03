@@ -12,39 +12,162 @@ struct GitInfo: Equatable {
     var mainRoot: String
 }
 
-/// Git facts for a directory, cached briefly; `git` is cheap but runs per session per poll.
+/// Reuses stable repository metadata; changing HEAD or a repository boundary invalidates it.
+/// Calls block, so run them off the main thread.
 final class GitInspector: @unchecked Sendable {
-    private var cache: [String: (info: GitInfo?, at: Date)] = [:]
-    private let lock = NSLock()
+    private struct FileStamp: Equatable {
+        let device: UInt64
+        let inode: UInt64
+        let type: FileAttributeType
+        let modified: Date?
+        let size: UInt64?
+    }
+
+    private struct WatchPath {
+        let path: String
+        let directoryOnly: Bool
+    }
+
+    private struct CacheEntry {
+        let info: GitInfo?
+        var checkedAt: TimeInterval
+        let queriedAt: TimeInterval
+        let paths: [WatchPath]?
+        let stamps: [FileStamp?]?
+    }
+
+    private struct Probe {
+        let info: GitInfo
+        let gitDirectory: String
+    }
+
+    private var cache: [String: CacheEntry] = [:]
+    private var inFlight: Set<String> = []
+    private var prunedAt: TimeInterval = -.infinity
+    private let condition = NSCondition()
+    private let clock: () -> TimeInterval
+    private let git: ([String]) -> String?
+    private static let checkInterval: TimeInterval = 8
+    private static let queryInterval: TimeInterval = 60
+
+    init(clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         git: @escaping ([String]) -> String? = runGit) {
+        self.clock = clock
+        self.git = git
+    }
 
     func info(for directory: String) -> GitInfo? {
-        lock.lock()
-        if let hit = cache[directory], Date().timeIntervalSince(hit.at) < 8 {
-            lock.unlock()
-            return hit.info
+        condition.lock()
+        // Concurrent requests for one checkout share the probe instead of spawning more git.
+        while inFlight.contains(directory) { condition.wait() }
+        let now = clock()
+        let cached = cache[directory]
+        if let cached, now - cached.checkedAt < Self.checkInterval {
+            condition.unlock()
+            return cached.info
         }
-        lock.unlock()
-        let info = Self.query(directory)
-        let now = Date()
-        lock.lock()
-        // Entries for folders no session polls any more (closed sessions, archived worktrees).
-        cache = cache.filter { now.timeIntervalSince($0.value.at) < 120 }
-        cache[directory] = (info, now)
-        lock.unlock()
-        return info
+        inFlight.insert(directory)
+        condition.unlock()
+
+        let updated: CacheEntry
+        if let cached, now - cached.queriedAt < Self.queryInterval,
+           let paths = cached.paths, let stamps = cached.stamps,
+           Self.fingerprint(paths) == stamps {
+            var unchanged = cached
+            unchanged.checkedAt = clock()
+            updated = unchanged
+        } else {
+            let probe = Self.probe(directory, git: git)
+            let paths = probe.flatMap { Self.watchPaths(directory: directory, probe: $0) }
+            // Verify HEAD against the query before trusting its signature: a checkout racing
+            // the subprocess must get another probe rather than caching the earlier branch.
+            let stamps = paths.flatMap { paths -> [FileStamp?]? in
+                guard let before = Self.fingerprint(paths), let info = probe?.info,
+                      Self.headMatches(info, path: paths[0].path), Self.fingerprint(paths) == before else { return nil }
+                return before
+            }
+            let finished = clock()
+            updated = CacheEntry(info: probe?.info, checkedAt: finished, queriedAt: finished,
+                                 paths: paths, stamps: stamps)
+        }
+
+        condition.lock()
+        let finished = clock()
+        // Prune once per minute rather than rebuilding the whole dictionary per cache miss.
+        if finished - prunedAt >= 60 {
+            cache = cache.filter { finished - $0.value.checkedAt < 120 }
+            prunedAt = finished
+        }
+        cache[directory] = updated
+        inFlight.remove(directory)
+        condition.broadcast()
+        condition.unlock()
+        return updated.info
     }
 
     static func query(_ directory: String) -> GitInfo? {
-        let output = runGit(["-C", directory, "rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD", "--git-common-dir"])
+        probe(directory, git: runGit)?.info
+    }
+
+    private static func probe(_ directory: String, git: ([String]) -> String?) -> Probe? {
+        let output = git(["-C", directory, "rev-parse", "--path-format=absolute", "--show-toplevel",
+                          "--abbrev-ref", "HEAD", "--git-common-dir", "--absolute-git-dir"])
         let lines = output?.split(separator: "\n").map(String.init) ?? []
-        guard lines.count >= 3 else { return nil }
+        guard lines.count >= 4 else { return nil }
         let root = lines[0]
-        // --git-common-dir is ".git" for the main checkout, or the main repo's .git for a worktree.
-        let common = lines[2].hasPrefix("/") ? lines[2] : (root as NSString).appendingPathComponent(lines[2])
-        let mainRoot = (common as NSString).deletingLastPathComponent
+        // Absolute output also handles nested working directories, where a relative common
+        // directory is relative to the cwd rather than to --show-toplevel.
+        let mainRoot = (lines[2] as NSString).deletingLastPathComponent
         let isWorktree = URL(fileURLWithPath: mainRoot).standardized.path != URL(fileURLWithPath: root).standardized.path
-        return GitInfo(project: URL(fileURLWithPath: mainRoot).lastPathComponent, branch: lines[1], root: root,
-                       isWorktree: isWorktree, mainRoot: isWorktree ? mainRoot : root)
+        let info = GitInfo(project: URL(fileURLWithPath: mainRoot).lastPathComponent, branch: lines[1], root: root,
+                           isWorktree: isWorktree, mainRoot: isWorktree ? mainRoot : root)
+        return Probe(info: info, gitDirectory: lines[3])
+    }
+
+    private static func watchPaths(directory: String, probe: Probe) -> [WatchPath]? {
+        // Keep symlink/relative/parent traversal lookups on the regular query path. A lexical
+        // normalization could merge distinct checkouts across a symlink boundary.
+        guard directory.hasPrefix("/") else { return nil }
+        var current = directory
+        while current.count > 1 && current.hasSuffix("/") { current.removeLast() }
+        guard !current.split(separator: "/").contains(where: { $0 == "." || $0 == ".." }),
+              current == probe.info.root || current.hasPrefix(probe.info.root + "/") else { return nil }
+        var paths = [WatchPath(path: (probe.gitDirectory as NSString).appendingPathComponent("HEAD"), directoryOnly: false)]
+        while true {
+            paths.append(WatchPath(path: current, directoryOnly: true))
+            // Observe every intervening marker so a nested repo never inherits its parent's
+            // cache, including a new repo created above a session's working directory.
+            paths.append(WatchPath(path: (current as NSString).appendingPathComponent(".git"), directoryOnly: false))
+            if current == probe.info.root { break }
+            current = (current as NSString).deletingLastPathComponent
+        }
+        return paths
+    }
+
+    private static func fingerprint(_ paths: [WatchPath]) -> [FileStamp?]? {
+        var result: [FileStamp?] = []
+        result.reserveCapacity(paths.count)
+        for item in paths {
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: item.path),
+                  let type = attributes[.type] as? FileAttributeType,
+                  let device = attributes[.systemNumber] as? NSNumber,
+                  let inode = attributes[.systemFileNumber] as? NSNumber else {
+                if item.directoryOnly || result.isEmpty { return nil }
+                result.append(nil)
+                continue
+            }
+            if item.directoryOnly && type != .typeDirectory { return nil }
+            result.append(FileStamp(device: device.uint64Value, inode: inode.uint64Value, type: type,
+                                    modified: item.directoryOnly ? nil : attributes[.modificationDate] as? Date,
+                                    size: item.directoryOnly ? nil : (attributes[.size] as? NSNumber)?.uint64Value))
+        }
+        return result
+    }
+
+    private static func headMatches(_ info: GitInfo, path: String) -> Bool {
+        guard let head = try? String(contentsOfFile: path, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+        if head.hasPrefix("ref: refs/heads/") { return String(head.dropFirst("ref: refs/heads/".count)) == info.branch }
+        return info.branch == "HEAD" && !head.hasPrefix("ref:")
     }
 }
 

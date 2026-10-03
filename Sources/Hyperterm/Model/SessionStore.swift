@@ -5,6 +5,7 @@ import Combine
 @MainActor
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [TerminalSession] = []
+    @Published private(set) var launchingCount = 0
     @Published var selectedID: UUID?
     @Published private(set) var layout: LayoutMode = LayoutMode(rawValue: UserDefaults.standard.string(forKey: "layout") ?? "") ?? .focus
 
@@ -44,6 +45,7 @@ final class SessionStore: ObservableObject {
     /// Labels of closed user-named terminals, kept from agents for an hour so messages meant for
     /// them can't be captured by a rename.
     private var reservedLabels: [String: Date] = [:]
+    private var launchLabels = SessionLabelReservations()
     var approvals: [UUID: PendingApproval] = [:]
     /// Channel delivery (opt-in): each Claude session's MCP server long-polls for messages.
     private var channelWaiters: [UUID: ControlServer.Reply] = [:]
@@ -93,6 +95,20 @@ final class SessionStore: ObservableObject {
     private var lastOutline: [SessionOutline] = []
     private var persistWork: DispatchWorkItem?
     let notifier = AttentionNotifier()
+
+    init() {}
+
+    #if DEBUG
+    /// Inert fixtures for native previews and visual QA. No processes, persistence, or hooks.
+    init(previewSessions: [TerminalSession], previewLayout: LayoutMode = .grid) {
+        sessions = previewSessions
+        layout = previewLayout
+        tileOrder = []
+        selectedID = previewSessions.first?.id
+        recent = previewSessions.map(\.id)
+        lastOutline = previewSessions.map(SessionOutline.init)
+    }
+    #endif
 
     var selected: TerminalSession? { sessions.first { $0.id == selectedID } }
 
@@ -247,18 +263,41 @@ final class SessionStore: ObservableObject {
 
     @discardableResult
     func create(_ spec: LaunchSpec, resume: Bool = false, select: Bool = true, worktree: Bool = false, task: String? = nil) -> TerminalSession {
-        var spec = spec
+        let spec = labeled(spec, task: task)
+        let prepared = SessionLaunchPreparation.synchronous(spec, resume: resume, worktree: worktree)
+        return finishLaunch(prepared, resume: resume, select: select, task: task)
+    }
+
+    /// UI and IPC launches suspend while Git and workspace setup run on one background queue.
+    /// Reserve addresses before suspending so a simultaneous launch or rename cannot take them.
+    @discardableResult
+    func launch(_ spec: LaunchSpec, resume: Bool = false, select: Bool = true, worktree: Bool = false,
+                isolateIfPossible: Bool = false, task: String? = nil) async -> TerminalSession {
+        var spec = labeled(spec, task: task)
+        spec.label = launchLabels.reserve(spec.label, for: spec.id, occupied: Set(sessions.map(\.label)))
+        launchingCount += 1
+        defer {
+            launchLabels.release(spec.id)
+            launchingCount -= 1
+        }
+        let prepared = await SessionLaunchPreparation.prepare(spec, resume: resume, worktree: worktree,
+                                                             isolateIfPossible: isolateIfPossible)
+        return finishLaunch(prepared, resume: resume, select: select, task: task)
+    }
+
+    private func labeled(_ original: LaunchSpec, task: String?) -> LaunchSpec {
+        var spec = original
         if spec.label.isEmpty, let task, !task.isEmpty { spec.label = labelFromTask(task) }
         spec.label = uniqueLabel(spec.label.isEmpty ? defaultLabel(for: spec) : spec.label, excluding: spec.id)
-        if worktree, !resume, spec.kind.isAgent {
-            switch Workspaces.prepare(spec: spec) {
-            case .success(let prepared):
-                spec = prepared
-            case .failure(let error):
-                lastError = "Worktree not created: \(error.description). Started in \(abbreviateHome(spec.cwd)) instead."
-            }
-        }
-        if spec.kind.isAgent, spec.port == nil, let config = ProjectConfig.load(for: expandTilde(spec.cwd)) {
+        return spec
+    }
+
+    private func finishLaunch(_ prepared: PreparedSessionLaunch, resume: Bool, select: Bool, task: String?) -> TerminalSession {
+        var spec = prepared.spec
+        if let error = prepared.error { lastError = error }
+        // Port reservation stays on the main actor, beside session insertion: overlapping
+        // preparations can never assign the same workspace port.
+        if spec.kind.isAgent, spec.port == nil, let config = prepared.config {
             spec.port = Ports.allocate(config: config, taken: Set(sessions.compactMap(\.spec.port)))
         }
         let session = TerminalSession(spec: spec, resume: resume, task: task.map(sanitizeMessage))
@@ -271,26 +310,29 @@ final class SessionStore: ObservableObject {
         onSurfaceChange?(session)
         if select { self.select(session) }
         persist()
-        if !resume { startDevServerIfConfigured(for: session) }
+        if !resume { startDevServerIfConfigured(for: session, config: prepared.config) }
         return session
     }
 
     /// A project's `.hyperterm.json` "dev" command runs next to each new agent workspace, on the
     /// agent's own port.
-    private func startDevServerIfConfigured(for agent: TerminalSession) {
+    private func startDevServerIfConfigured(for agent: TerminalSession, config: ProjectConfig?) {
         guard agent.kind.isAgent, agent.spec.worktreeBranch != nil || agent.spec.worktreeName != nil,
               let port = agent.spec.port else { return }
         let path = agent.spec.workPath
         Workspaces.whenReady(path) { [weak self] in
-            guard let self, self.sessions.contains(where: { $0.id == agent.id }),
-                  let config = ProjectConfig.load(for: path) ?? ProjectConfig.load(for: expandTilde(agent.spec.cwd)),
-                  let dev = config.dev else { return }
-            var command = dev.replacingOccurrences(of: "$PORT", with: String(port))
-            if let setup = config.setup { command = "\(setup) && \(command)" }
-            var server = LaunchSpec(label: "\(agent.label)-dev", kind: .server, cwd: path, command: command)
-            server.labelSource = .auto
-            server.port = port
-            self.create(server, select: false)
+            guard let self, self.sessions.contains(where: { $0.id == agent.id }) else { return }
+            Task { @MainActor [weak self, weak agent] in
+                let config = await SessionLaunchPreparation.configuration(for: path, fallback: config)
+                guard let self, let agent, self.sessions.contains(where: { $0.id == agent.id }),
+                      let config, let dev = config.dev else { return }
+                var command = dev.replacingOccurrences(of: "$PORT", with: String(port))
+                if let setup = config.setup { command = "\(setup) && \(command)" }
+                var server = LaunchSpec(label: "\(agent.label)-dev", kind: .server, cwd: path, command: command)
+                server.labelSource = .auto
+                server.port = port
+                self.create(server, select: false)
+            }
         }
     }
 
@@ -354,7 +396,7 @@ final class SessionStore: ObservableObject {
 
     func isReserved(_ label: String) -> Bool {
         reservedLabels = reservedLabels.filter { Date().timeIntervalSince($0.value) < 3600 }
-        return reservedLabels[label] != nil
+        return reservedLabels[label] != nil || launchLabels.contains(label)
     }
 
     func confirm(_ title: String, _ message: String, completion: @escaping (Bool) -> Void) {
@@ -498,11 +540,91 @@ final class SessionStore: ObservableObject {
 
     /// Labels are addresses, so they must be unique: api, api-2, api-3.
     private func uniqueLabel(_ base: String, excluding id: UUID) -> String {
-        let taken = Set(sessions.filter { $0.id != id }.map(\.label))
+        let taken = Set(sessions.filter { $0.id != id }.map(\.label)).union(launchLabels.occupied(excluding: id))
+        return SessionLabelReservations.available(base, taken: taken)
+    }
+}
+
+/// Pending sessions use the same address space as sessions already on screen.
+struct SessionLabelReservations {
+    private var labels: [UUID: String] = [:]
+
+    mutating func reserve(_ base: String, for id: UUID, occupied: Set<String>) -> String {
+        let label = Self.available(base, taken: occupied.union(self.occupied(excluding: id)))
+        labels[id] = label
+        return label
+    }
+
+    mutating func release(_ id: UUID) { labels[id] = nil }
+
+    func contains(_ label: String) -> Bool { labels.values.contains(label) }
+
+    func occupied(excluding id: UUID) -> Set<String> {
+        Set(labels.filter { $0.key != id }.map(\.value))
+    }
+
+    static func available(_ base: String, taken: Set<String>) -> String {
         guard taken.contains(base) else { return base }
         var counter = 2
         while taken.contains("\(base)-\(counter)") { counter += 1 }
         return "\(base)-\(counter)"
+    }
+}
+
+struct PreparedSessionLaunch {
+    let spec: LaunchSpec
+    let config: ProjectConfig?
+    let error: String?
+}
+
+/// Git worktree operations must be serialized, and none of this preparation touches UI state.
+enum SessionLaunchPreparation {
+    private static let queue = DispatchQueue(label: "dev.hyperterm.session.prepare", qos: .userInitiated)
+
+    static func prepare(_ spec: LaunchSpec, resume: Bool = false, worktree: Bool = false,
+                        isolateIfPossible: Bool = false) async -> PreparedSessionLaunch {
+        guard spec.kind.isAgent else { return PreparedSessionLaunch(spec: spec, config: nil, error: nil) }
+        return await withCheckedContinuation { continuation in
+            queue.async {
+                continuation.resume(returning: resolve(spec, resume: resume, worktree: worktree,
+                                                       isolateIfPossible: isolateIfPossible))
+            }
+        }
+    }
+
+    /// Existing immediate callers (browser/utility creation and restoration) keep their API.
+    static func synchronous(_ spec: LaunchSpec, resume: Bool, worktree: Bool) -> PreparedSessionLaunch {
+        guard spec.kind.isAgent else { return PreparedSessionLaunch(spec: spec, config: nil, error: nil) }
+        return queue.sync { resolve(spec, resume: resume, worktree: worktree, isolateIfPossible: false) }
+    }
+
+    static func configuration(for path: String, fallback: ProjectConfig?) async -> ProjectConfig? {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume(returning: ProjectConfig.load(for: path) ?? fallback) }
+        }
+    }
+
+    private static func resolve(_ original: LaunchSpec, resume: Bool, worktree: Bool,
+                                isolateIfPossible: Bool) -> PreparedSessionLaunch {
+        var spec = original
+        var errorMessage: String?
+        if !resume, worktree || isolateIfPossible {
+            switch Workspaces.prepare(spec: spec) {
+            case .success(let prepared):
+                spec = prepared
+            case .failure(let error):
+                // Automatic isolation is optional outside repositories. Explicit requests
+                // retain the existing fallback explanation, as do actual Git setup failures.
+                let optionalNonRepository: Bool
+                if case .notARepo = error { optionalNonRepository = isolateIfPossible && !worktree }
+                else { optionalNonRepository = false }
+                if !optionalNonRepository {
+                    errorMessage = "Worktree not created: \(error.description). Started in \(abbreviateHome(spec.cwd)) instead."
+                }
+            }
+        }
+        let config = !resume || spec.port == nil ? ProjectConfig.load(for: expandTilde(spec.cwd)) : nil
+        return PreparedSessionLaunch(spec: spec, config: config, error: errorMessage)
     }
 }
 

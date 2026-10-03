@@ -47,6 +47,7 @@ final class ProcessInspector: @unchecked Sendable {
     }
 
     func start(interval: TimeInterval = 2.5, onUpdate: @escaping @Sendable ([String: ProcessSnapshot]) -> Void) {
+        self.timer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + 1, repeating: interval, leeway: .milliseconds(500))
         timer.setEventHandler { [weak self] in
@@ -56,6 +57,8 @@ final class ProcessInspector: @unchecked Sendable {
         timer.resume()
         self.timer = timer
     }
+
+    deinit { timer?.cancel() }
 
     /// Reschedules polling; the first poll at the new rate runs right away.
     func setInterval(_ interval: TimeInterval) {
@@ -111,22 +114,25 @@ final class ProcessInspector: @unchecked Sendable {
     func snapshot() -> [String: ProcessSnapshot] {
         let processes = listProcesses()
         let children = Dictionary(grouping: processes, by: \.ppid)
-        let roots = sessionRoots(children: children)
-        pruneArgvCache(alive: Set(processes.map(\.pid)))
-        let trees = roots.mapValues { rootPids in rootPids.flatMap { descendants(of: $0, children: children) } }
+        let trees = sessionTrees(children: children)
+        pruneArgvCache(alive: Set(processes.map { ArgvKey(pid: $0.pid, start: $0.startSeconds) }))
         let registry = claudeRegistry(pids: Set(trees.values.joined().map(\.pid)))
 
         var result: [String: ProcessSnapshot] = [:]
         for (sessionID, tree) in trees {
-            let pids = Set(tree.map(\.pid))
+            var pids: Set<pid_t> = []
+            var ports: Set<Int> = []
             var snapshot = ProcessSnapshot()
-            snapshot.ports = Array(Set(tree.flatMap { listeningPorts(pid: $0.pid) })).sorted()
-            snapshot.foreground = foregroundCommand(tree)
             // Claude's binary is named after its version (…/claude/versions/2.1.287), so the
             // process name alone isn't enough; include argv[0].
-            snapshot.programs = Set(tree.flatMap { entry -> [String] in
-                [entry.name.lowercased()] + (arguments(of: entry)?.first.map { [$0.lowercased()] } ?? [])
-            })
+            for entry in tree {
+                pids.insert(entry.pid)
+                ports.formUnion(listeningPorts(pid: entry.pid))
+                snapshot.programs.insert(entry.name.lowercased())
+                if let program = arguments(of: entry)?.first { snapshot.programs.insert(program.lowercased()) }
+            }
+            snapshot.ports = ports.sorted()
+            snapshot.foreground = foregroundCommand(tree)
             if let entry = registry.first(where: { pids.contains($0.pid) }) {
                 snapshot.claudeStatus = entry.status
                 snapshot.claudeSessionId = entry.sessionId
@@ -168,9 +174,9 @@ final class ProcessInspector: @unchecked Sendable {
     /// is setuid root and login shells don't expose their environment, so we search the subtree
     /// for the first process that does. An idle shell with no children stays unmapped, which is
     /// fine: it has no ports or foreground command to report.
-    private func sessionRoots(children: [pid_t: [ProcessEntry]]) -> [String: [pid_t]] {
+    private func sessionTrees(children: [pid_t: [ProcessEntry]]) -> [String: [ProcessEntry]] {
         let mine = getpid()
-        var roots: [String: [pid_t]] = [:]
+        var trees: [String: [ProcessEntry]] = [:]
         var alive = Set<pid_t>()
         for child in children[mine] ?? [] {
             // Chromium's helper processes (renderer, GPU, …) are our children too, but never
@@ -180,8 +186,10 @@ final class ProcessInspector: @unchecked Sendable {
             lock.lock()
             var sessionID = rootCache[child.pid]
             lock.unlock()
+            // Discovery and the eventual snapshot share the same traversal.
+            let tree = descendants(of: child.pid, children: children)
             if sessionID == nil {
-                let candidates = [child.pid] + descendants(of: child.pid, children: children).prefix(40).map(\.pid)
+                let candidates = [child.pid] + tree.prefix(40).map(\.pid)
                 sessionID = candidates.lazy.compactMap { self.processEnvironment($0)?["HT_SESSION_ID"] }.first
                 if let sessionID {
                     lock.lock()
@@ -189,12 +197,12 @@ final class ProcessInspector: @unchecked Sendable {
                     lock.unlock()
                 }
             }
-            if let sessionID { roots[sessionID, default: []].append(child.pid) }
+            if let sessionID { trees[sessionID, default: []].append(contentsOf: tree) }
         }
         lock.lock()
         rootCache = rootCache.filter { alive.contains($0.key) }
         lock.unlock()
-        return roots
+        return trees
     }
 
     private func descendants(of pid: pid_t, children: [pid_t: [ProcessEntry]]) -> [ProcessEntry] {
@@ -209,7 +217,7 @@ final class ProcessInspector: @unchecked Sendable {
 
     /// The newest non-shell process: what the session is actually running right now.
     private func foregroundCommand(_ tree: [ProcessEntry]) -> String? {
-        let candidates = tree.filter { !shells.contains($0.name) }
+        let candidates = tree.lazy.filter { !self.shells.contains($0.name) }
         guard let newest = candidates.max(by: { ($0.startSeconds, $0.pid) < ($1.startSeconds, $1.pid) }) else { return nil }
         guard let argv = arguments(of: newest), !argv.isEmpty else { return newest.name }
         let program = URL(fileURLWithPath: argv[0]).lastPathComponent
@@ -226,20 +234,20 @@ final class ProcessInspector: @unchecked Sendable {
         let cached = argvCache[key]
         lock.unlock()
         if let cached { return cached }
-        guard let argv = rawArguments(entry.pid)?.argv else { return nil }
+        guard let argv = rawArguments(entry.pid, includeEnvironment: false)?.argv else { return nil }
         lock.lock()
         argvCache[key] = argv
         lock.unlock()
         return argv
     }
 
-    private func pruneArgvCache(alive: Set<pid_t>) {
+    private func pruneArgvCache(alive: Set<ArgvKey>) {
         lock.lock()
-        argvCache = argvCache.filter { alive.contains($0.key.pid) }
+        argvCache = argvCache.filter { alive.contains($0.key) }
         lock.unlock()
     }
 
-    private func rawArguments(_ pid: pid_t) -> (argv: [String], env: [String])? {
+    private func rawArguments(_ pid: pid_t, includeEnvironment: Bool = true) -> (argv: [String], env: [String])? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return nil }
@@ -262,6 +270,9 @@ final class ProcessInspector: @unchecked Sendable {
             guard let value = nextString() else { break }
             argv.append(value)
         }
+        // Snapshot argv lookups do not need to decode and allocate every environment value.
+        // Identity lookups keep the complete environment and their existing behavior.
+        guard includeEnvironment else { return (argv, []) }
         // Padding NULs can separate argv from the environment.
         while index < size && buffer[index] == 0 { index += 1 }
         var env: [String] = []
@@ -317,10 +328,21 @@ final class ProcessInspector: @unchecked Sendable {
     /// directory holds every Claude on the machine; only files named for `pids` (processes in our
     /// sessions) are read, and only when they changed since the last poll.
     private func claudeRegistry(pids: Set<pid_t>) -> [RegistryEntry] {
+        guard !pids.isEmpty else {
+            lock.lock()
+            registryCache.removeAll(keepingCapacity: true)
+            lock.unlock()
+            return []
+        }
+        // One directory read replaces a failed file-stat syscall for every non-Claude
+        // process. If enumeration fails, retain the previous per-pid lookup behavior.
+        let filenames = (try? FileManager.default.contentsOfDirectory(atPath: Self.registryDirectory.path)).map { Set($0) }
         var entries: [RegistryEntry] = []
         var seen = Set<pid_t>()
         for pid in pids {
-            let url = Self.registryDirectory.appendingPathComponent("\(pid).json")
+            let filename = "\(pid).json"
+            if let filenames, !filenames.contains(filename) { continue }
+            let url = Self.registryDirectory.appendingPathComponent(filename)
             guard let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date else { continue }
             seen.insert(pid)
             lock.lock()
