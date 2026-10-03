@@ -293,6 +293,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func layoutSplit(_ sender: Any?) { store.setLayout(.split) }
     @objc func layoutGrid(_ sender: Any?) { store.setLayout(.grid) }
     @objc func toggleZoom(_ sender: Any?) { store.toggleZoom(store.selectedID) }
+    @objc func evenOutTiles(_ sender: Any?) { windowController?.evenOutTiles() }
+    @objc func forkSelected(_ sender: Any?) {
+        if let session = store.selected { _ = store.fork(session) }
+    }
+    @objc func openInEditor(_ sender: Any?) {
+        if let session = store.selected { Editors.open(session.spec.workPath) }
+    }
 
     @objc func newSession(_ sender: Any?) { windowController?.presentNewSession() }
     @objc func newShellHere(_ sender: Any?) { windowController?.quickCreate(.shell) }

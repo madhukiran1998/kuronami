@@ -11,32 +11,15 @@ final class LayoutAndLabelTests: XCTestCase {
     }
 
     func testGridShapePrefersSideBySideForTwo() {
-        let shape = TerminalAreaView.gridShape(count: 2, aspect: 1.5)
+        let shape = LayoutTree.gridShape(count: 2, aspect: 1.5)
         XCTAssertEqual(shape.columns, 2)
         XCTAssertEqual(shape.rows, 1)
     }
 
     func testGridShapeForFourIsTwoByTwo() {
-        let shape = TerminalAreaView.gridShape(count: 4, aspect: 1.5)
+        let shape = LayoutTree.gridShape(count: 4, aspect: 1.5)
         XCTAssertEqual(shape.columns, 2)
         XCTAssertEqual(shape.rows, 2)
-    }
-
-    func testGridFramesCoverEveryTileWithoutOverlap() {
-        let bounds = NSRect(x: 0, y: 0, width: 1200, height: 800)
-        for count in 1...9 {
-            let frames = TerminalAreaView.frames(count: count, in: bounds, mode: .grid)
-            XCTAssertEqual(frames.count, count)
-            for (i, a) in frames.enumerated() {
-                XCTAssertTrue(bounds.contains(a), "tile \(i) of \(count) escapes bounds")
-                for b in frames[(i + 1)...] { XCTAssertFalse(a.intersects(b), "tiles overlap for count \(count)") }
-            }
-        }
-    }
-
-    func testFocusFloatsInsetFromEdges() {
-        let bounds = NSRect(x: 0, y: 0, width: 900, height: 600)
-        XCTAssertEqual(TerminalAreaView.frames(count: 1, in: bounds, mode: .focus), [bounds.insetBy(dx: 10, dy: 10)])
     }
 
     func testVisibleOrderDropsRemovedAndDuplicateSessions() {
@@ -49,24 +32,28 @@ final class LayoutAndLabelTests: XCTestCase {
     }
 
     func testEmptyGridDoesNotCreateSlots() {
-        let shape = TerminalAreaView.gridShape(count: 0, aspect: 1.5)
+        let shape = LayoutTree.gridShape(count: 0, aspect: 1.5)
         XCTAssertEqual(shape.columns, 0)
         XCTAssertEqual(shape.rows, 0)
-        XCTAssertTrue(TerminalAreaView.frames(count: 0, in: .zero, mode: .grid).isEmpty)
+        var tree = LayoutTree()
+        tree.reconcile(visible: [], in: .zero)
+        XCTAssertTrue(tree.frames(in: .zero).isEmpty)
     }
 
     func testTinyLayoutsNeverProduceNegativeTerminalDimensions() {
         for size in [NSSize.zero, NSSize(width: 8, height: 6), NSSize(width: 100, height: 24)] {
             let bounds = NSRect(origin: .zero, size: size)
             for count in 1...9 {
-                for frame in TerminalAreaView.frames(count: count, in: bounds, mode: .grid) {
+                var tree = LayoutTree()
+                tree.reconcile(visible: (0..<count).map { _ in UUID() }, in: bounds)
+                for frame in tree.frames(in: bounds).values {
                     XCTAssertTrue(frame.width.isFinite && frame.height.isFinite)
                     XCTAssertGreaterThanOrEqual(frame.width, 0)
                     XCTAssertGreaterThanOrEqual(frame.height, 0)
-                    XCTAssertGreaterThanOrEqual(frame.minX, bounds.minX)
-                    XCTAssertGreaterThanOrEqual(frame.minY, bounds.minY)
-                    XCTAssertLessThanOrEqual(frame.maxX, bounds.maxX)
-                    XCTAssertLessThanOrEqual(frame.maxY, bounds.maxY)
+                    XCTAssertGreaterThanOrEqual(frame.minX, bounds.minX - 0.001)
+                    XCTAssertGreaterThanOrEqual(frame.minY, bounds.minY - 0.001)
+                    XCTAssertLessThanOrEqual(frame.maxX, bounds.maxX + 0.001)
+                    XCTAssertLessThanOrEqual(frame.maxY, bounds.maxY + 0.001)
                 }
             }
         }

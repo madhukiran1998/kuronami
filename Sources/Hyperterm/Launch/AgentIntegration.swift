@@ -157,20 +157,28 @@ enum AgentIntegration {
     static func initialInput(for spec: LaunchSpec, resume: Bool, task: String? = nil) -> String? {
         let extra = spec.command.map { " " + $0 } ?? ""
         let prompt = task.flatMap { $0.isEmpty ? nil : " " + shellQuote($0) } ?? ""
+        func options(_ cli: AgentCLI) -> String {
+            (spec.options?.arguments(for: cli) ?? []).map { " " + shellQuote($0) }.joined()
+        }
         switch spec.kind {
         case .claude:
             var args = "--name \(shellQuote(spec.label))"
             if resume, let id = spec.agentSessionId, isSafeIdentifier(id) {
                 args += " --resume \(shellQuote(id))"
+            } else if let parent = spec.forkOf, isSafeIdentifier(parent) {
+                // A fork continues the parent's conversation under a new session id; the parent
+                // is untouched. Claude finds conversations by folder, so a fork starts in the
+                // parent's own working folder.
+                args += " --resume \(shellQuote(parent)) --fork-session"
             } else if let worktree = spec.worktreeName {
                 args += " --worktree \(shellQuote(worktree))"
             }
-            return "\(shellQuote(binDirectory.appendingPathComponent("claude").path)) \(args)\(extra)\(prompt)\n"
+            return "\(shellQuote(binDirectory.appendingPathComponent("claude").path)) \(args)\(options(.claude))\(extra)\(prompt)\n"
         case .codex:
             if resume, let thread = spec.agentSessionId, isSafeIdentifier(thread) {
-                return "\(shellQuote(binDirectory.appendingPathComponent("codex").path)) resume \(shellQuote(thread))\(extra)\n"
+                return "\(shellQuote(binDirectory.appendingPathComponent("codex").path)) resume \(shellQuote(thread))\(options(.codex))\(extra)\n"
             }
-            return "\(shellQuote(binDirectory.appendingPathComponent("codex").path))\(extra)\(prompt)\n"
+            return "\(shellQuote(binDirectory.appendingPathComponent("codex").path))\(options(.codex))\(extra)\(prompt)\n"
         case .server, .shell:
             return spec.command.map { $0 + "\n" }
         case .browser:

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @MainActor
@@ -9,6 +10,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private lazy var toolbarController = ToolbarController(store: store, actions: actions)
 
     private var inspectorItem: NSSplitViewItem?
+    private var subscriptions: Set<AnyCancellable> = []
 
     init(store: SessionStore) {
         self.store = store
@@ -49,7 +51,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             restart: { [weak self] in self?.confirmRestart($0) },
             close: { [weak self] in self?.confirmClose($0) },
             review: { [weak self] in self?.showInspector(for: $0) },
-            dispatch: { [weak self] task, kind, cwd in self?.dispatch(task, kind: kind, cwd: cwd) })
+            dispatch: { [weak self] task, kinds, cwd, options in self?.store.dispatch(task, kinds: kinds, cwd: cwd, options: options) },
+            showPlan: { [weak self] in self?.showInspector(for: $0, tab: .plan) })
     }
 
     // MARK: - Layout
@@ -120,34 +123,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func toggleInspector() {
         guard let inspectorItem else { return }
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { inspectorItem.isCollapsed.toggle() }
+        if Motion.reduced { inspectorItem.isCollapsed.toggle() }
         else { inspectorItem.animator().isCollapsed.toggle() }
     }
 
-    func showInspector(for session: TerminalSession) {
+    func showInspector(for session: TerminalSession, tab: InspectorTab = .changes) {
         store.select(session)
-        store.inspectorTab = .changes
+        store.inspectorTab = tab
         if inspectorItem?.isCollapsed == true {
-            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { inspectorItem?.isCollapsed = false }
+            if Motion.reduced { inspectorItem?.isCollapsed = false }
             else { inspectorItem?.animator().isCollapsed = false }
         }
     }
 
-    /// Quick dispatch: a task typed in the sidebar becomes a new, auto-named agent in its own
-    /// worktree (when the folder is a git repo) with the task already sent.
-    private func dispatch(_ task: String, kind: SessionKind, cwd: String) {
-        let spec = LaunchSpec(label: "", kind: kind, cwd: cwd)
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await store.launch(spec, isolateIfPossible: true, task: task)
-            reportLaunchError()
-        }
-    }
+    func evenOutTiles() { terminalArea.evenOutTiles() }
 
     private func bindStore() {
         let strip = NSHostingView(rootView: ServerStrip(store: store))
         strip.sizingOptions = []
         terminalArea.serverStrip = strip
+        store.$lastError
+            .compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] error in MainActor.assumeIsolated { self?.reportLaunchError(error) } }
+            .store(in: &subscriptions)
         store.onSurfaceChange = { [weak self] session in self?.terminalArea.mount(session) }
         store.onRemove = { [weak self] session in self?.terminalArea.unmount(session) }
         store.onArrangementChange = { [weak self] in self?.arrange(takeFocus: true) }
@@ -221,7 +220,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func toggleSwitcher() {
         if let switcher, switcher.isVisible { switcher.close(); return }
         guard let window else { return }
-        let panel = SwitcherPanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
+        let panel = SwitcherPanel(contentRect: NSRect(x: 0, y: 0, width: 600, height: 440),
                                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -234,7 +233,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         panel.contentView = host
         panel.setContentSize(host.fittingSize)
         let frame = window.frame
-        panel.setFrameTopLeftPoint(NSPoint(x: frame.midX - 280, y: frame.maxY - 110))
+        panel.setFrameTopLeftPoint(NSPoint(x: frame.midX - host.fittingSize.width / 2, y: frame.maxY - 110))
         window.addChildWindow(panel, ordered: .above)
         panel.makeKeyAndOrderFront(nil)
         switcher = panel
@@ -273,21 +272,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func createSession(from draft: NewSessionDraft) {
         var spec = LaunchSpec(label: draft.label, kind: draft.kind, cwd: draft.cwd, command: draft.command)
         if draft.kind.isAgent, let account = draft.account { spec.account = account }
+        if draft.kind.isAgent, !draft.options.isEmpty { spec.options = draft.options }
         Task { @MainActor [weak self] in
             guard let self else { return }
             await store.launch(spec, worktree: draft.worktree)
-            reportLaunchError()
         }
     }
 
-    private func reportLaunchError() {
-        if let error = store.lastError {
-            store.lastError = nil
-            let alert = NSAlert()
-            alert.messageText = "Started without a worktree"
-            alert.informativeText = error
-            if let window { alert.beginSheetModal(for: window) }
-        }
+    /// Launch problems (a worktree that couldn't be made) are shown once, from any launch path.
+    private func reportLaunchError(_ error: String) {
+        store.lastError = nil
+        let alert = NSAlert()
+        alert.messageText = "Started without a worktree"
+        alert.informativeText = error
+        if let window { alert.beginSheetModal(for: window) }
     }
 
     /// One-keystroke creation in the current session's folder.
@@ -297,7 +295,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             await store.launch(spec)
-            reportLaunchError()
         }
     }
 

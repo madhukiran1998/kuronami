@@ -8,8 +8,11 @@ struct NewSessionDraft {
     var worktree = false
     /// nil: the account picked for new agents of this kind.
     var account: String?
+    /// Agents: permission mode, model and effort.
+    var options = AgentOptions()
 }
 
+/// A sheet for starting anything: an agent, a shell, a server, a browser.
 struct NewSessionView: View {
     @State var draft: NewSessionDraft
     let recentDirectories: [String]
@@ -19,55 +22,31 @@ struct NewSessionView: View {
 
     private enum Field { case label, command }
 
+    private var canCreate: Bool {
+        !(draft.kind == .server && draft.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 19, weight: .medium))
-                    .foregroundStyle(Palette.accent)
-                    .frame(width: 44, height: 44)
-                    .background(Palette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Create a session")
-                        .font(.system(size: 22, weight: .semibold))
-                        .tracking(-0.5)
-                    Text("Agents, terminals, servers, and browsers.")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Color(nsColor: Ink.muted))
-                }
-                Spacer()
-                Text("NEW SESSION")
-                    .font(.system(size: 9, weight: .semibold))
-                    .tracking(1.3)
-                    .foregroundStyle(Color(nsColor: Ink.faint))
-                    .padding(.top, 4)
-            }
+        VStack(alignment: .leading, spacing: Space.l) {
+            Text("New Session").font(Typeface.title)
 
-            VStack(alignment: .leading, spacing: 10) {
-                sectionTitle("Session type")
-                HStack(spacing: 8) {
-                    ForEach(SessionKind.allCases) { kind in
-                        KindCard(kind: kind, selected: draft.kind == kind) {
-                            draft.kind = kind
-                            draft.account = nil
-                            focus = kind == .server || kind == .browser ? .command : .label
-                        }
+            HStack(spacing: Space.xs) {
+                ForEach(SessionKind.allCases) { kind in
+                    KindButton(kind: kind, selected: draft.kind == kind) {
+                        draft.kind = kind
+                        draft.account = nil
+                        focus = kind == .server || kind == .browser ? .command : .label
                     }
                 }
             }
 
-            VStack(alignment: .leading, spacing: 14) {
-                sectionTitle("Configuration")
-                FieldRow(title: "Label") {
-                    HStack(spacing: 0) {
-                        Text("@").foregroundStyle(Palette.accent).padding(.trailing, 3)
-                        TextField("", text: $draft.label, prompt: Text(labelPlaceholder))
-                            .textFieldStyle(.plain)
-                            .focused($focus, equals: .label)
-                            .accessibilityLabel("Session label")
-                    }
-                    .font(.system(size: 13, design: .monospaced))
-                    .inputChrome(focused: focus == .label)
+            VStack(alignment: .leading, spacing: Space.m) {
+                FieldRow(title: "Name") {
+                    TextField("", text: $draft.label, prompt: Text(labelPlaceholder))
+                        .textFieldStyle(.roundedBorder)
+                        .font(Typeface.code)
+                        .focused($focus, equals: .label)
+                        .accessibilityLabel("Session name")
                 }
                 FieldRow(title: "Folder") {
                     Menu {
@@ -75,124 +54,112 @@ struct NewSessionView: View {
                             Button(abbreviateHome(dir)) { draft.cwd = dir }
                         }
                         if !recentDirectories.isEmpty { Divider() }
-                        Button("Choose folder…") { chooseFolder() }
+                        Button("Choose Folder…") { chooseFolder() }
                     } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "folder").foregroundStyle(Color(nsColor: Ink.muted))
-                            Text(abbreviateHome(draft.cwd)).lineLimit(1).truncationMode(.head)
-                            Spacer(minLength: 0)
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(Color(nsColor: Ink.faint))
-                        }
-                        .font(.system(size: 12.5))
-                        .contentShape(Rectangle())
+                        Text(abbreviateHome(draft.cwd)).lineLimit(1).truncationMode(.head)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .inputChrome()
                     .help(draft.cwd)
                     .accessibilityLabel("Working folder")
                 }
-                if draft.kind.isAgent, AccountStore.shared.accounts(for: draft.kind).count > 1 {
-                    FieldRow(title: "Account") {
-                        Picker("", selection: Binding(
-                            get: { draft.account ?? AccountStore.shared.preferredID(for: draft.kind) },
-                            set: { draft.account = $0 })) {
-                            ForEach(AccountStore.shared.accounts(for: draft.kind)) { account in
-                                Text(account.name + (AccountStore.signedInEmail(account).map { " · \($0)" } ?? " · not signed in"))
-                                    .tag(account.id)
-                            }
-                        }
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityLabel("Account")
-                    }
-                }
                 if draft.kind.isAgent {
-                    FieldRow(title: "Isolation") {
-                        Toggle(isOn: $draft.worktree) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Use a dedicated worktree")
-                                    .font(.system(size: 12.5, weight: .medium))
-                                Text("Keep this agent’s changes on its own branch.")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(Color(nsColor: Ink.muted))
-                            }
-                        }
-                        .toggleStyle(.checkbox)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    agentFields
                 }
                 FieldRow(title: commandTitle) {
                     TextField("", text: $draft.command, prompt: Text(commandPlaceholder))
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12.5, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                        .font(Typeface.code)
                         .focused($focus, equals: .command)
-                        .inputChrome(focused: focus == .command)
                         .accessibilityLabel(commandTitle)
                 }
-                if draft.kind == .server && draft.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("Enter a command to start your server.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color(nsColor: Ink.muted))
-                        .padding(.leading, 82)
-                }
-            }
-            .padding(16)
-            .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color(nsColor: Ink.hairline), lineWidth: 1))
-
-            HStack(alignment: .top, spacing: 9) {
-                Image(systemName: draft.kind.isAgent ? "point.3.connected.trianglepath.dotted" : "info.circle")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Palette.accent)
-                Text(hint)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Color(nsColor: Ink.muted))
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack(spacing: 10) {
-                HStack(spacing: 5) {
-                    Text("↵").font(.system(size: 12, design: .monospaced))
-                    Text("to create")
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(Color(nsColor: Ink.faint))
+            Text(hint)
+                .font(Typeface.callout)
+                .foregroundStyle(Tone.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: Space.s) {
                 Spacer()
                 Button("Cancel", role: .cancel, action: onCancel)
                     .keyboardShortcut(.cancelAction)
-                    .controlSize(.large)
-                    .buttonStyle(.bordered)
-                Button {
-                    onCreate(draft)
-                } label: {
-                    HStack(spacing: 8) {
-                        Text("Create session")
-                        Image(systemName: "arrow.right").font(.system(size: 11, weight: .semibold))
-                    }
-                }
+                    .buttonStyle(PanelButtonStyle())
+                Button("Create") { onCreate(draft) }
                     .keyboardShortcut(.defaultAction)
-                    .controlSize(.large)
-                    .buttonStyle(ChromeButtonStyle(accent: true))
-                    .disabled(draft.kind == .server && draft.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .buttonStyle(PanelButtonStyle(prominent: true))
+                    .disabled(!canCreate)
             }
-            .padding(.top, 2)
         }
-        .padding(26)
-        .frame(width: 584)
-        .foregroundStyle(Color(nsColor: Ink.text))
-        .background(Color(nsColor: Ink.deep))
+        .padding(Space.xl)
+        .frame(width: 520)
+        .foregroundStyle(Tone.text)
+        .background(Tone.deep)
         .tint(Palette.accent)
         .onAppear { focus = draft.kind == .server || draft.kind == .browser ? .command : .label }
     }
 
-    private func sectionTitle(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.system(size: 10, weight: .semibold))
-            .tracking(0.9)
-            .foregroundStyle(Color(nsColor: Ink.faint))
+    @ViewBuilder private var agentFields: some View {
+        if AccountStore.shared.accounts(for: draft.kind).count > 1 {
+            FieldRow(title: "Account") {
+                Picker("", selection: Binding(
+                    get: { draft.account ?? AccountStore.shared.preferredID(for: draft.kind) },
+                    set: { draft.account = $0 })) {
+                    ForEach(AccountStore.shared.accounts(for: draft.kind)) { account in
+                        Text(account.name + (AccountStore.signedInEmail(account).map { " · \($0)" } ?? " · not signed in"))
+                            .tag(account.id)
+                    }
+                }
+                .labelsHidden()
+                .accessibilityLabel("Account")
+            }
+        }
+        FieldRow(title: "Permissions") {
+            Picker("", selection: $draft.options.mode) {
+                Text("As Configured").tag(PermissionMode?.none)
+                Divider()
+                ForEach(PermissionMode.allCases) { Text($0.title).tag(PermissionMode?.some($0)) }
+            }
+            .labelsHidden()
+            .help(draft.options.mode?.detail ?? "Use the agent's own permission settings")
+            .accessibilityLabel("Permissions")
+        }
+        FieldRow(title: "Model") {
+            HStack(spacing: Space.s) {
+                TextField("", text: Binding(get: { draft.options.model ?? "" },
+                                            set: { draft.options.model = $0.isEmpty ? nil : $0 }),
+                          prompt: Text("Default"))
+                    .textFieldStyle(.roundedBorder)
+                    .font(Typeface.code)
+                    .accessibilityLabel("Model")
+                if draft.kind == .claude {
+                    Menu {
+                        ForEach(AgentOptions.claudeModels, id: \.self) { model in
+                            Button(model.capitalized) { draft.options.model = model }
+                        }
+                        Divider()
+                        Button("Default") { draft.options.model = nil }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                }
+                if draft.kind == .codex {
+                    Picker("", selection: $draft.options.effort) {
+                        Text("Default Effort").tag(ReasoningEffort?.none)
+                        ForEach(ReasoningEffort.allCases) { Text("\($0.title) Effort").tag(ReasoningEffort?.some($0)) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    .accessibilityLabel("Reasoning effort")
+                }
+            }
+        }
+        FieldRow(title: "") {
+            Toggle("Work in its own worktree, on its own branch", isOn: $draft.worktree)
+                .toggleStyle(.checkbox)
+                .font(Typeface.callout)
+        }
     }
 
     private var labelPlaceholder: String {
@@ -211,29 +178,27 @@ struct NewSessionView: View {
 
     private var commandPlaceholder: String {
         switch draft.kind {
-        case .claude: return "optional · --model opus"
-        case .codex: return "optional · --model <model>"
+        case .claude, .codex, .shell: return "Optional"
         case .server: return "pnpm dev"
-        case .shell: return "optional"
         case .browser: return "localhost:3000"
         }
     }
 
     private var hint: String {
-        let label = "@" + (draft.label.isEmpty ? labelPlaceholder : normalizeLabel(draft.label))
+        let label = draft.label.isEmpty ? labelPlaceholder : normalizeLabel(draft.label)
         switch draft.kind {
-        case .claude: return "Runs Claude Code named \(label). Other agents can message it by that name."
-        case .codex: return "Runs Codex as \(label). Agents reach it through Kuronami's MCP tools."
-        case .server: return "Runs the command as \(label). Ports appear in the sidebar; agents can read its logs or restart it."
-        case .shell: return "A login shell labeled \(label)."
-        case .browser: return "A Chromium browser labeled \(label). Agents can drive it by that name; it shares logins with your other Kuronami browsers."
+        case .claude: return "Runs Claude Code as \(label). Other agents can message it by that name."
+        case .codex: return "Runs Codex as \(label). Agents reach it through Kuronami's tools."
+        case .server: return "Runs the command as \(label). Its ports show in the sidebar; agents can read its logs and restart it."
+        case .shell: return "A login shell named \(label)."
+        case .browser: return "A Chromium browser named \(label) that agents can drive. It shares logins with your other Kuronami browsers."
         }
     }
 
     private func chooseFolder() {
         let panel = NSOpenPanel()
-        panel.title = "Choose a working folder"
-        panel.prompt = "Use folder"
+        panel.title = "Choose a Working Folder"
+        panel.prompt = "Choose"
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.directoryURL = URL(fileURLWithPath: expandTilde(draft.cwd))
@@ -241,7 +206,7 @@ struct NewSessionView: View {
     }
 }
 
-private struct KindCard: View {
+private struct KindButton: View {
     let kind: SessionKind
     let selected: Bool
     let action: () -> Void
@@ -249,34 +214,19 @@ private struct KindCard: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 8) {
-                AgentAvatar(kind: kind, state: kind.isAgent ? .idle : .running)
+            VStack(spacing: Space.xs) {
+                KindMark(kind: kind, font: Typeface.headline)
+                    .foregroundStyle(selected ? kind.tint : Tone.muted)
+                    .frame(height: Space.l + Space.xs)
                 Text(kind.displayName)
-                    .font(.system(size: 11, weight: selected ? .semibold : .medium))
-                    .foregroundStyle(Color(nsColor: selected ? Ink.text : Ink.muted))
-                Text(kind.isAgent ? "AI AGENT" : kind == .server ? "PROCESS" : kind == .browser ? "WEB" : "TERMINAL")
-                    .font(.system(size: 9, weight: .semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(selected ? Palette.accent : Color(nsColor: Ink.faint))
+                    .font(Typeface.caption.weight(selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Tone.text : Tone.muted)
+                    .lineLimit(1)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 96)
-            .background(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(selected ? Palette.accent.opacity(0.10) : Color(nsColor: hovering ? Ink.raised : Ink.surface))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .strokeBorder(selected ? Palette.accent.opacity(0.65) : Color(nsColor: Ink.hairline), lineWidth: 1)
-            )
-            .overlay(alignment: .topTrailing) {
-                if selected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Palette.accent)
-                        .padding(7)
-                }
-            }
+            .padding(.vertical, Space.s)
+            .background(selected ? Tone.raised : hovering ? Tone.surface : .clear,
+                        in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -291,21 +241,12 @@ private struct FieldRow<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .firstTextBaseline, spacing: Space.m) {
             Text(title)
-                .font(.system(size: 12))
-                .foregroundStyle(Color(nsColor: Ink.muted))
-                .frame(width: 70, alignment: .leading)
-            content
+                .font(Typeface.callout)
+                .foregroundStyle(Tone.muted)
+                .frame(width: 84, alignment: .trailing)
+            content.frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-}
-
-private extension View {
-    func inputChrome(focused: Bool = false) -> some View {
-        padding(.horizontal, 11)
-            .frame(height: 36)
-            .background(RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: Ink.deep)))
-            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(focused ? Palette.accent.opacity(0.7) : Color(nsColor: Ink.hairline), lineWidth: 1))
     }
 }

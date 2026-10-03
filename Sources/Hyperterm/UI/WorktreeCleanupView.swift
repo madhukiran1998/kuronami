@@ -47,9 +47,9 @@ struct WorktreeCleanupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Clean Up Worktrees").font(.title3.weight(.semibold))
+            Text("Clean Up Worktrees").font(Typeface.title)
             Text("Archiving commits any leftover work to the worktree's branch, then removes the folder. Branches are kept.")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(Typeface.callout).foregroundStyle(.secondary)
             if loading {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 120)
             } else if entries.isEmpty {
@@ -57,7 +57,7 @@ struct WorktreeCleanupView: View {
             } else {
                 Table(entries) {
                     TableColumn("Worktree") { Text(shortPath($0.path)).help($0.path) }
-                    TableColumn("Branch") { Text($0.branch).font(.callout.monospaced()) }
+                    TableColumn("Branch") { Text($0.branch).font(Typeface.code) }
                     TableColumn("Status") { entry in
                         Text(entry.inUse ? "in use" : entry.merged ? "merged" : entry.dirty ? "uncommitted work" : "unmerged")
                             .foregroundStyle(entry.merged ? Palette.running : entry.inUse ? .secondary : Palette.attention)
@@ -69,7 +69,7 @@ struct WorktreeCleanupView: View {
                 }
                 .frame(minHeight: 200)
             }
-            if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
+            if let message { Text(message).font(Typeface.caption).foregroundStyle(.secondary) }
             HStack {
                 Button("Archive All Merged") { entries.filter { $0.merged && !$0.inUse }.forEach(archive) }
                     .disabled(!entries.contains { $0.merged && !$0.inUse })

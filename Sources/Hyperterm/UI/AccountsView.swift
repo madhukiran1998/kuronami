@@ -10,9 +10,9 @@ struct AccountsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Accounts").font(.system(size: 20, weight: .semibold))
+                Text("Accounts").font(Typeface.title)
                 Text("Each account signs in separately and keeps its own history. Agents stay on the account they started with; move one from its menu when it hits a limit.")
-                    .font(.system(size: 12.5))
+                    .font(Typeface.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -21,7 +21,7 @@ struct AccountsView: View {
         }
         .padding(24)
         .frame(width: 560)
-        .background(Color(nsColor: Ink.floor))
+        .background(Tone.floor)
     }
 }
 
@@ -33,10 +33,7 @@ private struct AccountSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(kind.displayName.uppercased())
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(.tertiary)
+            SectionHeader(kind.displayName)
             VStack(spacing: 0) {
                 ForEach(accounts.accounts(for: kind)) { account in
                     AccountRow(account: account, isPreferred: accounts.preferredID(for: kind) == account.id,
@@ -55,8 +52,8 @@ private struct AccountSection: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             }
-            .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color(nsColor: Ink.hairline)))
+            .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous).strokeBorder(Tone.hairline))
         }
     }
 
@@ -81,10 +78,10 @@ private struct AccountRow: View {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(account.name).font(.system(size: 13, weight: .semibold))
+                        Text(account.name).font(Typeface.headline)
                         if isPreferred {
                             Text("New agents")
-                                .font(.system(size: 10.5, weight: .medium))
+                                .font(Typeface.micro)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 1)
                                 .background(Capsule().fill(Palette.working.opacity(0.16)))
@@ -92,7 +89,7 @@ private struct AccountRow: View {
                         }
                     }
                     Text(email ?? "Not signed in")
-                        .font(.system(size: 12))
+                        .font(Typeface.callout)
                         .foregroundStyle(email == nil ? Palette.attention : Color.secondary)
                 }
                 Spacer()

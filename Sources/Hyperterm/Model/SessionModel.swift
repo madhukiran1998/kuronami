@@ -129,6 +129,10 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     var account: String?
     /// A shell opened to sign an account in: which kind of account `account` names.
     var accountKind: SessionKind?
+    /// Agents: permission mode, model and effort chosen at launch.
+    var options: AgentOptions?
+    /// Claude: start as a fork of this conversation (`--resume <id> --fork-session`).
+    var forkOf: String?
 
     /// Where the agent's files actually live.
     var workPath: String {

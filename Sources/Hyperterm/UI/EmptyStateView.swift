@@ -1,103 +1,58 @@
 import SwiftUI
 
-/// A quiet launchpad with the first action in reach, including on narrow canvases.
+/// The canvas before anything is running: the mark, one sentence, and the ways to start.
 struct EmptyStateView: View {
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
-                VStack(spacing: 28) {
-                    hero
-                    VStack(spacing: 10) {
-                        HStack(spacing: 12) {
-                            StartButton(kind: .claude, prominent: true)
-                            StartButton(kind: .codex, prominent: true)
-                        }
-                        HStack(spacing: 10) {
-                            StartButton(kind: .shell, prominent: false)
-                            StartButton(kind: .server, prominent: false)
-                            StartButton(kind: .browser, prominent: false)
-                        }
+                VStack(spacing: Space.xl) {
+                    VStack(spacing: Space.m) {
+                        WaveMark().frame(width: 44, height: 36)
+                        Text("Start an agent").font(Typeface.title)
+                        Text("Type a task in the sidebar, or pick what to open.")
+                            .font(Typeface.body)
+                            .foregroundStyle(Tone.muted)
+                            .multilineTextAlignment(.center)
                     }
-                    .frame(maxWidth: 560)
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 22) {
-                            shortcut("⌘N", "New session")
-                            shortcut("⌘P", "Command center")
-                            shortcut("⌘J", "Next waiting")
-                        }
-                        HStack(spacing: 18) {
-                            shortcut("⌘N", "New session")
-                            shortcut("⌘P", "Commands")
-                        }
+                    VStack(spacing: Space.xs) {
+                        ForEach(SessionKind.allCases) { StartRow(kind: $0) }
                     }
-                    .padding(.top, 1)
+                    .frame(maxWidth: 360)
+                    HStack(spacing: Space.l) {
+                        shortcut("⌘N", "New session")
+                        shortcut("⌘P", "Commands")
+                        shortcut("⌘J", "Next waiting")
+                    }
                 }
-                .padding(.horizontal, 28)
-                .padding(.vertical, 36)
+                .padding(Space.xl)
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: geometry.size.height)
             }
-            .scrollIndicators(.hidden)
+            .scrollIndicators(.never)
         }
-        .foregroundStyle(Color(nsColor: Ink.text))
-        .background(Color(nsColor: Ink.floor))
-    }
-
-    private var hero: some View {
-        VStack(spacing: 15) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 21, style: .continuous)
-                    .fill(LinearGradient(colors: [Color(nsColor: Ink.raised), Color(nsColor: Ink.surface)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 76, height: 76)
-                    .overlay(RoundedRectangle(cornerRadius: 21, style: .continuous).strokeBorder(Color(nsColor: Ink.hairline)))
-                WaveMark().frame(width: 41, height: 34)
-            }
-            .padding(.bottom, 4)
-            Text("A CLEAR SPACE TO BUILD")
-                .font(.system(size: 9, weight: .semibold))
-                .tracking(2.1)
-                .foregroundStyle(Color(nsColor: Ink.muted))
-            Text("Your next idea\nstarts here.")
-                .font(.system(size: 35, weight: .semibold))
-                .tracking(-1.3)
-                .lineSpacing(-2)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Launch an agent, open a terminal, or start a browser. Keep your whole workspace in view.")
-                .font(.system(size: 13))
-                .foregroundStyle(Color(nsColor: Ink.muted))
-                .lineSpacing(4)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 375)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        .foregroundStyle(Tone.text)
+        .background(Tone.floor)
     }
 
     private func shortcut(_ keys: String, _ title: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Space.xs + 2) {
             KeyboardHint(keys: keys)
-            Text(title)
-                .font(.system(size: 10.5))
-                .foregroundStyle(Color(nsColor: Ink.faint))
-                .fixedSize()
+            Text(title).font(Typeface.caption).foregroundStyle(Tone.faint).fixedSize()
         }
     }
 }
 
-private struct StartButton: View {
+private struct StartRow: View {
     let kind: SessionKind
-    let prominent: Bool
     @State private var hovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var tint: Color { kind == .codex ? Palette.accent : (kind.isAgent ? kind.tint : Color(nsColor: Ink.muted)) }
-    private var description: String {
+    private var shortcut: String? {
         switch kind {
-        case .claude: return "Think, build, and iterate"
-        case .codex: return "Turn ideas into working code"
-        case .shell: return "Run commands"
-        case .server: return "Start a service"
-        case .browser: return "Open the web"
+        case .claude: return "⇧⌘C"
+        case .codex: return "⇧⌘X"
+        case .shell: return "⌘T"
+        case .browser: return "⇧⌘B"
+        case .server: return nil
         }
     }
 
@@ -105,49 +60,20 @@ private struct StartButton: View {
         Button {
             NSApp.sendAction(#selector(AppDelegate.newSessionOfKind(_:)), to: nil, from: KindSender(kind: kind))
         } label: {
-            Group {
-                if prominent {
-                    VStack(alignment: .leading, spacing: 17) {
-                        HStack {
-                            AgentAvatar(kind: kind, state: .idle)
-                            Spacer()
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(hovering ? tint : Color(nsColor: Ink.faint))
-                        }
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(kind.displayName).font(.system(size: 14, weight: .semibold))
-                            Text(description)
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(Color(nsColor: Ink.muted))
-                                .lineLimit(2)
-                        }
-                    }
-                    .padding(17)
-                    .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
-                } else {
-                    HStack(spacing: 7) {
-                        Image(systemName: kind.symbol)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(tint)
-                        Text(kind.displayName)
-                            .font(.system(size: 11.5, weight: .medium))
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 40)
-                }
+            HStack(spacing: Space.m) {
+                AgentAvatar(kind: kind)
+                Text(kind.displayName).font(Typeface.body)
+                Spacer()
+                if let shortcut { KeyboardHint(keys: shortcut) }
             }
-            .foregroundStyle(Color(nsColor: Ink.text))
-            .background(hovering ? Color(nsColor: Ink.raised) : Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: prominent ? 14 : 9, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: prominent ? 14 : 9, style: .continuous).strokeBorder(hovering ? tint.opacity(0.5) : Color(nsColor: Ink.hairline)))
-            .contentShape(RoundedRectangle(cornerRadius: prominent ? 14 : 9, style: .continuous))
+            .padding(.horizontal, Space.m)
+            .frame(height: 40)
+            .background(hovering ? Tone.raised : Tone.surface, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: hovering)
-        .help("Start a new \(kind.displayName) session")
         .accessibilityLabel("Start \(kind.displayName)")
-        .accessibilityHint(description)
     }
 }
 

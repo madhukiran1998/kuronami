@@ -41,6 +41,7 @@ extension SessionStore {
                 session.record(.done, summarize(last) ?? "Turn complete")
             }
             session.apply(.codexTurnComplete, source: "codex notify")
+            checkpoint(session, phase: .end, prompt: "")
             refreshReview(session)
         default:
             break
@@ -61,6 +62,7 @@ extension SessionStore {
 
         switch event {
         case "UserPromptSubmit":
+            checkpoint(session, phase: .start, prompt: json["prompt"] as? String ?? "Turn")
             if let prompt = json["prompt"] as? String {
                 if prompt.hasPrefix("Message from @") {
                     session.record(.message, summarize(prompt) ?? prompt)
@@ -84,6 +86,7 @@ extension SessionStore {
             recordTestEvidence(session, json, failed: event == "PostToolUseFailure")
         case "Stop":
             session.activity = nil
+            checkpoint(session, phase: .end, prompt: "")
             if let last = json["last_assistant_message"] as? String {
                 session.summary = summarize(last)
                 session.record(.done, summarize(last, limit: 200) ?? "Turn complete")

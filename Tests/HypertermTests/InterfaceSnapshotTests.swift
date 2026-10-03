@@ -53,7 +53,7 @@ final class InterfaceSnapshotTests: XCTestCase {
 
     private var inertActions: SessionActions {
         SessionActions(newSession: {}, rename: { _ in }, releaseLabel: { _ in }, restart: { _ in },
-                       close: { _ in }, review: { _ in }, dispatch: { _, _, _ in })
+                       close: { _ in }, review: { _ in }, dispatch: { _, _, _, _ in })
     }
 
     private func fixtures() -> [TerminalSession] {

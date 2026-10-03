@@ -24,6 +24,8 @@ final class SessionStore: ObservableObject {
     /// The user's arrangement of tiles (by dragging); sessions not in it follow in creation order.
     private var tileOrder: [UUID] = (UserDefaults.standard.stringArray(forKey: "tileOrder") ?? []).compactMap(UUID.init)
     @Published var inspectorTab: InspectorTab = .changes
+    /// A turn the Changes tab should open on (set from the Activity tab's turn list).
+    @Published var reviewTurn: Int?
 
     /// "2 agents waiting · 3 working" under the window title.
     var windowSubtitle: String {
@@ -38,6 +40,10 @@ final class SessionStore: ObservableObject {
 
     /// Shown once by the window, then cleared.
     @Published var lastError: String?
+    /// Agents closed recently, newest first, so a closed conversation is one click from coming back.
+    @Published var recentlyClosed: [LaunchSpec] = SessionStore.loadRecentlyClosed()
+    /// Serializes checkpoint captures: Git must see one snapshot at a time per repository.
+    let checkpointQueue = DispatchQueue(label: "dev.hyperterm.checkpoints", qos: .utility)
     private var layoutBeforeZoom: LayoutMode?
 
     /// Account-wide usage windows, from the most recent statusLine report of any Claude session.
@@ -315,7 +321,7 @@ final class SessionStore: ObservableObject {
         onSurfaceChange?(session)
         if select { self.select(session) }
         persist()
-        if !resume { startDevServerIfConfigured(for: session, config: prepared.config) }
+        if !resume { startDevServerIfConfigured(for: session, config: prepared.config) } else { loadTurns(session) }
         return session
     }
 
@@ -341,15 +347,9 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    /// "fix the flaky auth tests please" → "fix-flaky-auth".
-    private func labelFromTask(_ task: String) -> String {
-        let stop: Set<String> = ["the", "a", "an", "to", "and", "of", "in", "on", "for", "please", "can", "you", "with", "is", "it", "that", "this", "my"]
-        let words = task.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { !stop.contains($0) }
-        return normalizeLabel(words.prefix(3).joined(separator: "-"))
-    }
-
     func close(_ session: TerminalSession) {
         dropApproval(for: session)
+        rememberClosed(session)
         if session.spec.labelSource == .user || session.spec.labelSource == nil {
             reservedLabels[session.label] = Date()
         }

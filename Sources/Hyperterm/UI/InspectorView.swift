@@ -1,11 +1,12 @@
 import SwiftUI
 
 enum InspectorTab: String, CaseIterable, Identifiable {
-    case changes = "Changes", activity = "Activity", info = "Info"
+    case changes = "Changes", activity = "Activity", info = "Info", plan = "Plan"
     var id: String { rawValue }
 }
 
-/// Right-hand inspector for the selected terminal.
+/// Right-hand inspector for the selected session: review its changes, follow and steer its
+/// turns, and see what it's running on.
 struct InspectorView: View {
     @ObservedObject var store: SessionStore
     let actions: SessionActions
@@ -16,12 +17,13 @@ struct InspectorView: View {
                 InspectorContent(session: session, store: store, actions: actions)
                     .id(session.id)
             } else {
-                InspectorEmptyState(symbol: "sidebar.right", title: "Your workspace, in detail", detail: "Select a session to review changes, follow its activity, and see what’s running.")
+                EmptyMessage(symbol: "sidebar.right", title: "Nothing selected",
+                             detail: "Select an agent to review its changes, follow its turns, and see what it's running on.")
             }
         }
         .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .foregroundStyle(Color(nsColor: Ink.text))
-        .background(Color(nsColor: Ink.deep))
+        .foregroundStyle(Tone.text)
+        .background(Tone.deep)
         .tint(Palette.accent)
     }
 }
@@ -31,95 +33,91 @@ private struct InspectorContent: View {
     @ObservedObject var store: SessionStore
     let actions: SessionActions
 
+    private var tabs: [InspectorTab] {
+        guard session.kind != .browser else { return [.info] }
+        return session.pendingPlan != nil ? [.plan, .changes, .activity, .info] : [.changes, .activity, .info]
+    }
+
+    private var tab: InspectorTab { tabs.contains(store.inspectorTab) ? store.inspectorTab : tabs[0] }
+
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("INSPECTOR")
-                    .font(.system(size: 9, weight: .semibold))
-                    .tracking(1.3)
-                    .foregroundStyle(Color(nsColor: Ink.faint))
-                HStack(spacing: 10) {
-                    AgentAvatar(kind: session.kind, state: session.state)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("@" + session.label)
-                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                            .lineLimit(1)
-                        Text(session.kind == .browser ? (session.spec.url ?? "New browser tab") : shortPath(session.spec.workPath))
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Color(nsColor: Ink.muted))
-                            .lineLimit(1).truncationMode(.head)
-                    }
-                    Spacer(minLength: 0)
+            header
+            if tabs.count > 1 {
+                Picker("Inspector", selection: Binding(get: { tab }, set: { store.inspectorTab = $0 })) {
+                    ForEach(tabs) { Text($0.rawValue).tag($0) }
                 }
-                HStack(spacing: 6) {
-                    Circle().fill(Palette.status(session.state)).frame(width: 5, height: 5)
-                    Text(session.statusWord)
-                        .foregroundStyle(session.state.needsAttention ? Palette.attention : Color(nsColor: Ink.muted))
-                    Spacer()
-                    Text(session.kind.displayName).foregroundStyle(Color(nsColor: Ink.faint))
-                }
-                .font(.system(size: 10.5, weight: .medium))
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, Space.m)
+                .padding(.bottom, Space.m)
             }
-            .padding(16)
-            if session.kind != .browser {
-                HStack(spacing: 4) {
-                    ForEach(InspectorTab.allCases) { tab in
-                        Button { store.inspectorTab = tab } label: {
-                            Text(tab.rawValue)
-                                .font(.system(size: 11.5, weight: store.inspectorTab == tab ? .semibold : .medium))
-                                .foregroundStyle(store.inspectorTab == tab ? Color(nsColor: Ink.text) : Color(nsColor: Ink.muted))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 30)
-                                .background(store.inspectorTab == tab ? Color(nsColor: Ink.raised) : .clear, in: RoundedRectangle(cornerRadius: 6))
-                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(store.inspectorTab == tab ? Color(nsColor: Ink.hairline) : .clear, lineWidth: 1))
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(store.inspectorTab == tab ? .isSelected : [])
-                    }
-                }
-                .padding(4)
-                .background(Color(nsColor: Ink.floor), in: RoundedRectangle(cornerRadius: 9))
-                .padding(.horizontal, 14)
-                .padding(.bottom, 14)
-            }
-            inspectorRule
-            switch session.kind == .browser ? .info : store.inspectorTab {
+            Hairline()
+            switch tab {
+            case .plan: PlanView(session: session, store: store)
             case .changes: ChangesView(session: session, store: store)
-            case .activity: ActivityView(session: session)
+            case .activity: ActivityView(session: session, store: store)
             case .info: InfoView(session: session, store: store, actions: actions)
             }
         }
+        .onAppear { store.loadTurns(session) }
+    }
+
+    private var header: some View {
+        HStack(spacing: Space.s) {
+            AgentAvatar(kind: session.kind)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(session.label).font(Typeface.headline).lineLimit(1)
+                Text(session.kind == .browser ? (session.spec.url ?? "New tab") : shortPath(session.spec.workPath))
+                    .font(Typeface.caption)
+                    .foregroundStyle(Tone.faint)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+            Spacer(minLength: Space.xs)
+            if session.kind != .browser { StateLabel(session: session) }
+        }
+        .padding(.horizontal, Space.m)
+        .padding(.top, Space.m)
+        .padding(.bottom, Space.m)
     }
 }
 
-private var inspectorRule: some View {
-    Rectangle().fill(Color(nsColor: Ink.hairline)).frame(height: 1)
-}
+// MARK: - Plan
 
-private struct InspectorEmptyState: View {
-    let symbol: String
-    let title: String
-    let detail: String
+private struct PlanView: View {
+    @ObservedObject var session: TerminalSession
+    let store: SessionStore
 
     var body: some View {
-        VStack(spacing: 13) {
-            Image(systemName: symbol)
-                .font(.system(size: 23, weight: .light))
-                .foregroundStyle(Palette.accent.opacity(0.8))
-                .frame(width: 56, height: 56)
-                .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 15))
-                .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(Color(nsColor: Ink.hairline), lineWidth: 1))
-            Text(title).font(.system(size: 13, weight: .semibold))
-            Text(detail)
-                .font(.system(size: 11.5))
-                .foregroundStyle(Color(nsColor: Ink.muted))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: 0) {
+            ScrollView {
+                Text(planText)
+                    .font(Typeface.body)
+                    .lineSpacing(Space.xxs)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Space.l)
+            }
+            Hairline()
+            HStack(spacing: Space.s) {
+                Button("Keep Planning") {
+                    _ = store.answer(session, .deny, reason: "Keep planning; the user wants to refine the plan before you start.")
+                }
+                .buttonStyle(PanelButtonStyle())
+                Spacer()
+                Button("Approve Plan") { _ = store.answer(session, .approve) }
+                    .buttonStyle(PanelButtonStyle(prominent: true, tint: Palette.attention))
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(Space.m)
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 38)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var planText: AttributedString {
+        let plan = session.pendingPlan ?? ""
+        return (try? AttributedString(markdown: plan, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(plan)
     }
 }
 
@@ -133,9 +131,26 @@ struct ReviewComment: Identifiable, Equatable {
     var text: String
 }
 
+/// Which changes the panel shows.
+private enum ChangeScope: Hashable {
+    case all, uncommitted, turn(Int)
+
+    func title(turns: [Checkpoints.Turn]) -> String {
+        switch self {
+        case .all: return "All Changes"
+        case .uncommitted: return "Uncommitted"
+        case .turn(let index):
+            return index == turns.last?.index ? "Last Turn" : "Turn \(index)"
+        }
+    }
+}
+
 private struct ChangesView: View {
     @ObservedObject var session: TerminalSession
     let store: SessionStore
+    @AppStorage("diffSideBySide") private var sideBySide = false
+    @AppStorage("diffIgnoreWhitespace") private var ignoreWhitespace = false
+    @State private var scope: ChangeScope = .all
     @State private var files: [Review.FileDiff] = []
     /// Parsed once per load, off the main thread: the body re-runs on every session change.
     @State private var parsed: [String: [PatchLine]] = [:]
@@ -146,180 +161,255 @@ private struct ChangesView: View {
     @State private var draftText = ""
     @State private var result: String?
     @State private var working = false
-    @State private var totals = DiffStat(added: 0, removed: 0, files: 0)
     @State private var loadRequest = UUID()
+    @State private var committing = false
+    @State private var confirmRevert: Checkpoints.Turn?
 
     private var path: String { session.spec.workPath }
     private var isWorktree: Bool { session.spec.worktreeBranch != nil || session.git?.isWorktree == true }
+    private var totals: DiffStat {
+        DiffStat(added: files.reduce(0) { $0 + $1.added }, removed: files.reduce(0) { $0 + $1.removed }, files: files.count)
+    }
+
+    private var selectedTurn: Checkpoints.Turn? {
+        if case .turn(let index) = scope { return session.turns.first { $0.index == index } }
+        return nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            summary
-            inspectorRule
+            toolbar
+            Hairline()
             if files.isEmpty {
-                InspectorEmptyState(symbol: loading ? "hourglass" : "checkmark.circle", title: loading ? "Loading changes…" : "A clean working tree", detail: loading ? "Reading this session’s latest changes." : "File changes from @\(session.label) appear here. Review a diff and leave comments for the agent.")
+                EmptyMessage(symbol: loading ? "hourglass" : "checkmark.circle",
+                             title: loading ? "Reading changes…" : emptyTitle,
+                             detail: loading ? "" : "Changes \(session.label) makes appear here. Double-click a line to leave a comment for it.")
             } else {
                 fileList
-                inspectorRule
+                Hairline()
                 patchView
             }
-            if !files.isEmpty || !comments.isEmpty {
-                inspectorRule
-                footer
+            Hairline()
+            footer
+        }
+        .task(id: LoadKey(stat: session.diffStat, scope: scope, whitespace: ignoreWhitespace, turns: session.turns.count)) { await load() }
+        .onAppear { session.readyForReview = false }
+        .onReceive(store.$reviewTurn) { turn in
+            guard let turn else { return }
+            scope = .turn(turn)
+            store.reviewTurn = nil
+        }
+        .sheet(isPresented: $committing) {
+            CommitSheet(session: session, scope: scope == .uncommitted ? .uncommitted : .branch) { message in
+                committing = false
+                guard let message else { return }
+                let directory = path
+                run { Review.commit(at: directory, message: message).map { "Committed \($0)" } }
             }
         }
-        .task(id: session.diffStat) { await load() }
-        .onAppear { session.readyForReview = false }
+        .alert(item: $confirmRevert) { turn in
+            Alert(title: Text("Revert files to before turn \(turn.index)?"),
+                  message: Text("Files \(session.label) changed since then go back to how they were. The conversation isn't changed, and you can undo this."),
+                  primaryButton: .destructive(Text("Revert Files")) { revert(to: turn.start, label: "before turn \(turn.index)") },
+                  secondaryButton: .cancel())
+        }
     }
 
-    private var summary: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                if !files.isEmpty {
-                    Text("\(files.count) changed file\(files.count == 1 ? "" : "s")")
-                        .font(.system(size: 12, weight: .semibold))
-                    Spacer(minLength: 4)
-                    Text("+\(totals.added)").foregroundStyle(Palette.running)
-                    Text("−\(totals.removed)").foregroundStyle(Palette.failed)
-                } else {
-                    Text(loading ? "Reading changes" : "Working tree clean")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color(nsColor: Ink.muted))
-                    Spacer()
-                }
-                Button { Task { await load() } } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .medium))
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(Color(nsColor: Ink.muted))
-                    .disabled(loading)
-                    .help("Refresh changes")
-                    .accessibilityLabel("Refresh changes")
-            }
-            .font(.system(size: 10.5, weight: .medium).monospacedDigit())
-            VStack(alignment: .leading, spacing: 6) {
-                if let branch = session.git?.branch {
-                    Label(session.spec.baseBranch.map { "\(branch) → \($0)" } ?? branch, systemImage: "arrow.triangle.branch")
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(branch)
-                }
-                if let evidence = session.testEvidence {
-                    Label(evidence.summary, systemImage: evidence.passed ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundStyle(evidence.passed ? Palette.running : Palette.failed)
-                        .lineLimit(1)
-                }
-            }
-            .font(.system(size: 10.5))
-            .foregroundStyle(Color(nsColor: Ink.muted))
+    private var emptyTitle: String {
+        switch scope {
+        case .all: return "No changes"
+        case .uncommitted: return "Nothing uncommitted"
+        case .turn: return "This turn changed no files"
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
     }
+
+    private struct LoadKey: Equatable {
+        let stat: DiffStat?
+        let scope: ChangeScope
+        let whitespace: Bool
+        let turns: Int
+    }
+
+    // MARK: Toolbar
+
+    private var toolbar: some View {
+        HStack(spacing: Space.s) {
+            Menu {
+                Picker("Changes", selection: $scope) {
+                    Text("All Changes").tag(ChangeScope.all)
+                    Text("Uncommitted").tag(ChangeScope.uncommitted)
+                }
+                .pickerStyle(.inline)
+                if !session.turns.isEmpty {
+                    Picker("Turns", selection: $scope) {
+                        ForEach(session.turns.reversed()) { turn in
+                            Text("\(turn.index). \(turn.prompt)").tag(ChangeScope.turn(turn.index))
+                        }
+                    }
+                    .pickerStyle(.inline)
+                }
+            } label: {
+                Text(scope.title(turns: session.turns)).font(Typeface.callout.weight(.medium))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Which changes to show")
+            if !files.isEmpty {
+                Text("\(files.count) file\(files.count == 1 ? "" : "s")").font(Typeface.caption).foregroundStyle(Tone.faint)
+                DiffCount(added: totals.added, removed: totals.removed)
+            }
+            Spacer(minLength: Space.xs)
+            if loading { ProgressView().controlSize(.mini) }
+            Menu {
+                Toggle("Side by Side", isOn: $sideBySide)
+                Toggle("Hide Whitespace Changes", isOn: $ignoreWhitespace)
+                Divider()
+                Button("Refresh") { Task { await load() } }
+            } label: {
+                Image(systemName: "slider.horizontal.3").font(Typeface.caption.weight(.semibold)).foregroundStyle(Tone.muted)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("View options")
+        }
+        .padding(.horizontal, Space.m)
+        .frame(height: Size.barHeight + Space.xs)
+    }
+
+    // MARK: Files
 
     private var fileList: some View {
         ScrollView {
-            LazyVStack(spacing: 3) {
+            LazyVStack(spacing: 0) {
                 ForEach(files) { file in
                     Button { selected = file.path; draftLine = nil } label: {
-                        HStack(spacing: 7) {
-                            Image(systemName: "doc.text")
-                                .foregroundStyle(selected == file.path ? Palette.accent : Color(nsColor: Ink.faint))
-                            Text(file.path).lineLimit(1).truncationMode(.head)
-                                .foregroundStyle(Color(nsColor: selected == file.path ? Ink.text : Ink.muted))
-                            Spacer(minLength: 4)
-                            Text("+\(file.added)").foregroundStyle(Palette.running)
-                            Text("−\(file.removed)").foregroundStyle(Palette.failed)
+                        HStack(spacing: Space.s) {
+                            Text(fileName(file.path))
+                                .font(Typeface.callout)
+                                .foregroundStyle(selected == file.path ? Tone.text : Tone.muted)
+                            Text(fileFolder(file.path))
+                                .font(Typeface.caption)
+                                .foregroundStyle(Tone.faint)
+                                .truncationMode(.head)
+                            Spacer(minLength: Space.xs)
+                            DiffCount(added: file.added, removed: file.removed)
                         }
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .padding(.horizontal, 9)
-                        .frame(height: 31)
-                        .background(selected == file.path ? Color(nsColor: Ink.raised) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                        .lineLimit(1)
+                        .padding(.horizontal, Space.s)
+                        .frame(height: 26)
+                        .background(selected == file.path ? Tone.raised : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help(file.path)
+                    .contextMenu {
+                        Button("Open in \(Editors.preferred?.name ?? "Editor")") {
+                            Editors.open((path as NSString).appendingPathComponent(file.path))
+                        }
+                        Button("Copy Path") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(file.path, forType: .string)
+                        }
+                    }
                     .accessibilityAddTraits(selected == file.path ? .isSelected : [])
                 }
             }
-            .padding(8)
+            .padding(Space.xs)
         }
-        .frame(height: min(CGFloat(files.count) * 34 + 13, 183))
+        .frame(height: min(CGFloat(files.count) * 26 + Space.s, 160))
     }
+
+    private func fileName(_ path: String) -> String { (path as NSString).lastPathComponent }
+    private func fileFolder(_ path: String) -> String {
+        let folder = (path as NSString).deletingLastPathComponent
+        return folder.isEmpty ? "" : folder
+    }
+
+    // MARK: Patch
 
     private var patchView: some View {
         let file = files.first { $0.path == selected } ?? files.first
         // Index once per render; avoid scanning every review comment for every code line.
         let fileComments = Dictionary(grouping: comments.filter { $0.path == file?.path }, by: \.line)
-        return VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "text.bubble")
-                Text("Double-click a line to comment")
-                Spacer(minLength: 0)
-            }
-            .font(.system(size: 9.5))
-            .foregroundStyle(Color(nsColor: Ink.faint))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            ScrollView(.vertical) {
-                if let file {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(parsed[file.path] ?? []) { line in
-                            patchRow(line, file: file, lineComments: line.newNumber.flatMap { fileComments[$0] } ?? [])
+        let lines = file.flatMap { parsed[$0.path] } ?? []
+        return ScrollView([.vertical]) {
+            if let file {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if sideBySide {
+                        ForEach(SplitRow.rows(from: lines)) { row in
+                            splitRow(row, file: file, lineComments: row.right?.newNumber.flatMap { fileComments[$0] } ?? [])
+                        }
+                    } else {
+                        ForEach(lines) { line in
+                            unifiedRow(line, file: file, lineComments: line.newNumber.flatMap { fileComments[$0] } ?? [])
                         }
                     }
-                    .padding(.vertical, 5)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
+                .padding(.vertical, Space.xs)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .background(Color(nsColor: Theme.terminalBackground))
+        }
+        .background(Color(nsColor: Theme.terminalBackground))
+    }
+
+    @ViewBuilder private func unifiedRow(_ line: PatchLine, file: Review.FileDiff, lineComments: [ReviewComment]) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+            Text(line.kind == .removed ? (line.oldNumber.map(String.init) ?? "") : (line.newNumber.map(String.init) ?? ""))
+                .frame(width: 34, alignment: .trailing)
+                .foregroundStyle(Color(nsColor: Theme.terminalForeground).opacity(0.3))
+            codeText(line)
+        }
+        .modifier(PatchLineChrome(line: line))
+        .modifier(Commentable(line: line, start: { startComment(line) }))
+        comments(lineComments)
+        draft(for: line, file: file)
+    }
+
+    @ViewBuilder private func splitRow(_ row: SplitRow, file: Review.FileDiff, lineComments: [ReviewComment]) -> some View {
+        if let header = row.header {
+            codeText(header).modifier(PatchLineChrome(line: header))
+        } else {
+            HStack(alignment: .top, spacing: 0) {
+                half(row.left, number: row.left?.oldNumber)
+                Rectangle().fill(Tone.hairline).frame(width: Size.hairline)
+                half(row.right, number: row.right?.newNumber)
+                    .modifier(Commentable(line: row.right, start: { if let right = row.right { startComment(right) } }))
+            }
+            comments(lineComments)
+            if let right = row.right { draft(for: right, file: file) }
         }
     }
 
-    @ViewBuilder private func patchRow(_ line: PatchLine, file: Review.FileDiff, lineComments: [ReviewComment]) -> some View {
-        let commentable = line.newNumber != nil && line.kind != .header
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(line.newNumber.map(String.init) ?? "")
-                .frame(width: 34, alignment: .trailing)
-                .foregroundStyle(Color(nsColor: Theme.terminalForeground).opacity(0.35))
-            Text(line.text.isEmpty ? " " : line.text)
-                .foregroundStyle(line.kind == .header ? Color.secondary : Color(nsColor: Theme.terminalForeground))
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Spacer(minLength: 0)
+    private func half(_ line: PatchLine?, number: Int?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+            Text(number.map(String.init) ?? "")
+                .frame(width: 30, alignment: .trailing)
+                .foregroundStyle(Color(nsColor: Theme.terminalForeground).opacity(0.3))
+            if let line { codeText(line) } else { Spacer(minLength: 0) }
         }
-        .font(.system(size: 11.5, design: .monospaced))
-        .padding(.vertical, 1)
-        .padding(.trailing, 8)
-        .background(alignment: .leading) {
-            if let tint = line.kind.tint {
-                // A soft wash plus an edge bar reads as "changed" without a slab of color.
-                ZStack(alignment: .leading) {
-                    tint.opacity(0.08)
-                    tint.opacity(0.85).frame(width: 2)
-                }
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-            guard commentable, let number = line.newNumber else { return }
-            draftLine = number
-            draftText = ""
-        }
-        .help(commentable ? "Double-click to comment on this line" : "")
-        .contextMenu {
-            if commentable {
-                Button("Add review comment") { draftLine = line.newNumber; draftText = "" }
-            }
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(PatchLineChrome(line: line))
+    }
+
+    private func codeText(_ line: PatchLine) -> some View {
+        Text(line.text.isEmpty ? " " : line.text)
+            .font(Typeface.codeSmall)
+            .foregroundStyle(line.kind == .header ? Tone.faint : Color(nsColor: Theme.terminalForeground))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
+    }
+
+    @ViewBuilder private func comments(_ lineComments: [ReviewComment]) -> some View {
         ForEach(lineComments) { comment in
             CommentBubble(text: comment.text) { comments.removeAll { $0.id == comment.id } }
         }
-        if draftLine == line.newNumber, commentable {
-            HStack {
-                TextField("Comment for the agent", text: $draftText)
+    }
+
+    @ViewBuilder private func draft(for line: PatchLine, file: Review.FileDiff) -> some View {
+        if let number = line.newNumber, draftLine == number, line.kind != .header {
+            HStack(spacing: Space.xs) {
+                TextField("Comment for \(session.label)", text: $draftText)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { addComment(file: file, line: line) }
                 Button("Add") { addComment(file: file, line: line) }
@@ -327,35 +417,51 @@ private struct ChangesView: View {
                 Button("Cancel") { draftLine = nil }
             }
             .controlSize(.small)
-            .padding(6)
+            .padding(Space.s)
         }
     }
 
+    private func startComment(_ line: PatchLine) {
+        guard line.kind != .header, let number = line.newNumber else { return }
+        draftLine = number
+        draftText = ""
+    }
+
+    // MARK: Footer
+
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Space.s) {
             if !comments.isEmpty {
-                Button {
-                    sendComments()
-                } label: {
-                    Label("Send \(comments.count) comment\(comments.count == 1 ? "" : "s") to @\(session.label)", systemImage: "paperplane.fill")
+                Button { sendComments() } label: {
+                    Label("Send \(comments.count) Comment\(comments.count == 1 ? "" : "s") to \(session.label)", systemImage: "paperplane.fill")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(PanelButtonStyle(prominent: true))
             }
-            HStack {
-                Button { commit() } label: { Label("Commit…", systemImage: "checkmark") }
-                    .buttonStyle(.bordered)
+            HStack(spacing: Space.s) {
+                if let turn = selectedTurn {
+                    Button("Revert Files…") { confirmRevert = turn }
+                        .buttonStyle(PanelButtonStyle())
+                        .help("Put the files back to how they were before this turn")
+                } else {
+                    Button("Commit…") { committing = true }
+                        .buttonStyle(PanelButtonStyle())
+                        .disabled(files.isEmpty)
+                }
                 Menu("More") {
-                    Button("Open Pull Request") {
-                        let directory = path, base = session.spec.baseBranch, title = commitTitle
-                        run { Review.openPullRequest(at: directory, base: base, title: title).map { "Opened \($0)" } }
-                    }
+                    Button("Push") { let directory = path; run { Review.push(at: directory) } }
+                    Button("Open Pull Request…") { openPullRequest() }
                     if let base = session.spec.baseBranch, let branch = session.git?.branch, isWorktree {
                         Button("Merge into \(base)") {
                             let root = session.git.map(GitInfo.mainRoot) ?? path
                             run { Review.merge(branch: branch, into: base, mainRoot: root) }
                         }
                     }
+                    Divider()
+                    if let undo = undoPoint {
+                        Button("Undo Last Revert") { revert(to: undo, label: "how they were before the last revert") }
+                    }
+                    Button("Open in \(Editors.preferred?.name ?? "Editor")") { Editors.open(path) }
                     if isWorktree {
                         Divider()
                         Button("Archive Worktree…") { archive() }
@@ -366,39 +472,54 @@ private struct ChangesView: View {
                 Spacer()
                 if working { ProgressView().controlSize(.small) }
             }
-            .disabled(working || files.isEmpty && session.diffStat?.isEmpty != false)
+            .disabled(working)
             if let result {
                 Text(result)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color(nsColor: Ink.muted))
+                    .font(Typeface.caption)
+                    .foregroundStyle(Tone.muted)
                     .textSelection(.enabled)
+                    .lineLimit(3)
             }
         }
-        .font(.system(size: 11.5))
-        .controlSize(.small)
-        .padding(12)
-        .background(Color(nsColor: Ink.surface))
+        .font(Typeface.callout)
+        .padding(Space.m)
+        .task(id: session.turns.count) { await refreshUndoPoint() }
     }
 
-    private var commitTitle: String {
-        let base = session.agentStatus ?? session.summary ?? "Changes from @\(session.label)"
-        return String(base.trimmingCharacters(in: CharacterSet(charactersIn: "› ")).prefix(72))
+    @State private var undoPoint: String?
+
+    private func refreshUndoPoint() async {
+        let path = self.path, id = session.id.uuidString
+        undoPoint = await Task.detached { Checkpoints.undoPoint(at: path, session: id) }.value
     }
+
+    // MARK: Actions
 
     private func load() async {
         let request = UUID()
         loadRequest = request
         loading = true
-        let path = self.path, base = session.spec.baseBranch
+        let path = self.path, base = session.spec.baseBranch, whitespace = ignoreWhitespace
+        let reviewScope: Review.Scope
+        switch scope {
+        case .all: reviewScope = .branch
+        case .uncommitted: reviewScope = .uncommitted
+        case .turn(let index):
+            guard let turn = session.turns.first(where: { $0.index == index }) else {
+                loading = false
+                scope = .all
+                return
+            }
+            reviewScope = .turn(from: turn.start, to: turn.end)
+        }
         let (loaded, lines) = await Task.detached {
-            let diffs = Review.fileDiffs(at: path, base: base)
+            let diffs = Review.fileDiffs(at: path, base: base, scope: reviewScope, ignoreWhitespace: whitespace)
             return (diffs, Dictionary(diffs.map { ($0.path, PatchLine.parse($0.patch)) }, uniquingKeysWith: { first, _ in first }))
         }.value
         // A refresh triggered while Git was reading may finish first. Keep the latest load.
         guard loadRequest == request else { return }
         files = loaded
         parsed = lines
-        totals = DiffStat(added: loaded.reduce(0) { $0 + $1.added }, removed: loaded.reduce(0) { $0 + $1.removed }, files: loaded.count)
         if selected == nil || !loaded.contains(where: { $0.path == selected }) { selected = loaded.first?.path }
         loading = false
     }
@@ -413,35 +534,64 @@ private struct ChangesView: View {
     private func sendComments() {
         let body = comments.map { "\($0.path):\($0.line) — \($0.text) (on: \($0.code.trimmingCharacters(in: .whitespaces).prefix(80)))" }
         let message = "Review comments on your changes:\n" + body.map { "- " + $0 }.joined(separator: "\n") + "\nPlease address them."
-        result = session.deliver(message, from: nil)
+        result = session.send(message, now: false) == "queued" ? "Queued for when \(session.label) finishes this turn" : "Sent to \(session.label)"
         session.record(.message, "Sent \(comments.count) review comments")
         comments = []
     }
 
-    private func commit() {
-        let alert = NSAlert()
-        alert.messageText = "Commit changes from @\(session.label)"
-        alert.informativeText = "Commits everything in \(shortPath(path))."
-        let field = NSTextField(string: commitTitle)
-        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Commit")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let message = field.stringValue, directory = path
-        run { Review.commit(at: directory, message: message).map { "Committed \($0)" } }
+    private func revert(to commit: String, label: String) {
+        working = true
+        store.restoreCheckpoint(session, to: commit, label: label) { outcome in
+            working = false
+            switch outcome {
+            case .success: result = "Files restored to \(label). Undo it from More."
+            case .failure(let error): result = "⚠︎ " + error.description
+            }
+            Task {
+                await load()
+                await refreshUndoPoint()
+            }
+        }
+    }
+
+    private func openPullRequest() {
+        let directory = path, base = session.spec.baseBranch, context = session.agentStatus ?? session.summary
+        working = true
+        result = "Writing the pull request…"
+        Task {
+            let request = await Task.detached { () -> CommitWriter.PullRequest? in
+                CommitWriter.pullRequest(diff: Review.patchText(at: directory, base: base, scope: .branch), context: context, at: directory)
+            }.value
+            working = false
+            let title = request?.title ?? String((context ?? "Changes from \(session.label)").prefix(72))
+            let alert = NSAlert()
+            alert.messageText = "Open a pull request"
+            alert.informativeText = "Pushes the branch and opens the pull request with gh."
+            let field = NSTextField(string: title)
+            field.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
+            alert.accessoryView = field
+            alert.addButton(withTitle: "Open Pull Request")
+            alert.addButton(withTitle: "Cancel")
+            alert.window.initialFirstResponder = field
+            guard alert.runModal() == .alertFirstButtonReturn else { result = nil; return }
+            let finalTitle = field.stringValue, body = request?.body ?? "Opened from Kuronami."
+            run { Review.openPullRequest(at: directory, base: base, title: finalTitle, body: body).map { "Opened \($0)" } }
+        }
     }
 
     private func archive() {
         let alert = NSAlert()
-        alert.messageText = "Archive @\(session.label)'s worktree?"
+        alert.messageText = "Archive \(session.label)'s worktree?"
         alert.informativeText = "Uncommitted work is saved as a commit on its branch, then the folder is removed. The branch stays, so nothing is lost."
         alert.addButton(withTitle: "Archive")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let directory = path, root = session.git.map(GitInfo.mainRoot) ?? path
-        run { Review.archive(worktree: directory, mainRoot: root) }
+        let directory = path, root = session.git.map(GitInfo.mainRoot) ?? path, id = session.id.uuidString
+        run {
+            let outcome = Review.archive(worktree: directory, mainRoot: root)
+            if case .success = outcome { Checkpoints.prune(at: root, session: id) }
+            return outcome
+        }
     }
 
     private func run(_ operation: @escaping @Sendable () -> Result<String, ReviewError>) {
@@ -463,31 +613,130 @@ private struct ChangesView: View {
     }
 }
 
+/// Tint for a changed line: a soft wash plus an edge bar.
+private struct PatchLineChrome: ViewModifier {
+    let line: PatchLine?
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.vertical, 1)
+            .padding(.trailing, Space.s)
+            .background(alignment: .leading) {
+                if let tint = line?.kind.tint {
+                    ZStack(alignment: .leading) {
+                        tint.opacity(0.09)
+                        tint.opacity(0.8).frame(width: 2)
+                    }
+                }
+            }
+    }
+}
+
+/// Double-click (or the context menu) starts a review comment on a line of the new file.
+private struct Commentable: ViewModifier {
+    let line: PatchLine?
+    let start: () -> Void
+
+    private var commentable: Bool { line?.newNumber != nil && line?.kind != .header }
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { if commentable { start() } }
+            .contextMenu {
+                if commentable { Button("Add Review Comment", action: start) }
+            }
+    }
+}
+
+/// Writes the message (with the agent's help), then commits.
+private struct CommitSheet: View {
+    let session: TerminalSession
+    let scope: Review.Scope
+    let finish: (String?) -> Void
+    @State private var message = ""
+    @State private var writing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.m) {
+            Text("Commit Changes").font(Typeface.title)
+            Text("Commits everything in \(shortPath(session.spec.workPath)).")
+                .font(Typeface.callout)
+                .foregroundStyle(Tone.muted)
+            TextEditor(text: $message)
+                .font(Typeface.code)
+                .scrollContentBackground(.hidden)
+                .padding(Space.s)
+                .frame(minHeight: 120)
+                .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+                .overlay(alignment: .topLeading) {
+                    if message.isEmpty && !writing {
+                        Text("Message").font(Typeface.code).foregroundStyle(Tone.faint).padding(Space.s + Space.xs)
+                            .allowsHitTesting(false)
+                    }
+                }
+            HStack(spacing: Space.s) {
+                Button {
+                    write()
+                } label: {
+                    if writing { ProgressView().controlSize(.small) } else { Label("Write It for Me", systemImage: "sparkles") }
+                }
+                .buttonStyle(PanelButtonStyle())
+                .disabled(writing)
+                .help("Draft the message from the diff with your Claude Code (or Codex) CLI")
+                Spacer()
+                Button("Cancel") { finish(nil) }
+                    .buttonStyle(PanelButtonStyle())
+                    .keyboardShortcut(.cancelAction)
+                Button("Commit") { finish(message.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    .buttonStyle(PanelButtonStyle(prominent: true))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(Space.l)
+        .frame(width: 480)
+        .background(Tone.deep)
+        .onAppear {
+            if message.isEmpty { write() }
+        }
+    }
+
+    private func write() {
+        writing = true
+        let path = session.spec.workPath, base = session.spec.baseBranch, scope = self.scope
+        let context = session.agentStatus ?? session.summary
+        Task {
+            let text = await Task.detached {
+                CommitWriter.commitMessage(diff: Review.patchText(at: path, base: base, scope: scope), context: context, at: path)
+            }.value
+            writing = false
+            if let text { message = text } else if message.isEmpty {
+                message = String((context ?? "Changes from \(session.label)").trimmingCharacters(in: CharacterSet(charactersIn: "› ")).prefix(72))
+            }
+        }
+    }
+}
+
 private struct CommentBubble: View {
     let text: String
     let onDelete: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: Space.s) {
             Image(systemName: "text.bubble.fill").foregroundStyle(Palette.accent)
-            Text(text).font(.system(size: 11.5)).frame(maxWidth: .infinity, alignment: .leading)
-            Button(action: onDelete) {
-                Image(systemName: "xmark").font(.system(size: 10)).frame(width: 20, height: 20)
-            }
-            .buttonStyle(.borderless)
-            .help("Remove review comment")
-            .accessibilityLabel("Remove review comment")
+            Text(text).font(Typeface.callout).frame(maxWidth: .infinity, alignment: .leading)
+            IconButton(symbol: "xmark", help: "Remove comment", action: onDelete)
         }
-        .padding(10)
-        .background(Palette.accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 7))
-        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Palette.accent.opacity(0.22), lineWidth: 1))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(Space.s)
+        .background(Palette.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+        .padding(.horizontal, Space.s)
+        .padding(.vertical, Space.xs)
     }
 }
 
-/// One rendered line of a unified diff, with its line number in the new file.
-struct PatchLine: Identifiable {
+/// One rendered line of a unified diff, with its line numbers in the old and new file.
+struct PatchLine: Identifiable, Equatable {
     enum Kind {
         case header, added, removed, context
 
@@ -503,34 +752,81 @@ struct PatchLine: Identifiable {
     let kind: Kind
     let text: String
     let newNumber: Int?
+    var oldNumber: Int? = nil
 
     static func parse(_ patch: String) -> [PatchLine] {
         var result: [PatchLine] = []
-        var newLine = 0
+        var newLine = 0, oldLine = 0
         for (index, raw) in patch.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let line = String(raw)
             // The patch's trailing newline is not a line of the file.
             if line.isEmpty { continue }
             if line.hasPrefix("@@") {
                 // @@ -a,b +c,d @@
-                if let plus = line.split(separator: " ").first(where: { $0.hasPrefix("+") }),
+                let fields = line.split(separator: " ")
+                if let plus = fields.first(where: { $0.hasPrefix("+") }),
                    let start = Int(plus.dropFirst().split(separator: ",").first ?? "") {
                     newLine = start
                 }
+                if let minus = fields.first(where: { $0.hasPrefix("-") }),
+                   let start = Int(minus.dropFirst().split(separator: ",").first ?? "") {
+                    oldLine = start
+                }
                 result.append(PatchLine(id: index, kind: .header, text: line, newNumber: nil))
-            } else if line.hasPrefix("diff ") || line.hasPrefix("index ") || line.hasPrefix("---") || line.hasPrefix("+++") || line.hasPrefix("new file") {
+            } else if line.hasPrefix("diff ") || line.hasPrefix("index ") || line.hasPrefix("---") || line.hasPrefix("+++")
+                        || line.hasPrefix("new file") || line.hasPrefix("deleted file") || line.hasPrefix("\\") {
                 continue
             } else if line.hasPrefix("+") {
                 result.append(PatchLine(id: index, kind: .added, text: String(line.dropFirst()), newNumber: newLine))
                 newLine += 1
             } else if line.hasPrefix("-") {
-                result.append(PatchLine(id: index, kind: .removed, text: String(line.dropFirst()), newNumber: nil))
+                result.append(PatchLine(id: index, kind: .removed, text: String(line.dropFirst()), newNumber: nil, oldNumber: oldLine))
+                oldLine += 1
             } else {
-                result.append(PatchLine(id: index, kind: .context, text: String(line.dropFirst(min(1, line.count))), newNumber: newLine))
+                result.append(PatchLine(id: index, kind: .context, text: String(line.dropFirst(min(1, line.count))),
+                                        newNumber: newLine, oldNumber: oldLine))
                 newLine += 1
+                oldLine += 1
             }
         }
         return result
+    }
+}
+
+/// A unified diff laid out in two columns: removals on the left, additions on the right, paired
+/// up within each block of changes.
+struct SplitRow: Identifiable {
+    let id: Int
+    var header: PatchLine?
+    var left: PatchLine?
+    var right: PatchLine?
+
+    static func rows(from lines: [PatchLine]) -> [SplitRow] {
+        var rows: [SplitRow] = []
+        var removed: [PatchLine] = [], added: [PatchLine] = []
+        func flush() {
+            for index in 0..<max(removed.count, added.count) {
+                let left = index < removed.count ? removed[index] : nil
+                let right = index < added.count ? added[index] : nil
+                rows.append(SplitRow(id: (left ?? right)?.id ?? rows.count, left: left, right: right))
+            }
+            removed = []
+            added = []
+        }
+        for line in lines {
+            switch line.kind {
+            case .removed: removed.append(line)
+            case .added: added.append(line)
+            case .header:
+                flush()
+                rows.append(SplitRow(id: line.id, header: line))
+            case .context:
+                flush()
+                rows.append(SplitRow(id: line.id, left: line, right: line))
+            }
+        }
+        flush()
+        return rows
     }
 }
 
@@ -538,66 +834,165 @@ struct PatchLine: Identifiable {
 
 private struct ActivityView: View {
     @ObservedObject var session: TerminalSession
+    let store: SessionStore
 
     var body: some View {
-        let recent = session.timeline.filter { $0.date > session.lastViewedAt }
-        if session.timeline.isEmpty {
-            InspectorEmptyState(symbol: "clock", title: "The story starts here", detail: "Prompts, commands, approvals, and test results appear as this session gets to work.")
-        } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    if !recent.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label("SINCE YOU LAST LOOKED", systemImage: "clock.arrow.circlepath")
-                                .font(.system(size: 9, weight: .semibold))
-                                .tracking(0.5)
-                                .foregroundStyle(Palette.accent)
-                            Text(Recap.sentence(for: recent))
-                                .font(.system(size: 12))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Palette.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
-                        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Palette.accent.opacity(0.18), lineWidth: 1))
-                    }
-                    HStack {
-                        Text("TIMELINE").tracking(0.9)
-                        Spacer()
-                        Text("\(session.timeline.count) events").monospacedDigit()
-                    }
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(Color(nsColor: Ink.faint))
-                    ForEach(session.timeline.reversed()) { event in
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: Recap.symbol(event.kind))
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(Recap.color(event.kind))
-                                .frame(width: 28, height: 28)
-                                .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 7))
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack {
-                                    Text(event.kind.rawValue.capitalized)
-                                        .foregroundStyle(Color(nsColor: Ink.muted))
-                                    Spacer(minLength: 4)
-                                    Text(event.date.formatted(date: .omitted, time: .shortened))
-                                        .foregroundStyle(Color(nsColor: Ink.faint))
-                                }
-                                .font(.system(size: 9.5, weight: .medium))
-                                Text(event.text)
-                                    .font(.system(size: 11.5))
-                                    .lineLimit(4)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                                    .help(event.text)
+        VStack(spacing: 0) {
+            if session.timeline.isEmpty && session.turns.isEmpty {
+                EmptyMessage(symbol: "clock", title: "No activity yet",
+                             detail: "Prompts, commands, approvals and test results appear here as \(session.label) works.")
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: Space.l) {
+                        let recent = session.timeline.filter { $0.date > session.lastViewedAt }
+                        if !recent.isEmpty {
+                            VStack(alignment: .leading, spacing: Space.xs) {
+                                SectionHeader("Since you last looked")
+                                Text(Recap.sentence(for: recent))
+                                    .font(Typeface.body)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
-                        .padding(.bottom, 1)
+                        if !session.turns.isEmpty { turns }
+                        if !session.timeline.isEmpty { timeline }
                     }
+                    .padding(Space.m)
                 }
-                .padding(14)
+            }
+            if session.kind.isAgent {
+                Hairline()
+                FollowUp(session: session)
             }
         }
+    }
+
+    private var turns: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            SectionHeader("Turns") { Text(String(session.turns.count)).monospacedDigit() }
+            ForEach(session.turns.reversed()) { turn in
+                TurnRow(turn: turn, session: session, store: store)
+            }
+        }
+    }
+
+    private var timeline: some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            SectionHeader("Timeline") { Text(String(session.timeline.count)).monospacedDigit() }
+            ForEach(session.timeline.reversed()) { event in
+                HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                    Image(systemName: Recap.symbol(event.kind))
+                        .font(Typeface.caption)
+                        .foregroundStyle(Recap.color(event.kind))
+                        .frame(width: Space.l)
+                    Text(event.text)
+                        .font(Typeface.callout)
+                        .lineLimit(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .help(event.text)
+                    Text(event.date.formatted(date: .omitted, time: .shortened))
+                        .font(Typeface.caption.monospacedDigit())
+                        .foregroundStyle(Tone.faint)
+                }
+            }
+        }
+    }
+}
+
+private struct TurnRow: View {
+    let turn: Checkpoints.Turn
+    let session: TerminalSession
+    let store: SessionStore
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: Space.s) {
+            Text(String(turn.index))
+                .font(Typeface.micro.monospacedDigit())
+                .foregroundStyle(Tone.muted)
+                .frame(width: 18, height: 18)
+                .background(Tone.surface, in: Circle())
+            VStack(alignment: .leading, spacing: 0) {
+                Text(turn.prompt).font(Typeface.callout).lineLimit(1)
+                Text(turn.end == nil ? "Running" : turn.date.formatted(date: .omitted, time: .shortened))
+                    .font(Typeface.caption)
+                    .foregroundStyle(turn.end == nil ? Palette.working : Tone.faint)
+            }
+            Spacer(minLength: Space.xs)
+            if hovering {
+                Button("Changes") {
+                    store.reviewTurn = turn.index
+                    store.inspectorTab = .changes
+                }
+                .buttonStyle(PanelButtonStyle())
+                .controlSize(.small)
+            }
+        }
+        .padding(Space.xs)
+        .background(hovering ? Tone.surface : .clear, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+        .onHover { hovering = $0 }
+        .help(turn.prompt)
+    }
+}
+
+/// Message the agent without switching to its terminal. While it's working, messages wait in a
+/// queue and go out one per turn; "Send Now" steers the current turn instead.
+private struct FollowUp: View {
+    @ObservedObject var session: TerminalSession
+    @State private var text = ""
+    @State private var status: String?
+
+    private var busy: Bool { session.state == .working || session.state == .starting }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            if !session.pendingMessages.isEmpty {
+                SectionHeader("Queued") { Text(String(session.pendingMessages.count)) }
+                ForEach(Array(session.pendingMessages.enumerated()), id: \.offset) { index, message in
+                    HStack(spacing: Space.xs) {
+                        Text(message).font(Typeface.callout).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                        IconButton(symbol: "arrow.up.circle", help: "Send now") { session.sendQueuedNow(at: index) }
+                        IconButton(symbol: "xmark", help: "Remove from queue") { session.removeQueued(at: index) }
+                    }
+                }
+            }
+            HStack(alignment: .bottom, spacing: Space.s) {
+                TextField("Message \(session.label)…", text: $text, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(Typeface.body)
+                    .lineLimit(1...5)
+                    .onSubmit { send(now: false) }
+                Menu {
+                    Button(busy ? "Queue for After This Turn" : "Send") { send(now: false) }
+                    Button("Send Now (Steer This Turn)") { send(now: true) }
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(Typeface.caption.weight(.bold))
+                        .foregroundStyle(text.isEmpty ? Tone.faint : Tone.floor)
+                        .frame(width: Size.iconButton, height: Size.iconButton)
+                        .background(text.isEmpty ? Tone.raised : Palette.accent, in: Circle())
+                } primaryAction: {
+                    send(now: false)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .disabled(text.isEmpty)
+                .help(busy ? "Queue for after this turn (Return). More: send now." : "Send (Return)")
+            }
+            .padding(Space.s)
+            .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+            if let status { Text(status).font(Typeface.caption).foregroundStyle(Tone.faint) }
+        }
+        .padding(Space.m)
+    }
+
+    private func send(now: Bool) {
+        let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return }
+        let outcome = session.send(message, now: now)
+        status = outcome == "queued" ? "Queued; goes out when this turn ends." : nil
+        text = ""
     }
 }
 
@@ -637,7 +1032,7 @@ enum Recap {
         case .failure: return Palette.failed
         case .done, .test: return Palette.running
         case .prompt, .message: return Palette.working
-        default: return .secondary
+        default: return Tone.faint
         }
     }
 }
@@ -656,78 +1051,89 @@ private struct InfoView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                group(session.kind == .browser ? "Browser" : "Session details") {
+            VStack(alignment: .leading, spacing: Space.l) {
+                section(session.kind == .browser ? "Browser" : "Session") {
                     row("Kind", session.kind.displayName)
                     row("Status", session.statusWord + (session.state.detail.map { " · " + $0 } ?? ""))
                     if session.kind == .browser {
                         row("Page", session.spec.url ?? "New tab", mono: true)
                         if let owner = session.spec.owner.flatMap({ id in store.sessions.first { $0.id == id } }) {
-                            row("Agent", "@" + owner.label, mono: true)
+                            row("Agent", owner.label, mono: true)
                         }
                     } else {
                         row("Folder", abbreviateHome(session.spec.workPath), mono: true)
                     }
                     if let branch = session.git?.branch { row("Branch", branch, mono: true) }
+                    if let base = session.spec.baseBranch { row("Base", base, mono: true) }
+                    if let options = session.spec.options?.summary { row("Launched", options) }
                     if let port = session.spec.port, store.sessions.contains(where: { $0.kind == .server && $0.spec.port == port }) {
                         row("Dev server", "localhost:\(port)", mono: true)
                     }
                 }
+                let tasks = session.tasks
+                if tasks.total > 0 {
+                    section("Tasks") {
+                        ProgressView(value: Double(tasks.done), total: Double(tasks.total)).controlSize(.small)
+                        ForEach(tasks.order, id: \.self) { id in
+                            Label(tasks.subjects[id] ?? "Task", systemImage: tasks.completed.contains(id) ? "checkmark.circle.fill" : "circle")
+                                .font(Typeface.callout)
+                                .foregroundStyle(tasks.completed.contains(id) ? Tone.faint : Tone.text)
+                        }
+                    }
+                }
                 if session.kind == .claude {
-                    group("Usage") {
+                    section("Usage") {
                         row("Model", session.usage.model ?? "—")
                         row("Cost", session.usage.costUSD.map { String(format: "$%.2f", $0) } ?? "—")
                         if let context = session.usage.contextPercent {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text("Context").foregroundStyle(Color(nsColor: Ink.muted))
-                                    Spacer()
-                                    Text("\(Int(context))%")
-                                        .monospacedDigit()
-                                        .foregroundStyle(context >= 90 ? Palette.attention : Color(nsColor: Ink.text))
-                                }
+                            HStack(spacing: Space.s) {
+                                Text("Context").foregroundStyle(Tone.muted).frame(width: 72, alignment: .leading)
                                 ProgressView(value: min(max(context, 0), 100), total: 100)
                                     .controlSize(.small)
                                     .tint(context >= 90 ? Palette.attention : Palette.accent)
+                                Text("\(Int(context))%").monospacedDigit()
+                                    .foregroundStyle(context >= 90 ? Palette.attention : Tone.text)
                             }
-                            .padding(.top, 4)
+                        }
+                        if let evidence = session.testEvidence {
+                            row("Tests", evidence.summary)
                         }
                     }
                 }
                 if let id = session.spec.agentSessionId {
-                    group("Resume") {
+                    section("Conversation") {
                         row("ID", id, mono: true)
-                        Button {
-                            let command = session.kind == .claude ? "claude --resume \(id)" : "codex resume \(id)"
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(command, forType: .string)
-                            copiedResume = true
-                        } label: {
-                            Label(copiedResume ? "Copied resume command" : "Copy resume command", systemImage: copiedResume ? "checkmark" : "doc.on.doc")
-                                .frame(maxWidth: .infinity)
+                        HStack(spacing: Space.s) {
+                            Button(copiedResume ? "Copied" : "Copy Resume Command") {
+                                let command = session.kind == .claude ? "claude --resume \(id)" : "codex resume \(id)"
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(command, forType: .string)
+                                copiedResume = true
+                            }
+                            if session.kind == .claude {
+                                Button("Fork") { _ = store.fork(session) }
+                                    .help("Start a new agent from this point in the conversation")
+                            }
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .padding(.top, 5)
+                        .buttonStyle(PanelButtonStyle())
                     }
                 }
-                HStack(spacing: 8) {
-                    Button {
+                HStack(spacing: Space.s) {
+                    if session.kind != .browser {
+                        Button("Open in \(Editors.preferred?.name ?? "Editor")") { Editors.open(session.spec.workPath) }
+                    }
+                    Button("Reveal in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.spec.workPath)])
-                    } label: {
-                        Label("Open in Finder", systemImage: "folder")
-                            .frame(maxWidth: .infinity)
                     }
                     if session.kind == .claude {
-                        Button { session.openRemoteControl() } label: { Label("On phone", systemImage: "iphone") }
+                        Button("On Phone") { session.openRemoteControl() }
                             .help("Continue with Claude Remote Control")
                     }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(PanelButtonStyle())
             }
-            .padding(14)
-            .font(.system(size: 12))
+            .padding(Space.m)
+            .font(Typeface.callout)
         }
         .task(id: copiedResume) {
             guard copiedResume else { return }
@@ -737,25 +1143,18 @@ private struct InfoView: View {
         }
     }
 
-    private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 13) {
-            Text(title.uppercased())
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(Color(nsColor: Ink.faint))
-                .tracking(0.9)
-            VStack(alignment: .leading, spacing: 10) { content() }
+    private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            SectionHeader(title)
+            content()
         }
-        .padding(13)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: Ink.surface), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color(nsColor: Ink.hairline), lineWidth: 1))
     }
 
     private func row(_ label: String, _ value: String, mono: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label).foregroundStyle(Color(nsColor: Ink.muted)).frame(width: 62, alignment: .leading)
+        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+            Text(label).foregroundStyle(Tone.muted).frame(width: 72, alignment: .leading)
             Text(value)
-                .font(mono ? .system(size: 11.5, design: .monospaced) : .system(size: 12))
+                .font(mono ? Typeface.codeSmall : Typeface.callout)
                 .lineLimit(2)
                 .truncationMode(.middle)
                 .textSelection(.enabled)

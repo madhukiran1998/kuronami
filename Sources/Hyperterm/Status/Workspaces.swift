@@ -6,6 +6,8 @@ struct ProjectConfig: Decodable {
     var setup: String?
     var dev: String?
     var ports: [Int]?
+    /// One-click commands shown in the toolbar's Actions menu.
+    var actions: [ProjectAction]?
 
     static func load(for path: String) -> ProjectConfig? {
         guard let root = GitInspector.query(path).map({ mainRoot(of: $0) }) ?? Optional(path) else { return nil }

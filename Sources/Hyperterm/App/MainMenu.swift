@@ -70,6 +70,8 @@ enum MainMenu {
         menu.addItem(item("Close", #selector(AppDelegate.closeSession(_:)), "w", target: target))
         menu.addItem(.separator())
         menu.addItem(item("Review Changes", #selector(AppDelegate.reviewSelected(_:)), "r", [.command, .option], target: target))
+        menu.addItem(item("Fork Conversation", #selector(AppDelegate.forkSelected(_:)), target: target))
+        menu.addItem(item("Open in Editor", #selector(AppDelegate.openInEditor(_:)), "o", [.command, .option], target: target))
         menu.addItem(item("Open Preview", #selector(AppDelegate.openPreview(_:)), "o", [.command, .shift], target: target))
         menu.addItem(item("Clean Up Worktrees…", #selector(AppDelegate.cleanUpWorktrees(_:)), target: target))
         return menu
@@ -96,6 +98,7 @@ enum MainMenu {
         menu.addItem(item("Split", #selector(AppDelegate.layoutSplit(_:)), "2", [.command, .option], target: target))
         menu.addItem(item("Grid", #selector(AppDelegate.layoutGrid(_:)), "3", [.command, .option], target: target))
         menu.addItem(item("Zoom Terminal", #selector(AppDelegate.toggleZoom(_:)), "\r", target: target))
+        menu.addItem(item("Even Out Tiles", #selector(AppDelegate.evenOutTiles(_:)), "0", [.command, .option], target: target))
         menu.addItem(.separator())
         menu.addItem(item("Bigger", #selector(TerminalSurfaceView.increaseFontSize(_:)), "+"))
         menu.addItem(item("Smaller", #selector(TerminalSurfaceView.decreaseFontSize(_:)), "-"))

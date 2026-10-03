@@ -13,6 +13,8 @@ extension SessionStore {
                                        suggestions: json["permission_suggestions"], reply: reply)
         approvals[session.id] = approval
         session.hasHookApproval = true
+        // Plan mode ends by asking to exit it; the plan is the request.
+        session.pendingPlan = tool == "ExitPlanMode" ? (json["tool_input"] as? [String: Any])?["plan"] as? String : nil
         session.pendingRequest = summary
         session.record(.approval, "Asked to run \(summary)")
         session.apply(.claudeHook(event: "Notification", notificationType: "permission_prompt", message: summary),
@@ -32,6 +34,7 @@ extension SessionStore {
             return session.answerPromptByKeys(answer)
         }
         session.hasHookApproval = false
+        session.pendingPlan = nil
         approval.reply(ControlResponse.success(text: decisionJSON(approval, answer, reason: reason)))
         session.record(.approval, answer == .deny ? "Denied \(approval.summary)" : answer == .always ? "Always allowed \(approval.summary)" : "Allowed \(approval.summary)")
         session.apply(.userSubmitted, source: "approval", force: .working)
@@ -43,6 +46,7 @@ extension SessionStore {
     func dropApproval(for session: TerminalSession) {
         guard let approval = approvals.removeValue(forKey: session.id) else { return }
         session.hasHookApproval = false
+        session.pendingPlan = nil
         approval.reply(ControlResponse.success())
         notifier.clearApproval(session: session)
     }

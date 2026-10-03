@@ -36,10 +36,29 @@ enum Review {
         return DiffStat(added: added, removed: removed, files: files)
     }
 
-    static func fileDiffs(at path: String, base: String?) -> [FileDiff] {
-        guard let commit = baseCommit(at: path, base: base) else { return [] }
+    /// What a diff is measured against.
+    enum Scope: Hashable {
+        /// Everything since the branch left its base (or since HEAD outside a worktree).
+        case branch
+        /// Only what isn't committed yet.
+        case uncommitted
+        /// One turn, between two checkpoints (`to` nil: up to the live workspace).
+        case turn(from: String, to: String?)
+    }
+
+    static func fileDiffs(at path: String, base: String?, scope: Scope = .branch, ignoreWhitespace: Bool = false) -> [FileDiff] {
+        if case .turn(let from, let to) = scope {
+            var patch = Checkpoints.diff(at: path, from: from, to: to)
+            if ignoreWhitespace, let target = to ?? Checkpoints.snapshot(at: path, message: "Kuronami: compare") {
+                patch = Git.run(["-c", "core.quotePath=false", "diff", "--no-renames", "-w", from, target], at: path, trim: false) ?? patch
+            }
+            return files(fromPatch: patch)
+        }
+        let commit = scope == .uncommitted ? runGit(["-C", path, "rev-parse", "HEAD"]) : baseCommit(at: path, base: base)
+        guard let commit else { return [] }
         // Renames off: each side is its own file, so every numstat path names a real file.
-        let diff = ["-c", "core.quotePath=false", "-C", path, "diff", "--no-renames"]
+        var diff = ["-c", "core.quotePath=false", "-C", path, "diff", "--no-renames"]
+        if ignoreWhitespace { diff.append("-w") }
         let numstat = runGit(diff + ["--numstat", commit]) ?? ""
         // One process for every patch, split per file, instead of one `git diff` per file.
         let patches = splitPatch(runGit(diff + [commit]) ?? "")
@@ -59,6 +78,33 @@ enum Review {
             result.append(FileDiff(path: file, added: lines.count, removed: 0, patch: "new file\n@@ -0,0 +1,\(lines.count) @@\n" + lines.joined(separator: "\n")))
         }
         return result
+    }
+
+    /// Per-file diffs from one multi-file patch, counting lines as Git's numstat would.
+    static func files(fromPatch patch: String) -> [FileDiff] {
+        splitPatch(patch).map { path, text in
+            var added = 0, removed = 0
+            for line in text.split(separator: "\n") {
+                if line.hasPrefix("+") && !line.hasPrefix("+++") { added += 1 }
+                else if line.hasPrefix("-") && !line.hasPrefix("---") { removed += 1 }
+            }
+            return FileDiff(path: path, added: added, removed: removed, patch: text)
+        }
+        .sorted { $0.path < $1.path }
+    }
+
+    /// The whole diff as text, for writing commit messages and PR descriptions.
+    static func patchText(at path: String, base: String?, scope: Scope) -> String {
+        fileDiffs(at: path, base: base, scope: scope).map(\.patch).joined(separator: "\n")
+    }
+
+    /// Pushes the current branch, setting its upstream the first time.
+    static func push(at path: String) -> Result<String, ReviewError> {
+        guard let branch = currentBranch(at: path), branch != "HEAD" else { return .failure(.git("not on a branch")) }
+        guard runGit(["-C", path, "push", "-u", "origin", branch]) != nil else {
+            return .failure(.git("git push failed (is there an origin remote?)"))
+        }
+        return .success("pushed \(branch)")
     }
 
     /// Splits a multi-file unified diff into per-file patches keyed by path. A path git had to
@@ -106,12 +152,13 @@ enum Review {
     }
 
     /// Pushes the branch and opens a PR with `gh`. Returns the PR URL.
-    static func openPullRequest(at path: String, base: String?, title: String) -> Result<String, ReviewError> {
+    static func openPullRequest(at path: String, base: String?, title: String,
+                                body: String = "Opened from Kuronami.") -> Result<String, ReviewError> {
         guard let branch = currentBranch(at: path), branch != "HEAD" else { return .failure(.git("not on a branch")) }
         guard runGit(["-C", path, "push", "-u", "origin", branch]) != nil else { return .failure(.git("git push failed (is there an origin remote?)")) }
         let gh = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].first { FileManager.default.isExecutableFile(atPath: $0) }
         guard let gh else { return .failure(.git("GitHub CLI (gh) not found")) }
-        var args = ["pr", "create", "--title", title, "--body", "Opened from Kuronami.", "--head", branch]
+        var args = ["pr", "create", "--title", title, "--body", body, "--head", branch]
         if let base { args += ["--base", base] }
         guard let url = runProcess(gh, args, timeout: 60, environment: ProcessInfo.processInfo.environment.merging(["GIT_DIR": ""]) { a, _ in a }),
               let line = url.split(separator: "\n").last else {

@@ -41,6 +41,12 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var pinnedToGrid = false
     /// When the user last looked at this session; the recap covers events after it.
     @Published var lastViewedAt = Date()
+    /// Checkpointed turns, oldest first (git workspaces only).
+    @Published var turns: [Checkpoints.Turn] = []
+    /// The plan an agent in plan mode is waiting to have approved.
+    @Published var pendingPlan: String?
+    /// Set while a "continue at reset" is scheduled after a rate limit.
+    @Published var resumeAt: Date?
 
     /// Whether the agent CLI process has been seen running in this terminal.
     var agentProcessSeen = false
@@ -50,9 +56,9 @@ final class TerminalSession: ObservableObject, Identifiable {
     var lastHookAt = Date.distantPast
 
     private(set) var surface: any SessionSurface
-    /// Messages for an agent that is blocked on a prompt; delivered when it unblocks so typed text
-    /// can't land in a permission dialog.
-    private var pendingMessages: [String] = []
+    /// Messages for an agent that is blocked on a prompt or mid-turn; delivered when it is free
+    /// so typed text can't land in a permission dialog or interrupt the turn.
+    @Published private(set) var pendingMessages: [String] = []
     /// The command to type once the shell shows its first prompt.
     private var pendingInput: String?
     private var inputGeneration = 0
@@ -155,6 +161,11 @@ final class TerminalSession: ObservableObject, Identifiable {
         state = next
         stateSource = source
         stateChangedAt = Date()
+        // Codex has no prompt hook: a turn starts when work starts from rest. Claude's turns
+        // come from its UserPromptSubmit and Stop hooks instead.
+        if kind == .codex, next == .working, previous == .idle || previous == .starting, source != "approval" {
+            store?.checkpoint(self, phase: .start, prompt: lastPrompt ?? "Turn")
+        }
         if previous.needsAttention && !next.needsAttention { flushPendingMessages() }
         if next == .idle {
             applyPendingNativeRename()
@@ -274,18 +285,46 @@ final class TerminalSession: ObservableObject, Identifiable {
         return "delivered to @\(label)"
     }
 
+    /// Sends a follow-up. While the agent is mid-turn it waits in the queue and goes out when the
+    /// turn ends; `now` types it straight in (Claude reads it as steering the current turn).
+    func send(_ text: String, now: Bool) -> String {
+        let text = sanitizeMessage(text)
+        guard !text.isEmpty else { return "" }
+        if kind.isAgent, !now, state == .working || state == .starting {
+            pendingMessages.append(text)
+            return "queued"
+        }
+        return deliver(text, from: nil)
+    }
+
+    func removeQueued(at index: Int) {
+        guard pendingMessages.indices.contains(index) else { return }
+        pendingMessages.remove(at: index)
+    }
+
+    /// Sends a queued message right away instead of waiting for the turn to end.
+    func sendQueuedNow(at index: Int) {
+        guard pendingMessages.indices.contains(index), !state.needsAttention, !dialogOnScreen, inputIsEmpty else { return }
+        type(pendingMessages.remove(at: index), submit: true)
+    }
+
     private func flushPendingMessages() {
         guard !pendingMessages.isEmpty else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(400)) { [weak self] in
-            guard let self, !self.state.needsAttention, !self.dialogOnScreen, self.inputIsEmpty,
-                  !self.pendingMessages.isEmpty else { return }
+            // One message per turn: the rest wait for the agent to finish the one just sent.
+            guard let self, !self.state.needsAttention, self.state != .working, !self.dialogOnScreen,
+                  self.inputIsEmpty, !self.pendingMessages.isEmpty else { return }
             let message = self.pendingMessages.removeFirst()
             self.type(message, submit: true)
             if !self.pendingMessages.isEmpty { self.flushPendingMessages() }
         }
     }
 
+    /// The last prompt Kuronami typed, used to title Codex checkpoints.
+    private var lastPrompt: String?
+
     private func type(_ text: String, submit: Bool, countsAsWork: Bool = true) {
+        if submit, countsAsWork { lastPrompt = summarize(text) ?? text }
         surface.sendText(text)
         guard submit else { return }
         // Let the paste land before Return so TUIs don't treat it as part of the paste.

@@ -19,10 +19,11 @@ final class TileView: NSView {
     private var searchHost: NSHostingView<SearchBar>?
     let search = SearchModel()
 
-    private static let headerHeight: CGFloat = 34
-    private static let radius: CGFloat = 10
+    private static let headerHeight: CGFloat = Size.barHeight
+    private static let radius: CGFloat = Radius.pane
     private var isVisible = false
     private var lifted = false
+    private var dropTarget = false
 
     var showsHeader = false {
         didSet {
@@ -47,6 +48,7 @@ final class TileView: NSView {
         let header: Bool
         let focused: Bool
         let attention: Bool
+        let dropTarget: Bool
     }
 
     init(session: TerminalSession, actions: TileActions) {
@@ -69,7 +71,7 @@ final class TileView: NSView {
         headerRule.backgroundColor = Ink.hairline.cgColor
         headerRule.zPosition = 9
         attentionMarker.backgroundColor = NSColor(Palette.attention).cgColor
-        attentionMarker.cornerRadius = 1
+        attentionMarker.cornerRadius = Size.hairline
         attentionMarker.zPosition = 21
         attentionMarker.isHidden = true
         content.layer?.addSublayer(headerRule)
@@ -123,6 +125,13 @@ final class TileView: NSView {
         CATransaction.commit()
     }
 
+    /// Another tile is being dragged over this one; dropping trades their places.
+    func setDropTarget(_ target: Bool) {
+        guard target != dropTarget else { return }
+        dropTarget = target
+        updateChrome()
+    }
+
     // MARK: - Layout
 
     override func layout() {
@@ -156,22 +165,26 @@ final class TileView: NSView {
 
     private func updateChrome() {
         let chrome = Chrome(header: showsHeader, focused: isFocusedTile,
-                            attention: session.state.needsAttention)
+                            attention: session.state.needsAttention, dropTarget: dropTarget)
         guard chrome != drawnChrome else { return }
         drawnChrome = chrome
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         content.layer?.cornerRadius = Self.radius
         border.cornerRadius = Self.radius
-        if isFocusedTile {
-            border.borderColor = Ink.accent.withAlphaComponent(showsHeader ? 0.7 : 0.35).cgColor
+        // One ring at a time, strongest meaning wins: drop target, then focus, then rest.
+        if chrome.dropTarget {
+            border.borderColor = Ink.accent.cgColor
+            border.borderWidth = 2
+        } else if isFocusedTile && showsHeader {
+            border.borderColor = Ink.accent.withAlphaComponent(0.65).cgColor
             border.borderWidth = 1
         } else {
             border.borderColor = Ink.hairline.cgColor
             border.borderWidth = 1
         }
         attentionMarker.isHidden = !chrome.attention
-        headerRule.backgroundColor = Ink.hairline.withAlphaComponent(0.7).cgColor
+        headerRule.backgroundColor = Ink.hairline.cgColor
         CATransaction.commit()
     }
 
@@ -313,71 +326,48 @@ struct TileHeader: View {
 
     var body: some View {
         if model.isVisible {
-            GeometryReader { geometry in header(compact: geometry.size.width < 340) }
+            GeometryReader { geometry in header(compact: geometry.size.width < 360) }
         }
     }
 
     private func header(compact: Bool) -> some View {
         let snapshot = model.snapshot
-        return HStack(spacing: 8) {
-            if !compact {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 8, weight: .medium))
-                    .foregroundStyle(Color(nsColor: Ink.faint))
-                    .help("Drag to rearrange")
-            }
-            KindMark(kind: snapshot.kind, size: 11)
+        return HStack(spacing: Space.s) {
+            KindMark(kind: snapshot.kind)
                 .foregroundStyle(snapshot.kind.tint)
-                .frame(width: 20, height: 20)
-                .background(RoundedRectangle(cornerRadius: 5).fill(snapshot.kind.tint.opacity(0.1)))
+                .frame(width: Space.l)
             Text(snapshot.label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color(nsColor: model.focused ? Ink.text : Ink.muted))
+                .font(Typeface.callout.weight(.semibold))
+                .foregroundStyle(model.focused ? Tone.text : Tone.muted)
                 .lineLimit(1)
-                .truncationMode(.middle)
-                .help(snapshot.summary.map { "@\(snapshot.label) · \($0)" } ?? "@\(snapshot.label) · \(snapshot.kind.displayName)")
-            Spacer(minLength: 4)
-            if !snapshot.ports.isEmpty { PortChips(ports: snapshot.ports, compact: true) }
+                .layoutPriority(1)
+            if !compact, let summary = snapshot.summary {
+                Text(summary)
+                    .font(Typeface.caption)
+                    .foregroundStyle(snapshot.state.needsAttention ? Palette.attention : Tone.faint)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: Space.xs)
+            if !snapshot.ports.isEmpty, !compact { PortChips(ports: snapshot.ports, compact: true) }
             if snapshot.kind == .browser {
                 BrowserDriverBadge(label: snapshot.label)
+            } else if hovering || compact {
+                controls(compact: compact)
             } else {
-                StatusCapsule(state: snapshot.state, statusWord: snapshot.statusWord, changedAt: snapshot.stateChangedAt)
-                    .fixedSize()
-            }
-            if compact {
-                Menu {
-                    Button("Zoom", action: actions.zoom)
-                    Button("Minimize to Shelf", action: actions.minimize)
-                    Divider()
-                    Button("Close", action: actions.close)
-                } label: {
-                    Image(systemName: "ellipsis").font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color(nsColor: Ink.muted)).frame(width: 24, height: 24)
-                }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help("Tile actions · drag header to rearrange")
-                .accessibilityLabel("Tile actions")
-            } else {
-                HStack(spacing: 2) {
-                    HeaderButton(symbol: "minus", help: "Minimize to shelf (⇧⌘M)", action: actions.minimize)
-                    HeaderButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Zoom (⌘⏎)", action: actions.zoom)
-                    HeaderButton(symbol: "xmark", help: "Close (⌘W)", action: actions.close)
-                }
-                .opacity(hovering || model.focused ? 1 : 0.55)
+                StatusDot(state: snapshot.state, size: 6)
+                    .help(snapshot.statusWord)
             }
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 6)
+        .padding(.leading, Space.m)
+        .padding(.trailing, Space.xs)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: Ink.surface))
-        .overlay(alignment: .bottom) {
-            if model.focused { Color(nsColor: Ink.accent).opacity(0.12).frame(height: 1) }
-        }
+        .background(Color(nsColor: Theme.terminalBackground))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(count: 2, perform: actions.zoom)
         .onTapGesture(perform: actions.select)
-        // Drag the header to move the tile; the canvas reflows the others around it.
+        // Drag the header to move the tile; drop it on another to trade places.
         .gesture(DragGesture(minimumDistance: 5, coordinateSpace: .global)
             .onChanged { actions.drag($0.translation) }
             .onEnded { _ in actions.dragEnded() })
@@ -388,61 +378,30 @@ struct TileHeader: View {
             Divider()
             Button("Close", action: actions.close)
         }
+        .help("Drag to move · double-click to zoom")
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(snapshot.label), \(snapshot.statusWord)\(model.focused ? ", focused" : "")")
     }
-}
 
-private struct HeaderButton: View {
-    let symbol: String
-    let help: String
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(Color(nsColor: hovering ? Ink.text : Ink.muted))
-                .frame(width: 24, height: 24)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Color(nsColor: Ink.raised).opacity(hovering ? 1 : 0)))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(help)
-        .accessibilityLabel(help)
-    }
-}
-
-/// "Working 2m", "Needs you", "Done": the shared status vocabulary as a small capsule.
-struct StatusCapsule: View {
-    let state: AgentState
-    let statusWord: String
-    let changedAt: Date
-
-    var body: some View {
-        if state == .working {
-            TimelineView(.periodic(from: .now, by: 15)) { context in
-                badge("Working \(elapsed(since: changedAt, now: context.date))")
+    @ViewBuilder private func controls(compact: Bool) -> some View {
+        if compact {
+            Menu {
+                Button("Zoom", action: actions.zoom)
+                Button("Minimize to Shelf", action: actions.minimize)
+                Divider()
+                Button("Close", action: actions.close)
+            } label: {
+                Image(systemName: "ellipsis").font(Typeface.caption.weight(.semibold)).foregroundStyle(Tone.muted)
             }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .accessibilityLabel("Tile actions")
         } else {
-            badge(statusWord)
+            HStack(spacing: 0) {
+                IconButton(symbol: "minus", help: "Minimize to shelf (⇧⌘M)", action: actions.minimize)
+                IconButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Zoom (⌘⏎)", action: actions.zoom)
+                IconButton(symbol: "xmark", help: "Close (⌘W)", action: actions.close)
+            }
         }
-    }
-
-    private func badge(_ text: String) -> some View {
-        let color = Palette.status(state)
-        return HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 5, height: 5)
-            Text(text).lineLimit(1)
-        }
-        .font(.system(size: 10.5, weight: state.needsAttention ? .semibold : .medium).monospacedDigit())
-        .foregroundStyle(state.needsAttention ? Palette.attention : Color(nsColor: Ink.muted))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(color.opacity(0.07)))
-        .overlay(Capsule().strokeBorder(color.opacity(0.12), lineWidth: 0.5))
     }
 }
 
@@ -452,16 +411,8 @@ struct BrowserDriverBadge: View {
 
     var body: some View {
         if let activity = AgentBrowser.shared.activity, activity.browser == label {
-            HStack(spacing: 4) {
-                Circle().fill(Palette.working).frame(width: 5, height: 5)
-                Text("@\(activity.agent) · \(activity.action)").lineLimit(1)
-            }
-            .font(.system(size: 10, weight: .medium))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(Palette.working.opacity(0.18)))
-            .foregroundStyle(Palette.working)
-            .transition(.opacity)
+            Tag(text: "@\(activity.agent) · \(activity.action)", tint: Palette.working)
+                .transition(.opacity)
         }
     }
 }
@@ -472,20 +423,20 @@ struct RecapBanner: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: Space.m) {
             Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 14, weight: .semibold))
+                .font(Typeface.body.weight(.semibold))
                 .foregroundStyle(Palette.working)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Since you left · \(elapsed(since: since)) ago").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Text(sentence).font(.callout).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: Space.xxs) {
+                Text("Since you left, \(elapsed(since: since)) ago").font(Typeface.caption.weight(.semibold)).foregroundStyle(Tone.muted)
+                Text(sentence).font(Typeface.body).foregroundStyle(Tone.text).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            Button(action: onDismiss) { Image(systemName: "xmark") }.buttonStyle(.borderless)
+            IconButton(symbol: "xmark", help: "Dismiss", action: onDismiss)
         }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.separator))
-        .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+        .padding(Space.m)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Radius.pane, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous).strokeBorder(Tone.hairline))
+        .shadow(color: .black.opacity(0.3), radius: Space.m, y: Space.xs)
     }
 }

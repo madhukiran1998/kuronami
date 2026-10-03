@@ -9,14 +9,7 @@ struct SwitcherItem: Identifiable {
     let symbol: String
     let tint: Color
     let kind: Kind
-
-    var group: String {
-        switch kind {
-        case .session: return "SESSIONS"
-        case .message: return "MESSAGE"
-        case .action: return id.hasPrefix("layout-") ? "ARRANGE" : "CREATE"
-        }
-    }
+    var group = "Actions"
 }
 
 /// ⌘P: jump to a terminal, run an action, or "@label message" to message a terminal.
@@ -37,9 +30,9 @@ enum SwitcherModel {
             }
         let sessions: [SwitcherItem] = ranked.map { result in
             let session = result.session
-            return SwitcherItem(id: session.id.uuidString, title: "@" + session.label,
+            return SwitcherItem(id: session.id.uuidString, title: session.label,
                                 subtitle: [session.statusWord, session.summary ?? shortPath(session.spec.cwd)].joined(separator: " · "),
-                                symbol: session.kind.symbol, tint: session.kind.tint, kind: .session(session))
+                                symbol: session.kind.symbol, tint: session.kind.tint, kind: .session(session), group: "Sessions")
         }
         return sessions + (query.hasPrefix("@") ? [] : actions(search, store: store, quickCreate: quickCreate))
     }
@@ -49,19 +42,46 @@ enum SwitcherModel {
         let label = String(query[query.index(after: query.startIndex)..<space])
         let text = query[space...].trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty, let target = store.find(label) else { return nil }
-        return SwitcherItem(id: "msg", title: "Send to @\(target.label)", subtitle: text, symbol: "paperplane.fill",
-                            tint: Palette.accent, kind: .message(target, text))
+        return SwitcherItem(id: "msg", title: "Send to \(target.label)", subtitle: text, symbol: "paperplane.fill",
+                            tint: Palette.accent, kind: .message(target, text), group: "Message")
     }
 
     private static func actions(_ query: String, store: SessionStore, quickCreate: @escaping (SessionKind) -> Void) -> [SwitcherItem] {
-        var all: [SwitcherItem] = SessionKind.allCases.filter { $0 != .server }.map { kind in
-            SwitcherItem(id: "new-\(kind.rawValue)", title: "New \(kind.displayName)", subtitle: "Start in the current workspace",
-                         symbol: kind.symbol, tint: kind.tint, kind: .action { quickCreate(kind) })
+        func send(_ selector: Selector) -> () -> Void { { NSApp.sendAction(selector, to: nil, from: nil) } }
+        var all: [SwitcherItem] = []
+        if let session = store.selected {
+            if session.kind.isAgent {
+                all.append(SwitcherItem(id: "review", title: "Review Changes", subtitle: "Diff, comments, commit", symbol: "plus.forwardslash.minus",
+                                        tint: Tone.muted, kind: .action(send(#selector(AppDelegate.reviewSelected(_:))))))
+            }
+            if session.kind == .claude, session.spec.agentSessionId != nil {
+                all.append(SwitcherItem(id: "fork", title: "Fork Conversation", subtitle: "A new agent continues from here",
+                                        symbol: "arrow.triangle.branch", tint: Tone.muted, kind: .action { _ = store.fork(session) }))
+            }
+            if session.kind != .browser {
+                all.append(SwitcherItem(id: "editor", title: "Open in \(Editors.preferred?.name ?? "Editor")", subtitle: shortPath(session.spec.workPath),
+                                        symbol: "chevron.left.forwardslash.chevron.right", tint: Tone.muted,
+                                        kind: .action { Editors.open(session.spec.workPath) }))
+            }
+            all += store.projectActions(for: session).map { action in
+                SwitcherItem(id: "run-" + action.id, title: "Run \(action.name)", subtitle: action.command, symbol: action.symbol,
+                             tint: Tone.muted, kind: .action { store.run(action, for: session) }, group: "Project")
+            }
+        }
+        all += SessionKind.allCases.filter { $0 != .server }.map { kind in
+            SwitcherItem(id: "new-\(kind.rawValue)", title: "New \(kind.displayName)", subtitle: "In the current folder",
+                         symbol: kind.symbol, tint: kind.tint, kind: .action { quickCreate(kind) }, group: "Create")
+        }
+        all += store.recentlyClosed.prefix(5).map { spec in
+            SwitcherItem(id: "reopen-\(spec.id)", title: "Reopen \(spec.label)", subtitle: spec.summary ?? shortPath(spec.cwd),
+                         symbol: "arrow.uturn.backward", tint: spec.kind.tint, kind: .action { store.reopen(spec) }, group: "Create")
         }
         all += LayoutMode.allCases.map { mode in
-            SwitcherItem(id: "layout-\(mode.rawValue)", title: "\(mode.title) layout", subtitle: layoutDescription(mode),
-                         symbol: mode.symbol, tint: Palette.accent, kind: .action { store.setLayout(mode) })
+            SwitcherItem(id: "layout-\(mode.rawValue)", title: "\(mode.title) Layout", subtitle: layoutDescription(mode),
+                         symbol: mode.symbol, tint: Tone.muted, kind: .action { store.setLayout(mode) }, group: "Arrange")
         }
+        all.append(SwitcherItem(id: "even", title: "Even Out Tiles", subtitle: "Give every tile the same space", symbol: "square.grid.2x2",
+                                tint: Tone.muted, kind: .action(send(#selector(AppDelegate.evenOutTiles(_:)))), group: "Arrange"))
         guard !query.isEmpty else { return all }
         let ranked: [(item: SwitcherItem, score: Int, index: Int)] = all.enumerated()
             .map { (item: $0.element, score: fuzzyScore(query, $0.element.title), index: $0.offset) }
@@ -74,9 +94,9 @@ enum SwitcherModel {
 
     private static func layoutDescription(_ mode: LayoutMode) -> String {
         switch mode {
-        case .focus: return "One session, all your attention"
-        case .split: return "Your two recent sessions side by side"
-        case .grid: return "Keep every active session in view"
+        case .focus: return "One session at a time"
+        case .split: return "Your two most recent, side by side"
+        case .grid: return "Every live session in view"
         }
     }
 
@@ -120,58 +140,33 @@ struct QuickSwitcherView: View {
     var body: some View {
         let results = SwitcherModel.items(query: query, store: store, quickCreate: quickCreate)
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Image(systemName: "command")
-                    .font(.system(size: 19, weight: .medium))
-                    .foregroundStyle(Palette.accent)
-                    .frame(width: 36, height: 36)
-                    .background(Palette.accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 9))
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("COMMAND CENTER")
-                        .font(.system(size: 9, weight: .semibold))
-                        .tracking(1.5)
-                        .foregroundStyle(Color(nsColor: Ink.muted))
-                    TextField("Search sessions and commands…", text: $query)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 16, weight: .medium))
-                        .focused($focused)
-                        .onSubmit { run(selection, in: results) }
-                        .accessibilityLabel("Search sessions and commands")
-                }
-                Spacer(minLength: 0)
-                KeyboardHint(keys: "esc")
+            HStack(spacing: Space.m) {
+                Image(systemName: "magnifyingglass")
+                    .font(Typeface.title.weight(.regular))
+                    .foregroundStyle(Tone.faint)
+                TextField("Go to a session, run a command, or @name a message", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(Typeface.title.weight(.regular))
+                    .focused($focused)
+                    .onSubmit { run(selection, in: results) }
+                    .accessibilityLabel("Search sessions and commands")
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 17)
-            Color(nsColor: Ink.hairline).frame(height: 1)
+            .padding(.horizontal, Space.l)
+            .frame(height: 52)
+            Hairline()
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 3) {
+                    LazyVStack(spacing: 0) {
                         if results.isEmpty {
-                            VStack(spacing: 10) {
-                                Image(systemName: "magnifyingglass")
-                                    .font(.system(size: 23, weight: .light))
-                                    .foregroundStyle(Color(nsColor: Ink.faint))
-                                Text("No matches for “\(query)”")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .lineLimit(2)
-                                Text("Try a session name, an agent, or a layout.")
-                                    .font(.system(size: 11.5))
-                                    .foregroundStyle(Color(nsColor: Ink.muted))
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 48)
+                            EmptyMessage(symbol: "magnifyingglass", title: "No matches",
+                                         detail: "Try a session name, an action, or a layout.")
                         }
                         ForEach(Array(results.enumerated()), id: \.element.id) { index, item in
                             if index == 0 || results[index - 1].group != item.group {
-                                Text(item.group)
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .tracking(1.3)
-                                    .foregroundStyle(Color(nsColor: Ink.faint))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 11)
-                                    .padding(.top, index == 0 ? 4 : 11)
-                                    .padding(.bottom, 3)
+                                SectionHeader(item.group)
+                                    .padding(.horizontal, Space.s + 2)
+                                    .padding(.top, index == 0 ? Space.xs : Space.m)
+                                    .padding(.bottom, Space.xs)
                             }
                             Button { run(index, in: results) } label: {
                                 row(item, selected: index == selection)
@@ -180,37 +175,31 @@ struct QuickSwitcherView: View {
                             .id(item.id)
                         }
                     }
-                    .padding(8)
+                    .padding(Space.s)
                 }
-                .scrollIndicators(.hidden)
+                .scrollIndicators(.never)
                 .onChange(of: selection) {
                     if results.indices.contains(selection) { proxy.scrollTo(results[selection].id) }
                 }
             }
-            .frame(height: 310)
-            Color(nsColor: Ink.hairline).frame(height: 1)
-            HStack(spacing: 14) {
-                HStack(spacing: 5) {
-                    KeyboardHint(keys: "↑ ↓")
-                    Text("Navigate")
-                }
-                HStack(spacing: 5) {
-                    KeyboardHint(keys: "↵")
-                    Text("Open")
-                }
+            .frame(height: 340)
+            Hairline()
+            HStack(spacing: Space.m) {
+                HStack(spacing: Space.xs) { KeyboardHint(keys: "↑↓"); Text("Move") }
+                HStack(spacing: Space.xs) { KeyboardHint(keys: "↵"); Text("Open") }
                 Spacer()
-                Text("@ to message · > for commands")
+                Text("@name message · > actions only")
             }
-            .font(.system(size: 10.5))
-            .foregroundStyle(Color(nsColor: Ink.muted))
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
+            .font(Typeface.caption)
+            .foregroundStyle(Tone.faint)
+            .padding(.horizontal, Space.l)
+            .frame(height: Size.barHeight + Space.xs)
         }
-        .frame(width: 560)
-        .foregroundStyle(Color(nsColor: Ink.text))
-        .background(Color(nsColor: Ink.deep))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color(nsColor: Ink.hairline)))
+        .frame(width: 600)
+        .foregroundStyle(Tone.text)
+        .background(Tone.deep)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous).strokeBorder(Tone.hairline))
         .onAppear { focused = true }
         .onChange(of: query) { selection = 0 }
         .onChange(of: results.map(\.id)) { selection = min(selection, max(results.count - 1, 0)) }
@@ -220,31 +209,23 @@ struct QuickSwitcherView: View {
     }
 
     private func row(_ item: SwitcherItem, selected: Bool) -> some View {
-        HStack(spacing: 11) {
+        HStack(spacing: Space.m) {
             Image(systemName: item.symbol)
-                .font(.system(size: 13, weight: .medium))
+                .font(Typeface.body)
                 .foregroundStyle(item.tint)
-                .frame(width: 32, height: 32)
-                .background(item.tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.title)
-                    .font(.system(size: 13, weight: .medium, design: item.title.hasPrefix("@") ? .monospaced : .default))
-                    .lineLimit(1)
-                if let subtitle = item.subtitle {
-                    Text(subtitle).font(.system(size: 11.5)).foregroundStyle(Color(nsColor: Ink.muted)).lineLimit(1)
-                }
+                .frame(width: Space.l + Space.xs)
+            Text(item.title).font(Typeface.body).lineLimit(1)
+            if let subtitle = item.subtitle {
+                Text(subtitle).font(Typeface.callout).foregroundStyle(Tone.faint).lineLimit(1)
             }
-            Spacer()
-            if selected {
-                KeyboardHint(keys: "↵")
-            } else if case .session(let session) = item.kind {
-                Circle().fill(Palette.status(session.state)).frame(width: 6, height: 6)
+            Spacer(minLength: Space.s)
+            if case .session(let session) = item.kind {
+                StatusDot(state: session.state, size: 6)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 9).fill(selected ? Palette.accent.opacity(0.12) : .clear))
-        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? Palette.accent.opacity(0.22) : .clear))
+        .padding(.horizontal, Space.s + 2)
+        .frame(height: 32)
+        .background(selected ? Tone.raised : .clear, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
         .contentShape(Rectangle())
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
@@ -254,7 +235,7 @@ struct QuickSwitcherView: View {
         dismiss()
         switch current[index].kind {
         case .session(let session): store.select(session)
-        case .message(let session, let text): _ = session.deliver(sanitizeMessage(text), from: nil)
+        case .message(let session, let text): _ = session.send(text, now: false)
         case .action(let action): action()
         }
     }

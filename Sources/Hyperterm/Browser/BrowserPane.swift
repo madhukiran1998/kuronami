@@ -83,7 +83,7 @@ private struct BrowserBar: View {
         ZStack {
             TextField("", text: $address, prompt: Text("Search or enter address"))
                 .textFieldStyle(.plain)
-                .font(.system(size: 12.5))
+                .font(Typeface.callout)
                 .focused($fieldFocused)
                 .onSubmit(navigate)
                 .onExitCommand { fieldFocused = false }
@@ -97,9 +97,9 @@ private struct BrowserBar: View {
         }
         .frame(height: 28)
         .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .background(RoundedRectangle(cornerRadius: Radius.row, style: .continuous)
             .fill(Color.primary.opacity(editing ? 0.09 : 0.055)))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous)
             .strokeBorder(editing ? Color.accentColor.opacity(0.7) : Color.clear, lineWidth: 1))
         .onChange(of: fieldFocused) { _, focused in if !focused { editing = false } }
     }
@@ -130,7 +130,7 @@ private struct BrowserBar: View {
             Button("Developer Tools") { model.browser?.toggleDevTools() }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 13, weight: .semibold))
+                .font(Typeface.headline)
                 .foregroundStyle(.secondary)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
@@ -158,17 +158,17 @@ private struct AddressSummary: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: symbol)
-                .font(.system(size: 10.5, weight: .semibold))
+                .font(Typeface.micro.weight(.semibold))
                 .foregroundStyle(.secondary)
             if let url, let host = url.host() {
                 (Text(host + (url.port.map { ":\($0)" } ?? "")).foregroundStyle(.primary)
                     + Text(path(of: url)).foregroundStyle(.tertiary))
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(Typeface.callout.weight(.medium))
                     .lineLimit(1)
                     .truncationMode(.tail)
             } else {
                 Text("Search or enter address")
-                    .font(.system(size: 12.5))
+                    .font(Typeface.callout)
                     .foregroundStyle(.tertiary)
             }
         }
@@ -199,10 +199,10 @@ private struct BarButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 12.5, weight: .semibold))
+                .font(Typeface.callout.weight(.semibold))
                 .foregroundStyle(isEnabled ? Color.secondary : Color.secondary.opacity(0.35))
                 .frame(width: 28, height: 28)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .background(RoundedRectangle(cornerRadius: Radius.row, style: .continuous)
                     .fill(Color.primary.opacity(hovering && isEnabled ? 0.08 : 0)))
                 .contentShape(Rectangle())
         }
@@ -226,7 +226,7 @@ private struct AgentActivityPill: View {
             Text("@\(activity.agent)").fontWeight(.semibold)
             Text(activity.action).foregroundStyle(.secondary)
         }
-        .font(.system(size: 11))
+        .font(Typeface.caption)
         .lineLimit(1)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -270,31 +270,30 @@ private struct BrowserStartPage: View {
             ZStack {
                 Circle().fill(Palette.working.opacity(0.14)).frame(width: 58, height: 58)
                 Image(systemName: error == nil ? "globe" : "exclamationmark.triangle")
-                    .font(.system(size: 25, weight: .light))
+                    .font(Typeface.title.weight(.light))
                     .foregroundStyle(error == nil ? Palette.working : Palette.attention)
             }
             VStack(spacing: 6) {
                 Text(error == nil ? "@\(label)" : "Browser unavailable")
-                    .font(.system(size: 16, weight: .semibold, design: error == nil ? .monospaced : .default))
+                    .font(error == nil ? Typeface.code.weight(.semibold) : Typeface.title)
                 Text(error ?? "Agents drive this browser as @\(label) and you can step in anytime. Every Kuronami browser shares one set of logins.")
-                    .font(.system(size: 12))
+                    .font(Typeface.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 320)
             }
             if error == nil && !servers.isEmpty {
                 VStack(spacing: 8) {
-                    Text("RUNNING LOCALLY")
-                        .font(.system(size: 10, weight: .semibold))
-                        .tracking(0.6)
-                        .foregroundStyle(.tertiary)
+                    Text("Running locally")
+                        .font(Typeface.caption.weight(.semibold))
+                        .foregroundStyle(Tone.muted)
                     FlowLayout(spacing: 6) {
                         ForEach(servers, id: \.port) { server in
                             Button { if let url = URL(string: "http://localhost:\(server.port)") { open(url) } } label: {
                                 HStack(spacing: 5) {
-                                    Text(":" + String(server.port)).font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                                    Text(":" + String(server.port)).font(Typeface.codeSmall.weight(.semibold))
                                         .foregroundStyle(Palette.running)
-                                    Text(server.label).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                    Text(server.label).font(Typeface.caption).foregroundStyle(.secondary)
                                 }
                                 .padding(.horizontal, 9)
                                 .padding(.vertical, 5)
