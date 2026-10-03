@@ -1,0 +1,66 @@
+name: macOS build
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Tools
+        run: |
+          brew install xcodegen
+          curl -fsSL https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz | tar xJ -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-aarch64-macos-0.15.2" >> "$GITHUB_PATH"
+
+      - name: Cache libghostty
+        id: ghostty
+        uses: actions/cache@v4
+        with:
+          path: |
+            GhosttyKit.xcframework
+            Resources/ghostty
+            Resources/terminfo
+          key: ghosttykit-${{ hashFiles('scripts/build-ghosttykit.sh') }}
+
+      - name: Build libghostty
+        if: steps.ghostty.outputs.cache-hit != 'true'
+        run: scripts/build-ghosttykit.sh
+
+      - name: Cache Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Hyperterm/cef
+          key: cef-${{ hashFiles('scripts/embed-cef.sh') }}
+
+      - name: Build
+        run: |
+          xcodegen generate
+          set -o pipefail
+          xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration Debug \
+            -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO build 2>&1 \
+            | tee build.log | grep -E "error:|warning: .*Sources/|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration Debug \
+            -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO test 2>&1 \
+            | tee test.log | grep -E "error:|Test Case .* failed|Executed|TEST (SUCCEEDED|FAILED)" || true
+          grep -q "TEST SUCCEEDED" test.log
