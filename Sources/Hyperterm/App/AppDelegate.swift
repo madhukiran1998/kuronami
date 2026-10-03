@@ -309,7 +309,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     @objc func forkSelected(_ sender: Any?) {
-        if let session = store.selected { _ = store.fork(session) }
+        // Forking needs a conversation: nothing to fork before the first prompt.
+        if let session = store.selected, store.fork(session) { return }
+        NSSound.beep()
     }
     @objc func openInEditor(_ sender: Any?) {
         if let session = store.selected { Editors.open(session.spec.workPath) }

@@ -334,7 +334,8 @@ final class TerminalSession: ObservableObject, Identifiable {
             guard let self, self.atRest, !self.dialogOnScreen,
                   self.inputIsEmpty, !self.pendingMessages.isEmpty else { return }
             let message = self.pendingMessages.removeFirst()
-            self.type(message, submit: true)
+            // Kuronami's own slash commands start no turn, so they mustn't hold the queue.
+            self.type(message, submit: true, countsAsWork: !message.hasPrefix("/remote-control"))
             if !self.pendingMessages.isEmpty { self.flushPendingMessages() }
         }
     }
