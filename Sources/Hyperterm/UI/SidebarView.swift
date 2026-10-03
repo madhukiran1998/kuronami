@@ -114,11 +114,11 @@ private struct Composer: View {
     @FocusState private var focused: Bool
 
     private var targetFolder: String {
-        folder ?? store.selected.map { $0.git.map(GitInfo.mainRoot) ?? $0.spec.cwd } ?? NSHomeDirectory()
+        folder ?? store.selected.map { $0.git?.mainRoot ?? $0.spec.cwd } ?? NSHomeDirectory()
     }
 
     private var folders: [String] {
-        let roots = store.sessions.map { $0.git.map(GitInfo.mainRoot) ?? $0.spec.cwd }
+        let roots = store.sessions.map { $0.git?.mainRoot ?? $0.spec.cwd }
         return Array(NSOrderedSet(array: roots).array as? [String] ?? [])
     }
 
@@ -317,12 +317,14 @@ struct AgentRow: View {
             return ("Continues at \(resume.formatted(date: .omitted, time: .shortened))", false, Tone.muted)
         }
         if let text = session.agentStatus ?? session.summary { return (text, false, Tone.muted) }
-        return session.state == .idle ? ("Ready for a task", false, Tone.faint) : nil
+        guard session.state == .idle else { return nil }
+        return ("Ready for a task", false, Tone.faint)
     }
 
     @ViewBuilder private var badges: some View {
         let queued = session.pendingMessages.count
-        let review = session.readyForReview ? session.diffStat.flatMap { $0.files > 0 ? $0 : nil } : nil
+        let stat: DiffStat? = session.diffStat
+        let review: DiffStat? = session.readyForReview && (stat?.files ?? 0) > 0 ? stat : nil
         if review != nil || queued > 0 {
             HStack(spacing: Space.xs) {
                 if let review {
