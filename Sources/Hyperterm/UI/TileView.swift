@@ -177,8 +177,8 @@ final class TileView: NSView {
             border.borderColor = Ink.accent.cgColor
             border.borderWidth = 2
         } else if isFocusedTile && showsHeader {
-            border.borderColor = Ink.accent.withAlphaComponent(0.65).cgColor
-            border.borderWidth = 1
+            border.borderColor = Ink.accent.withAlphaComponent(0.85).cgColor
+            border.borderWidth = 1.5
         } else {
             border.borderColor = Ink.hairline.cgColor
             border.borderWidth = 1

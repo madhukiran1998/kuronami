@@ -4,7 +4,7 @@
 
 **A native macOS terminal for running many coding agents at once.** Claude Code, Codex, shells and dev servers each get a labeled terminal (`@api`, `@landing-page`). Kuronami shows what every agent is doing, brings you the ones that need you, lets you approve and review their work without switching terminals, lets agents message each other by label, and gives each agent a real Chromium browser you can watch and take over.
 
-![Kuronami in grid view: a Claude agent, a test run, the repo's history, an agent's browser, and a dev server on the shelf](docs/screenshot.png)
+![Kuronami in grid view: three agents in resizable tiles, one waiting on an approval, the inspector open, and a dev server on the shelf](docs/screenshot.png)
 
 Terminals render with **libghostty**, Ghostty's own GPU (Metal) engine. Your `~/.config/ghostty/config` (fonts, theme, keybinds) applies as-is. Browsers are embedded **Chromium** (CEF), started only when first used. The app chrome is native AppKit and SwiftUI in a **Graphite** look: neutral black and charcoal, so color only ever means something (an agent's state, which agent it is, where focus is), with rounded floating panes, a unified toolbar, a shelf for servers and minimized tiles, and an inspector.
 
