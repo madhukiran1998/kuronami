@@ -322,6 +322,9 @@ final class SessionStore: ObservableObject {
         if select { self.select(session) }
         persist()
         if !resume { startDevServerIfConfigured(for: session, config: prepared.config) } else { loadTurns(session) }
+        // Codex has no prompt hook, and an agent started with a task never rests before its first
+        // turn, so that turn's start is recorded here.
+        if spec.kind == .codex, !resume, let task, !task.isEmpty { checkpoint(session, phase: .start, prompt: task) }
         return session
     }
 

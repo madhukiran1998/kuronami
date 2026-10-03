@@ -156,7 +156,11 @@ private struct ChangesView: View {
     @State private var parsed: [String: [PatchLine]] = [:]
     @State private var selected: String?
     @State private var loading = false
-    @State private var comments: [ReviewComment] = []
+    /// Kept on the session so drafts survive switching tabs or agents.
+    private var comments: [ReviewComment] {
+        get { session.reviewComments }
+        nonmutating set { session.reviewComments = newValue }
+    }
     @State private var draftLine: Int?
     @State private var draftText = ""
     @State private var result: String?
@@ -335,7 +339,8 @@ private struct ChangesView: View {
         let file = files.first { $0.path == selected } ?? files.first
         let fileComments = comments.filter { $0.path == file?.path }
         return VStack(spacing: 0) {
-            DiffText(lines: file.flatMap { parsed[$0.path] } ?? [], sideBySide: sideBySide,
+            DiffText(identity: (file?.path ?? "") + "\u{0}" + String(describing: scope),
+                     lines: file.flatMap { parsed[$0.path] } ?? [], sideBySide: sideBySide,
                      commented: Set(fileComments.map(\.line))) { line in startComment(line) }
             if !fileComments.isEmpty || draftLine != nil {
                 Hairline()

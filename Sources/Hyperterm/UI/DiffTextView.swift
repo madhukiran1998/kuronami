@@ -7,6 +7,9 @@ import SwiftUI
 /// Unified diffs are plain paragraphs with a line-number gutter; tints span the full width and
 /// are drawn in one pass under the text. Side-by-side diffs are a two-column text table.
 struct DiffText: NSViewRepresentable {
+    /// Which file and scope this is: the view returns to the top only when it changes, not when
+    /// the agent edits the file being read.
+    var identity = ""
     let lines: [PatchLine]
     let sideBySide: Bool
     /// New-file line numbers that carry a review comment, marked in the gutter.
@@ -56,7 +59,10 @@ struct DiffText: NSViewRepresentable {
         }
         let text = sideBySide ? DiffDocument.split(lines) : DiffDocument.unified(lines)
         textView.textStorage?.setAttributedString(text)
-        textView.scroll(.zero)
+        if textView.identity != identity {
+            textView.identity = identity
+            textView.scroll(.zero)
+        }
     }
 }
 
@@ -168,6 +174,7 @@ final class DiffTextView: NSTextView {
     }
 
     var content: Content?
+    var identity: String?
     var lineByID: [Int: PatchLine] = [:]
     var commented: Set<Int> = []
     var onComment: ((PatchLine) -> Void)?

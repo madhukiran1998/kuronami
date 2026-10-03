@@ -47,6 +47,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var pendingPlan: String?
     /// Set while a "continue at reset" is scheduled after a rate limit.
     @Published var resumeAt: Date?
+    /// Review comments drafted in the Changes tab and not yet sent.
+    @Published var reviewComments: [ReviewComment] = []
 
     /// Whether the agent CLI process has been seen running in this terminal.
     var agentProcessSeen = false

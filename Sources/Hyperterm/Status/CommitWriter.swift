@@ -74,7 +74,8 @@ enum CommitWriter {
         let process = Process()
         let shell = ProcessInfo.processInfo.environment["SHELL"].flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil } ?? "/bin/zsh"
         process.executableURL = URL(fileURLWithPath: shell)
-        process.arguments = ["-lc", script]
+        // Interactive login shell: PATH set in .zshrc (nvm, the ~/.claude/local alias) applies.
+        process.arguments = ["-lic", script]
         process.currentDirectoryURL = URL(fileURLWithPath: path)
         var environment = ProcessInfo.processInfo.environment
         // Never inherit a session's identity: this isn't a Kuronami terminal.
