@@ -58,9 +58,20 @@ jobs:
           grep -q "BUILD SUCCEEDED" build.log
 
       - name: Test
+        env:
+          # The snapshot test renders the real views to PNGs for visual review.
+          TEST_RUNNER_HYPERTERM_CAPTURE_UI: ${{ github.workspace }}/captures
         run: |
           set -o pipefail
           xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration Debug \
             -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO test 2>&1 \
             | tee test.log | grep -E "error:|Test Case .* failed|Executed|TEST (SUCCEEDED|FAILED)" || true
           grep -q "TEST SUCCEEDED" test.log
+
+      - name: Upload interface captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interface-captures
+          path: captures
+          if-no-files-found: ignore

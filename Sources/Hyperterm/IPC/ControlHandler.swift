@@ -255,7 +255,7 @@ struct ControlHandler {
                 spec.options = parent.spec.options
             }
             let brief = task + "\n\n(Delegated by @\(parent.label) through Kuronami. When you finish, use send_message to tell @\(parent.label) what you did and where.)"
-            Task { @MainActor in
+            Task { @MainActor [spec] in
                 let child = await store.launch(spec, select: false, worktree: worktree, task: brief)
                 child.record(.note, "Started by @\(parent.label)")
                 parent.record(.note, "Delegated to @\(child.label)")

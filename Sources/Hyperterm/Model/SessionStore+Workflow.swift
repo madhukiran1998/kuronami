@@ -112,7 +112,7 @@ extension SessionStore {
 
     // MARK: - Recently closed
 
-    private static var recentlyClosedURL: URL { ControlPaths.supportDirectory.appendingPathComponent("closed.json") }
+    nonisolated private static var recentlyClosedURL: URL { ControlPaths.supportDirectory.appendingPathComponent("closed.json") }
 
     nonisolated static func loadRecentlyClosed() -> [LaunchSpec] {
         let decoder = JSONDecoder()
