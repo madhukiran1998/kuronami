@@ -476,6 +476,13 @@ final class SessionStore: ObservableObject {
         case .needsInput(let reason):
             if !isVisible { session.unread = true }
             notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: !isVisible)
+        case .idle where previous == .working && session.kind.isAgent && raceFinished(session):
+            // Every agent on this task is done: one notification for the race, not one each.
+            let all = [session] + raceSiblings(of: session)
+            let changed = all.filter { ($0.diffStat?.files ?? 0) > 0 }.count
+            notifier.post(session: session, title: "All \(all.count) agents finished",
+                          body: "\(changed) changed files. Compare them side by side, then right-click the best → Pick This One.",
+                          foreground: !NSApp.isActive)
         case .idle where previous == .working && session.kind.isAgent:
             if !isVisible {
                 session.unread = true
@@ -489,6 +496,17 @@ final class SessionStore: ObservableObject {
             notifier.post(session: session, title: "@\(session.label) crashed", body: "exit \(code)", foreground: true)
         default:
             break
+        }
+    }
+
+    /// The last agent of a race just finished.
+    private func raceFinished(_ session: TerminalSession) -> Bool {
+        let siblings = raceSiblings(of: session)
+        return !siblings.isEmpty && siblings.allSatisfy { sibling in
+            switch sibling.state {
+            case .idle, .failed, .exited: return true
+            default: return false
+            }
         }
     }
 
