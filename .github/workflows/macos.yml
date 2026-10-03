@@ -48,11 +48,16 @@ jobs:
             GhosttyKit.xcframework
             Resources/ghostty
             Resources/terminfo
-          key: ghosttykit-${{ matrix.os }}-${{ hashFiles('scripts/build-ghosttykit.sh') }}
+          key: ghosttykit-${{ hashFiles('scripts/build-ghosttykit.sh') }}
 
       - name: Build libghostty
         if: steps.ghostty.outputs.cache-hit != 'true'
-        run: scripts/build-ghosttykit.sh
+        run: |
+          # Zig 0.15 can't link against the macOS 26 SDK yet; libghostty is SDK-independent, so
+          # build it with Xcode 16 wherever that's installed.
+          OLD=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$OLD" ]; then export DEVELOPER_DIR="$OLD/Contents/Developer"; fi
+          scripts/build-ghosttykit.sh
 
       - name: Cache Chromium
         uses: actions/cache@v4
