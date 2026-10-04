@@ -224,6 +224,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if alive {
             session.agentProcessSeen = true
             if case .exited = session.state { session.apply(.processStarted, source: "process", force: .idle) }
+            // Codex reports nothing until its first turn ends: once it's running, it's at rest,
+            // or already at work on the task it was started with.
+            if session.kind == .codex, session.state == .starting {
+                let hasTask = session.timeline.contains { $0.kind == .prompt }
+                session.apply(.processStarted, source: "process", force: hasTask ? .working : .idle)
+            }
         } else if session.agentProcessSeen || Date().timeIntervalSince(session.createdAt) > 20 {
             if case .exited = session.state { return }
             session.agentProcessSeen = false

@@ -165,7 +165,8 @@ final class TerminalSession: ObservableObject, Identifiable {
         stateChangedAt = Date()
         // Codex has no prompt hook: a turn starts when work starts from rest. Claude's turns
         // come from its UserPromptSubmit and Stop hooks instead.
-        if kind == .codex, next == .working, previous == .idle || previous == .starting, source != "approval" {
+        if kind == .codex, next == .working, previous == .idle || previous == .starting,
+           source != "approval", source != "process" {
             store?.checkpoint(self, phase: .start, prompt: lastPrompt ?? "Turn")
         }
         if previous.needsAttention && !next.needsAttention { flushPendingMessages() }
