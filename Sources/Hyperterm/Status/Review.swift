@@ -48,11 +48,7 @@ enum Review {
 
     static func fileDiffs(at path: String, base: String?, scope: Scope = .branch, ignoreWhitespace: Bool = false) -> [FileDiff] {
         if case .turn(let from, let to) = scope {
-            var patch = Checkpoints.diff(at: path, from: from, to: to)
-            if ignoreWhitespace, let target = to ?? Checkpoints.snapshot(at: path, message: "Kuronami: compare") {
-                patch = Git.run(["-c", "core.quotePath=false", "diff", "--no-renames", "-w", from, target], at: path, trim: false) ?? patch
-            }
-            return files(fromPatch: patch)
+            return files(fromPatch: Checkpoints.diff(at: path, from: from, to: to, ignoreWhitespace: ignoreWhitespace))
         }
         let commit = scope == .uncommitted ? runGit(["-C", path, "rev-parse", "HEAD"]) : baseCommit(at: path, base: base)
         guard let commit else { return [] }

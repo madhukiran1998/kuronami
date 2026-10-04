@@ -427,6 +427,8 @@ extension TerminalSession: TerminalSurfaceEvents {
 
     func surfaceUserSubmitted() {
         userDraftInProgress = false
+        // Typed by the user, so the last prompt Kuronami sent doesn't describe this turn.
+        lastPrompt = nil
         apply(.userSubmitted, source: "keyboard")
     }
 

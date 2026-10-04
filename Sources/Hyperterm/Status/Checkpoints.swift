@@ -36,11 +36,11 @@ enum Checkpoints {
 
     /// Snapshots the working tree (tracked and untracked, minus ignored files) as a commit whose
     /// parent is HEAD. Returns its hash, or nil outside a repository.
-    static func snapshot(at path: String, message: String) -> String? {
+    static func snapshot(at path: String, message: String, environment extra: [String: String] = [:]) -> String? {
         guard let gitDir = Git.run(["rev-parse", "--absolute-git-dir"], at: path) else { return nil }
         let index = (gitDir as NSString).appendingPathComponent("kuronami-index-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(atPath: index) }
-        let environment = ["GIT_INDEX_FILE": index]
+        let environment = extra.merging(["GIT_INDEX_FILE": index]) { _, new in new }
         let head = Git.run(["rev-parse", "--verify", "-q", "HEAD"], at: path)
         // Start from a copy of the real index: its stat cache lets `add -A` hash only files that
         // changed, instead of every file in the repository. Without one, start from HEAD.
@@ -51,7 +51,19 @@ enum Checkpoints {
               let tree = Git.run(["write-tree"], at: path, environment: environment) else { return nil }
         var args = ["commit-tree", tree, "-m", message.isEmpty ? "Kuronami checkpoint" : message]
         if let head { args += ["-p", head] }
-        return Git.run(args, at: path, environment: Git.identity)
+        return Git.run(args, at: path, environment: extra.merging(Git.identity) { _, new in new })
+    }
+
+    /// Runs `body` with Git writing new objects to a scratch store layered over the repository's
+    /// own, deleted afterwards, so comparing against the live workspace leaves nothing behind.
+    static func withScratchObjects<T>(at path: String, _ body: ([String: String]) -> T) -> T {
+        guard let objects = Git.run(["rev-parse", "--path-format=absolute", "--git-path", "objects"], at: path) else {
+            return body([:])
+        }
+        let scratch = (NSTemporaryDirectory() as NSString).appendingPathComponent("kuronami-objects-" + UUID().uuidString)
+        try? FileManager.default.createDirectory(atPath: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: scratch) }
+        return body(["GIT_OBJECT_DIRECTORY": scratch, "GIT_ALTERNATE_OBJECT_DIRECTORIES": objects])
     }
 
     /// Snapshots and records the snapshot as `turn`'s start or end.
@@ -95,15 +107,21 @@ enum Checkpoints {
 
     /// Files changed between two snapshots, or between a snapshot and the live workspace.
     static func changedFiles(at path: String, from: String, to: String?) -> [String] {
-        let target = to ?? snapshot(at: path, message: "Kuronami: compare")
-        guard let target else { return [] }
-        return paths(at: path, from: from, to: target, filter: nil)
+        if let to { return paths(at: path, from: from, to: to, filter: nil) }
+        return withScratchObjects(at: path) { environment in
+            guard let live = snapshot(at: path, message: "Kuronami: compare", environment: environment) else { return [] }
+            return paths(at: path, from: from, to: live, filter: nil, environment: environment)
+        }
     }
 
     /// A unified diff between two snapshots, or between a snapshot and the live workspace.
-    static func diff(at path: String, from: String, to: String?) -> String {
-        guard let target = to ?? snapshot(at: path, message: "Kuronami: compare") else { return "" }
-        return Git.run(["-c", "core.quotePath=false", "diff", "--no-renames", from, target], at: path, trim: false) ?? ""
+    static func diff(at path: String, from: String, to: String?, ignoreWhitespace: Bool = false) -> String {
+        let args = ["-c", "core.quotePath=false", "diff", "--no-renames"] + (ignoreWhitespace ? ["-w"] : [])
+        if let to { return Git.run(args + [from, to], at: path, trim: false) ?? "" }
+        return withScratchObjects(at: path) { environment in
+            guard let live = snapshot(at: path, message: "Kuronami: compare", environment: environment) else { return "" }
+            return Git.run(args + [from, live], at: path, environment: environment, trim: false) ?? ""
+        }
     }
 
     // MARK: - Restoring
@@ -153,14 +171,16 @@ enum Checkpoints {
     /// Files a session's turns changed from turn `from` on: what reverting to before that turn
     /// should touch. Other sessions' edits in the same folder aren't in it.
     static func touched(at path: String, session: String, from turn: Int) -> Set<String> {
-        var result = Set<String>()
-        var live: String?
-        for entry in turns(at: path, session: session) where entry.index >= turn {
-            if entry.end == nil, live == nil { live = snapshot(at: path, message: "Kuronami: compare") }
-            guard let end = entry.end ?? live else { continue }
-            result.formUnion(paths(at: path, from: entry.start, to: end, filter: nil))
+        withScratchObjects(at: path) { environment in
+            var result = Set<String>()
+            var live: String?
+            for entry in turns(at: path, session: session) where entry.index >= turn {
+                if entry.end == nil, live == nil { live = snapshot(at: path, message: "Kuronami: compare", environment: environment) }
+                guard let end = entry.end ?? live else { continue }
+                result.formUnion(paths(at: path, from: entry.start, to: end, filter: nil, environment: environment))
+            }
+            return result
         }
-        return result
     }
 
     /// The files the last restore changed, so undoing it touches nothing else.
@@ -192,10 +212,11 @@ enum Checkpoints {
 
     /// Paths (from the repository root) that differ between two commits. NUL-separated, so Git
     /// never quotes a name ("\303\251.txt" for "é.txt") into one that doesn't exist.
-    private static func paths(at path: String, from: String, to: String, filter: String?) -> [String] {
+    private static func paths(at path: String, from: String, to: String, filter: String?,
+                              environment: [String: String] = [:]) -> [String] {
         var args = ["diff", "--name-only", "-z", "--no-renames"]
         if let filter { args.append("--diff-filter=" + filter) }
-        return (Git.run(args + [from, to], at: path, trim: false) ?? "").split(separator: "\0").map(String.init)
+        return (Git.run(args + [from, to], at: path, environment: environment, trim: false) ?? "").split(separator: "\0").map(String.init)
     }
 
     private static func removeEmptyParents(of file: String, upTo root: String) {

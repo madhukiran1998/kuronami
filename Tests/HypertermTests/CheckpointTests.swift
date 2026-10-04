@@ -72,7 +72,10 @@ final class CheckpointTests: XCTestCase {
         Checkpoints.capture(at: repo, session: session, turn: 1, phase: .start, prompt: "one")
         try write("README.md", "hello\nmore\n")
         let turn = try XCTUnwrap(Checkpoints.turns(at: repo, session: session).first)
+        let objects = (Git.run(["count-objects", "-v"], at: repo) ?? "")
         XCTAssertEqual(Checkpoints.changedFiles(at: repo, from: turn.start, to: nil), ["README.md"])
+        XCTAssertTrue(Checkpoints.diff(at: repo, from: turn.start, to: nil).contains("+more"))
+        XCTAssertEqual(Git.run(["count-objects", "-v"], at: repo), objects, "comparing writes nothing into the repository")
     }
 
     func testRestoreRevertsEditsRemovesNewFilesAndKeepsIgnored() throws {
