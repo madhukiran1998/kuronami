@@ -8,8 +8,9 @@ import SwiftUI
 // Principles:
 // - Six text styles. Hierarchy comes from weight and color before size.
 // - A 4-point grid. Three corner radii: controls, rows, panes.
-// - Neutral graphite. Color only ever means something: an agent's state, where focus is, or
-//   which agent it is. Nothing is tinted for decoration.
+// - Sumi ink and bone, like the icon's woodblock print. Color only ever means something, and
+//   comes from traditional pigments: vermilion for focus and action, indigo for work in
+//   progress, gold for "needs you", matcha for running, crimson for failure.
 // - One motion curve, and none at all with Reduce Motion.
 
 // MARK: - Type
@@ -68,22 +69,23 @@ enum Size {
 
 // MARK: - Color
 
-/// Opaque graphite layers, darkest at the back. AppKit colors for layers and windows.
+/// Opaque sumi-ink layers, darkest at the back, faintly warm. AppKit colors for layers and windows.
 enum Ink {
     /// Window and canvas: the deepest layer.
-    static let floor = NSColor(srgbRed: 0.043, green: 0.043, blue: 0.051, alpha: 1)
+    static let floor = NSColor(srgbRed: 0.043, green: 0.041, blue: 0.039, alpha: 1)
     /// Sidebar and inspector.
-    static let deep = NSColor(srgbRed: 0.071, green: 0.071, blue: 0.082, alpha: 1)
+    static let deep = NSColor(srgbRed: 0.066, green: 0.063, blue: 0.060, alpha: 1)
     /// Fields, cards, bars.
-    static let surface = NSColor(srgbRed: 0.106, green: 0.106, blue: 0.118, alpha: 1)
+    static let surface = NSColor(srgbRed: 0.098, green: 0.094, blue: 0.090, alpha: 1)
     /// Hover and selection.
-    static let raised = NSColor(srgbRed: 0.149, green: 0.149, blue: 0.165, alpha: 1)
-    static let hairline = NSColor(srgbRed: 0.176, green: 0.176, blue: 0.196, alpha: 1)
-    static let text = NSColor(srgbRed: 0.949, green: 0.949, blue: 0.961, alpha: 1)
-    static let muted = NSColor(srgbRed: 0.631, green: 0.631, blue: 0.659, alpha: 1)
-    static let faint = NSColor(srgbRed: 0.42, green: 0.42, blue: 0.451, alpha: 1)
-    /// Focus and selection. Shared with "working" on purpose: blue always means "this one, live".
-    static let accent = NSColor(srgbRed: 0.357, green: 0.549, blue: 1.0, alpha: 1)
+    static let raised = NSColor(srgbRed: 0.137, green: 0.131, blue: 0.125, alpha: 1)
+    static let hairline = NSColor(srgbRed: 0.165, green: 0.158, blue: 0.150, alpha: 1)
+    /// Bone, the paper of the icon's print.
+    static let text = NSColor(srgbRed: 0.929, green: 0.910, blue: 0.867, alpha: 1)
+    static let muted = NSColor(srgbRed: 0.620, green: 0.600, blue: 0.565, alpha: 1)
+    static let faint = NSColor(srgbRed: 0.420, green: 0.404, blue: 0.384, alpha: 1)
+    /// Shu (vermilion), the icon's sun: focus, selection, and the one primary action in view.
+    static let accent = NSColor(srgbRed: 0.851, green: 0.290, blue: 0.200, alpha: 1)
 }
 
 /// The same layers for SwiftUI.
@@ -101,17 +103,18 @@ enum Tone {
 /// Meaning. These are the only saturated colors in the app.
 enum Palette {
     static let accent = Color(nsColor: Ink.accent)
-    /// An agent at work, and focus.
-    static let working = Color(nsColor: Ink.accent)
-    /// Something needs you.
-    static let attention = Color(nsColor: NSColor(srgbRed: 0.961, green: 0.647, blue: 0.141, alpha: 1))
-    static let failed = Color(nsColor: NSColor(srgbRed: 0.949, green: 0.333, blue: 0.353, alpha: 1))
-    /// Live servers, passing tests, added lines.
-    static let running = Color(nsColor: NSColor(srgbRed: 0.247, green: 0.812, blue: 0.557, alpha: 1))
+    /// An agent at work: ai (indigo), calm enough to sit on many rows at once.
+    static let working = Color(nsColor: NSColor(srgbRed: 0.494, green: 0.612, blue: 0.788, alpha: 1))
+    /// Something needs you: yamabuki (gold).
+    static let attention = Color(nsColor: NSColor(srgbRed: 0.894, green: 0.647, blue: 0.247, alpha: 1))
+    /// Beni (crimson), rosier than the vermilion accent so failure never reads as focus.
+    static let failed = Color(nsColor: NSColor(srgbRed: 0.882, green: 0.345, blue: 0.443, alpha: 1))
+    /// Live servers, passing tests, added lines: matcha.
+    static let running = Color(nsColor: NSColor(srgbRed: 0.557, green: 0.749, blue: 0.494, alpha: 1))
     static let idle = Tone.faint
     /// Which agent it is: used only on the agent's own mark.
-    static let claude = Color(nsColor: NSColor(srgbRed: 0.851, green: 0.467, blue: 0.341, alpha: 1))
-    static let codex = Color(nsColor: NSColor(srgbRed: 0.62, green: 0.65, blue: 1.0, alpha: 1))
+    static let claude = Color(nsColor: NSColor(srgbRed: 0.851, green: 0.502, blue: 0.396, alpha: 1))
+    static let codex = Color(nsColor: NSColor(srgbRed: 0.722, green: 0.733, blue: 0.851, alpha: 1))
 
     static func status(_ state: AgentState) -> Color {
         switch state {
@@ -369,22 +372,15 @@ struct Hairline: View {
     var body: some View { Rectangle().fill(Tone.hairline).frame(height: Size.hairline) }
 }
 
-/// Kuronami's wave mark, drawn once with three cubic curves; no image assets or animation.
+/// Kuronami's mark: the app icon itself (a brush-ink wave before a red sun), so the two always match.
 struct WaveMark: View {
     var body: some View {
-        Canvas { context, size in
-            for row in 0..<3 {
-                let y = size.height * (0.28 + CGFloat(row) * 0.22)
-                var path = Path()
-                path.move(to: CGPoint(x: size.width * 0.08, y: y))
-                path.addCurve(to: CGPoint(x: size.width * 0.92, y: y),
-                              control1: CGPoint(x: size.width * 0.36, y: y - size.height * 0.36),
-                              control2: CGPoint(x: size.width * 0.64, y: y + size.height * 0.36))
-                context.stroke(path, with: .color(Palette.accent.opacity(1 - Double(row) * 0.2)),
-                               style: StrokeStyle(lineWidth: max(1.4, size.width * 0.055), lineCap: .round))
-            }
-        }
-        .accessibilityHidden(true)
+        // Read from the bundle: NSApp.applicationIconImage can be a stale copy cached by macOS.
+        Image(nsImage: Bundle.main.image(forResource: "AppIcon") ?? NSApp.applicationIconImage)
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fit)
+            .accessibilityHidden(true)
     }
 }
 

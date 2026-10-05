@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/icon.png" width="128" height="128" alt="Kuronami icon: a black wave curling over a blue cursor">
+  <img src="docs/icon.png" width="128" height="128" alt="Kuronami icon: a brush-ink wave with Hokusai claws of foam, before a red sun">
 </p>
 
 <h1 align="center">Kuronami</h1>
@@ -23,7 +23,7 @@
   <img alt="Swift" src="https://img.shields.io/badge/Swift-native-111?style=flat-square&logo=swift&logoColor=F05138">
   <img alt="libghostty" src="https://img.shields.io/badge/terminal-libghostty%20(Metal)-111?style=flat-square">
   <img alt="Claude Code and Codex" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex-111?style=flat-square">
-  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-5B8CFF?style=flat-square"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-D94A33?style=flat-square"></a>
 </p>
 
 <p align="center">
@@ -311,7 +311,7 @@ xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -derivedDataPath build
 scripts/linux-check.sh        # anywhere with Swift + Git: parse every file, design lint, pure-logic tests
 ```
 
-The interface is built on one design system, `Sources/Hyperterm/UI/Design.swift`: six text styles, a 4-point spacing grid, three corner radii, neutral graphite with color reserved for meaning, and one motion curve that turns off with Reduce Motion. `scripts/lint-design.sh` fails on raw font sizes, radii or colors anywhere else.
+The interface is built on one design system, `Sources/Hyperterm/UI/Design.swift`: six text styles, a 4-point spacing grid, three corner radii, sumi-ink neutrals with color from traditional pigments, reserved for meaning, and one motion curve that turns off with Reduce Motion. `scripts/lint-design.sh` fails on raw font sizes, radii or colors anywhere else.
 
 Kuronami was called Hyperterm until October 2026. Internal names keep the old spelling so existing setups carry over: the Xcode project and Swift module, the bundle id, `~/.hyperterm`, the `ht` CLI, and `HT_*` environment variables.
 

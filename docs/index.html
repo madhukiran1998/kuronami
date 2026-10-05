@@ -17,15 +17,15 @@
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0b0b0c;
-    --panel: #121214;
-    --line: #232327;
-    --text: #ececee;
-    --muted: #9a9aa2;
-    --faint: #63636b;
-    --working: #5b8cff;
-    --attention: #f5a524;
-    --done: #3fcf8e;
+    --bg: #0b0a0a;
+    --panel: #131210;
+    --line: #2a2826;
+    --text: #ede8dd;
+    --muted: #9e998f;
+    --faint: #6b6762;
+    --working: #7e9cc9;
+    --attention: #e4a53f;
+    --done: #8ebf7e;
     --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   * { box-sizing: border-box; }
@@ -58,7 +58,7 @@
   }
   .button.solid { background: var(--text); color: var(--bg); border-color: var(--text); }
   .button:hover { border-color: #3a3a40; }
-  .button.solid:hover { background: #fff; }
+  .button.solid:hover { background: #f6f2ea; }
   .small { font-size: 13px; color: var(--faint); }
 
   .shot img {
@@ -86,10 +86,10 @@
   pre.term {
     margin: 0; padding: 22px 24px; border-radius: 12px; overflow-x: auto;
     background: var(--panel); border: 1px solid var(--line);
-    font: 13.5px/1.8 var(--mono); color: #d6d6da;
+    font: 13.5px/1.8 var(--mono); color: #ddd8cd;
   }
   .t-p, .t-c { color: var(--faint); }
-  .t-n { color: #c9c9ce; }
+  .t-n { color: #cdc8bd; }
   .t-w { color: var(--working); }
   .t-a { color: var(--attention); }
   .t-d { color: var(--done); }
@@ -104,7 +104,7 @@
   tbody tr:last-child td { border-bottom: 0; }
   td { color: var(--muted); }
   td.k { color: var(--text); font-weight: 500; background: rgba(255, 255, 255, 0.025); }
-  td.no { color: #45454c; }
+  td.no { color: #4a4642; }
   .note { font-size: 13px; color: var(--faint); margin-top: 14px; max-width: 760px; }
   .else { margin-top: 32px; color: var(--muted); max-width: 760px; }
   .else b { color: var(--text); font-weight: 500; }
@@ -113,7 +113,7 @@
   .copy {
     position: absolute; top: 12px; right: 12px;
     font: 500 12px Geist, sans-serif; color: var(--muted);
-    background: #1a1a1d; border: 1px solid var(--line); border-radius: 6px;
+    background: #1b1917; border: 1px solid var(--line); border-radius: 6px;
     padding: 4px 10px; cursor: pointer;
   }
   .copy:hover { color: var(--text); }
