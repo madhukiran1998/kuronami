@@ -42,6 +42,10 @@ final class ProcessInspector: @unchecked Sendable {
     /// Every process each session started that is still running, including jobs that have left
     /// the session's tree. Only touched on `queue`.
     private var recorded: [String: [TrackedProcess]] = [:]
+    /// Each session's terminal devices. Jobs that leave its tree (nohup, a subshell's `&`) keep
+    /// the terminal, and built-in programs like /bin/sleep hide their environment, so this is
+    /// how such orphans are still found. Only touched on `queue`.
+    private var sessionTTYs: [String: Set<dev_t>] = [:]
     private var ledgerWritten: Set<TrackedProcess> = []
     private let shells: Set<String> = ["login", "zsh", "bash", "sh", "fish", "-zsh", "-bash", "-sh", "-fish", "nu"]
     private let responsibleFor: (@convention(c) (pid_t) -> pid_t)? = {
@@ -161,6 +165,8 @@ final class ProcessInspector: @unchecked Sendable {
         let startSeconds: Int
         /// Microseconds since the epoch, as `SessionReaper.facts` reports it.
         let start: UInt64
+        /// The controlling terminal, or -1 (NODEV) for none.
+        var tty: dev_t = -1
     }
 
     private func listProcesses() -> [ProcessEntry] {
@@ -180,7 +186,8 @@ final class ProcessInspector: @unchecked Sendable {
             let start = proc.kp_proc.p_starttime
             return ProcessEntry(pid: proc.kp_proc.p_pid, ppid: proc.kp_eproc.e_ppid, name: name,
                                 startSeconds: Int(start.tv_sec),
-                                start: UInt64(start.tv_sec) * 1_000_000 + UInt64(start.tv_usec))
+                                start: UInt64(start.tv_sec) * 1_000_000 + UInt64(start.tv_usec),
+                                tty: proc.kp_eproc.e_tdev)
         }
     }
 
@@ -253,10 +260,12 @@ final class ProcessInspector: @unchecked Sendable {
             // Double-forked daemons are launchd's children, but macOS still holds Kuronami
             // responsible for them and they keep the session's environment.
             let mine = getpid()
+            sessionTTYs[id, default: []].formUnion(fresh.map(\.tty).filter { $0 != -1 })
             let orphans = processes.filter { entry in
                 entry.ppid == 1 && responsibleFor?(entry.pid) == mine
                     && processEnvironment(entry.pid)?["HT_SESSION_ID"] == id
-            }
+            } + ttyOrphans(of: id, in: processes, mine: mine)
+            sessionTTYs[id] = nil
             let previous = recorded.removeValue(forKey: id) ?? []
             return Self.selectTree(session: id, seeds: (fresh + orphans).map(\.pid), recorded: previous,
                                    byPID: byPID, children: children, mine: mine)
@@ -280,14 +289,27 @@ final class ProcessInspector: @unchecked Sendable {
         return result
     }
 
+    /// Processes launchd adopted that still hold one of the session's terminals and that macOS
+    /// still holds Kuronami responsible for.
+    private func ttyOrphans(of session: String, in processes: [ProcessEntry], mine: pid_t) -> [ProcessEntry] {
+        guard let ttys = sessionTTYs[session], !ttys.isEmpty else { return [] }
+        return processes.filter { $0.ppid == 1 && ttys.contains($0.tty) && responsibleFor?($0.pid) == mine }
+    }
+
     /// Keeps each session's processes, including ones that left its tree, and rewrites the
     /// ledger only when they changed. Runs on `queue`.
     private func record(_ trees: [String: [ProcessEntry]], processes: [ProcessEntry], children: [pid_t: [ProcessEntry]]) {
         let byPID = Dictionary(processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         let mine = getpid()
         var next: [String: [TrackedProcess]] = [:]
-        for session in Set(trees.keys).union(recorded.keys) {
-            let tree = Self.selectTree(session: session, seeds: (trees[session] ?? []).map(\.pid),
+        for (session, tree) in trees {
+            sessionTTYs[session, default: []].formUnion(tree.map(\.tty).filter { $0 != -1 })
+        }
+        let sessions = Set(trees.keys).union(recorded.keys)
+        sessionTTYs = sessionTTYs.filter { sessions.contains($0.key) }
+        for session in sessions {
+            let orphans = ttyOrphans(of: session, in: processes, mine: mine)
+            let tree = Self.selectTree(session: session, seeds: ((trees[session] ?? []) + orphans).map(\.pid),
                                        recorded: recorded[session] ?? [], byPID: byPID, children: children, mine: mine)
             if !tree.isEmpty { next[session] = tree }
         }
