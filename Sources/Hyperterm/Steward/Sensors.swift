@@ -85,6 +85,13 @@ struct ProcessUsage {
         return ProcessUsage(footprint: info.ri_phys_footprint, cpuNanoseconds: ticks * timebase.numer / timebase.denom)
     }
 
+    /// The process's executable path.
+    static func path(_ pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(cString: buffer)
+    }
+
     /// The process's short name (its executable's), e.g. "claude" or "node".
     static func name(_ pid: pid_t) -> String? {
         var buffer = [CChar](repeating: 0, count: 64)

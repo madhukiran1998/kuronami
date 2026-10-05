@@ -199,4 +199,10 @@ final class StewardTests: XCTestCase {
         XCTAssertEqual(setpriority(PRIO_PROCESS, id_t(pid), 0), -1, "lowering it again needs root")
         XCTAssertEqual(errno, EACCES)
     }
+
+    func testTheAgentCLIAndItsHelpersAreNotWork() {
+        XCTAssertTrue(StewardRules.isAgentMachinery(name: "2.1.289", path: "/Users/u/.local/share/claude/versions/2.1.289"))
+        XCTAssertTrue(StewardRules.isAgentMachinery(name: "ht", path: "/Users/u/.hyperterm/bin/ht"))
+        XCTAssertFalse(StewardRules.isAgentMachinery(name: "node", path: "/opt/homebrew/bin/node"))
+    }
 }

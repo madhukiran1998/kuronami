@@ -131,7 +131,9 @@ final class Steward: ObservableObject {
                 guard let usage = ProcessUsage.read(pid) else { continue }
                 footprint += usage.footprint
                 times[pid] = usage.cpuNanoseconds
-                if !StewardRules.isAgentMachinery(ProcessUsage.name(pid)) { work[pid] = usage.cpuNanoseconds }
+                if !StewardRules.isAgentMachinery(name: ProcessUsage.name(pid), path: ProcessUsage.path(pid)) {
+                    work[pid] = usage.cpuNanoseconds
+                }
             }
             let cpu = meters[session.id, default: CPUMeter()].update(times, at: clock)
             let workCPU = workMeters[session.id, default: CPUMeter()].update(work, at: clock)

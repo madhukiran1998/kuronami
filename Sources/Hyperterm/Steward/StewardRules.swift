@@ -145,9 +145,12 @@ struct EscalationTracker {
 
 extension StewardRules {
     /// The agent CLI, its shells and Kuronami's own helpers: always there, never the agent's work.
-    static func isAgentMachinery(_ name: String?) -> Bool {
+    /// Claude's native install runs a file named for its version (…/claude/versions/2.1.289), so
+    /// the kernel's name for it is "2.1.289"; its path gives it away.
+    static func isAgentMachinery(name: String?, path: String?) -> Bool {
         guard let name else { return true }
-        return ["claude", "codex", "ht", "caffeinate", "login", "zsh", "bash", "sh", "fish"].contains(name)
+        if ["claude", "codex", "ht", "caffeinate", "login", "zsh", "bash", "sh", "fish"].contains(name) { return true }
+        return path.map { $0.contains("/claude/versions/") } ?? false
     }
 }
 
