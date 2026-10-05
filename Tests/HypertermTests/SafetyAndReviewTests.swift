@@ -27,6 +27,70 @@ final class SafetyAndReviewTests: XCTestCase {
         XCTAssertFalse(PromptScreen.hasDialog("Do you want me to continue with the refactor?"))
     }
 
+    private let claudeTrust = """
+     Accessing workspace:
+     /Users/me/scratch/new-project
+     Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open
+     source project, or work from your team). If not, take a moment to review what's in this folder first.
+     Claude Code'll be able to read, edit, and execute files here.
+     Security guide
+     ❯ No, exit
+       Yes, I trust this folder
+     Enter to confirm · Esc to cancel
+    """
+
+    func testTrustDialogDetection() {
+        XCTAssertTrue(PromptScreen.hasTrustDialog(claudeTrust))
+        XCTAssertTrue(PromptScreen.hasTrustDialog("""
+        > You are running Codex in /tmp/x
+          Since this folder is version controlled, you may wish to allow Codex to work in this folder without asking for approval.
+        › 1. Yes, allow Codex to work in this folder without asking for approval
+          2. No, ask me to approve edits and commands
+        """))
+        XCTAssertFalse(PromptScreen.hasTrustDialog(claudeDialog))
+        XCTAssertFalse(PromptScreen.hasTrustDialog("Claude Code v2.1\n⏺ Done.\n───────\n❯ \n───────\n? for shortcuts"))
+    }
+
+    @MainActor
+    func testTrustPromptNeedsYouAndClearsWhenAnswered() {
+        let session = TerminalSession(spec: LaunchSpec(label: "api", kind: .claude, cwd: "/tmp"), resume: false)
+        let store = SessionStore(previewSessions: [session], previewLayout: .focus)
+        XCTAssertEqual(session.state, .starting)
+
+        session.trustPromptSeen(true)
+        XCTAssertEqual(session.state, .needsInput(TerminalSession.trustReason))
+        XCTAssertEqual(session.info().state, "needs-input")
+        XCTAssertFalse(session.atRest, "queued messages wait while the prompt is up")
+        XCTAssertTrue(session.deliver("hello", from: "web").hasPrefix("queued"))
+
+        // SessionStart after "Yes" keeps "needs you"; the screen clearing moves it on.
+        store.applyHook(source: "claude", session: session, json: ["hook_event_name": "SessionStart"], sentAt: nil)
+        XCTAssertEqual(session.state, .needsInput(TerminalSession.trustReason))
+        session.trustPromptSeen(false)
+        XCTAssertEqual(session.state, .idle)
+    }
+
+    @MainActor
+    func testTrustPromptAnsweredBeforeAnyHookReturnsToStarting() {
+        let session = TerminalSession(spec: LaunchSpec(label: "api", kind: .claude, cwd: "/tmp"), resume: false)
+        session.trustPromptSeen(false)
+        XCTAssertEqual(session.state, .starting, "no prompt, no change")
+        session.trustPromptSeen(true)
+        session.trustPromptSeen(false)
+        XCTAssertEqual(session.state, .starting)
+        session.apply(.registryStatus("idle"), source: "claude registry")
+        XCTAssertEqual(session.state, .idle)
+    }
+
+    @MainActor
+    func testTrustCheckLeavesOtherPromptsAlone() {
+        let session = TerminalSession(spec: LaunchSpec(label: "api", kind: .claude, cwd: "/tmp"), resume: false)
+        session.apply(.userSubmitted, source: "test", force: .needsInput("Bash: rm -rf build"))
+        session.trustPromptSeen(true)
+        session.trustPromptSeen(false)
+        XCTAssertEqual(session.state, .needsInput("Bash: rm -rf build"))
+    }
+
     func testSanitizeStripsEscapesAndBidi() {
         let hostile = "hi\u{1b}[201~\u{1b}]0;x\u{07}\u{202E}there\nnext"
         XCTAssertEqual(sanitizeMessage(hostile), "hi[201~]0;xthere\nnext")
