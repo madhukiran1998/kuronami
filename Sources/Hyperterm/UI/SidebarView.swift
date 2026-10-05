@@ -57,7 +57,7 @@ struct SidebarView: View {
             }
             SidebarFooter(store: store, actions: actions)
         }
-        .background(Tone.deep.ignoresSafeArea())
+        .background(Tone.pane.ignoresSafeArea())
         .foregroundStyle(Tone.text)
         .tint(Palette.accent)
     }

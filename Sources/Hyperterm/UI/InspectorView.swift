@@ -23,7 +23,7 @@ struct InspectorView: View {
         }
         .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .foregroundStyle(Tone.text)
-        .background(Tone.deep)
+        .background(Tone.pane)
         .tint(Palette.accent)
     }
 }

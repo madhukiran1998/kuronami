@@ -15,7 +15,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     init(store: SessionStore) {
         self.store = store
-        let window = NSWindow(
+        let window = KuronamiWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1360, height: 840),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
@@ -463,5 +463,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         guard let window, window.firstResponder == nil || window.firstResponder === window else { return }
         if let session = store.selected { window.makeFirstResponder(session.surface) }
+    }
+}
+
+/// Translucent windows go full screen in place, like Ghostty's `macos-non-native-fullscreen`:
+/// native full screen moves the window to its own Space with a black backdrop, so there'd be
+/// nothing to see through to.
+final class KuronamiWindow: NSWindow {
+    private var restoreFrame: NSRect?
+
+    override func toggleFullScreen(_ sender: Any?) {
+        guard Theme.isTranslucent, !styleMask.contains(.fullScreen) else { return super.toggleFullScreen(sender) }
+        if let restoreFrame {
+            self.restoreFrame = nil
+            NSApp.presentationOptions = []
+            setFrame(restoreFrame, display: true, animate: true)
+        } else if let screen {
+            restoreFrame = frame
+            NSApp.presentationOptions = [.autoHideMenuBar, .autoHideDock]
+            setFrame(screen.frame, display: true, animate: true)
+        }
+    }
+
+    // Titled windows are kept below the menu bar; in-place full screen covers it.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        restoreFrame == nil ? super.constrainFrameRect(frameRect, to: screen) : frameRect
     }
 }

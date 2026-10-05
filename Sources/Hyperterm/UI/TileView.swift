@@ -367,7 +367,8 @@ struct TileHeader: View {
         .padding(.leading, Space.m)
         .padding(.trailing, Space.xs)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: Theme.terminalBackground))
+        // Translucent: the header layer already carries the see-through fill.
+        .background(Theme.isTranslucent ? Color.clear : Color(nsColor: Theme.terminalBackground))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(count: 2, perform: actions.zoom)

@@ -98,6 +98,8 @@ enum Tone {
     static let surface = Color(nsColor: Ink.surface)
     static let raised = Color(nsColor: Ink.raised)
     static let hairline = Color(nsColor: Ink.hairline)
+    /// Sidebar and inspector fill. Clear when translucent: their AppKit backing already takes the opacity.
+    @MainActor static var pane: Color { Theme.isTranslucent ? .clear : deep }
     static let text = Color(nsColor: Ink.text)
     static let muted = Color(nsColor: Ink.muted)
     static let faint = Color(nsColor: Ink.faint)
