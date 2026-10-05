@@ -5,7 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SessionStore()
     private var windowController: MainWindowController?
     private var controlServer: ControlServer?
-    private let inspector = ProcessInspector()
+    private let inspector = ProcessInspector.shared
     private let gitInspector = GitInspector()
     private var statusBar: StatusBarController?
     private var pollCount = 0
@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         Theme.load(from: GhosttyRuntime.shared.config)
+        SessionReaper.sweepLeftovers()
         TerminalSessionFactory.store = store
         AgentIntegration.install()
         NSApp.mainMenu = MainMenu.build(target: self)
