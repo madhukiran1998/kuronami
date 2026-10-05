@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         _ = store.restore()
+        store.loadUsage()
         NSApp.activate(ignoringOtherApps: true)
     }
 

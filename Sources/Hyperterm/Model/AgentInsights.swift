@@ -19,13 +19,21 @@ struct UsageSnapshot: Equatable {
 }
 
 /// Account-wide rate-limit windows (shared by every agent on the account).
-struct RateLimits: Equatable {
+struct RateLimits: Equatable, Codable {
     var fiveHourPercent: Double?
     var fiveHourResets: Date?
     var sevenDayPercent: Double?
     var sevenDayResets: Date?
 
     var highest: Double { max(fiveHourPercent ?? 0, sevenDayPercent ?? 0) }
+
+    /// A saved reading as of `now`: a window that has reset since is back to zero.
+    func current(at now: Date = Date()) -> RateLimits {
+        var limits = self
+        if let reset = fiveHourResets, reset <= now { limits.fiveHourPercent = 0; limits.fiveHourResets = nil }
+        if let reset = sevenDayResets, reset <= now { limits.sevenDayPercent = 0; limits.sevenDayResets = nil }
+        return limits
+    }
 }
 
 /// Claude's own todo list, from TaskCreated/TaskCompleted hooks.

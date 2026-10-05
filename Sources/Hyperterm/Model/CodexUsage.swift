@@ -70,6 +70,26 @@ enum CodexUsage {
         return nil
     }
 
+    /// The most recently written session log under an account's root, from the last week.
+    static func newestLog(in root: URL, now: Date = Date()) -> URL? {
+        let fm = FileManager.default
+        let calendar = Calendar(identifier: .gregorian)
+        var newest: (url: URL, date: Date)?
+        for daysAgo in 0..<7 {
+            guard let day = calendar.date(byAdding: .day, value: -daysAgo, to: now) else { continue }
+            let parts = calendar.dateComponents([.year, .month, .day], from: day)
+            let folder = root.appendingPathComponent("sessions").appendingPathComponent(
+                String(format: "%04d/%02d/%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0))
+            let files = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            for file in files where file.pathExtension == "jsonl" {
+                let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                if date > (newest?.date ?? .distantPast) { newest = (file, date) }
+            }
+            if newest != nil { break }
+        }
+        return newest?.url
+    }
+
     /// The last 256 KB of a log: token_count events are written at the end of every turn.
     static func tail(of file: URL, bytes: UInt64 = 256 * 1024) -> Substring? {
         guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }

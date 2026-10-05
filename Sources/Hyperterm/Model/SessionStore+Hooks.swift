@@ -206,7 +206,10 @@ extension SessionStore {
 
     private func recordLimits(_ limits: RateLimits, for session: TerminalSession) {
         let key = "\(session.kind.rawValue)/\(session.spec.account ?? AgentAccount.defaultID)"
-        if accountLimits[key] != limits { accountLimits[key] = limits }
+        if accountLimits[key] != limits {
+            accountLimits[key] = limits
+            saveUsage()
+        }
     }
 
     // MARK: - Codex usage
