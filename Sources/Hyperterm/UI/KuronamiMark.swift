@@ -4,7 +4,7 @@ import SwiftUI
 /// The app icon, for the organizer's button: its own black ground, vermilion sun and brushed
 /// wave (`swift scripts/make-icon.swift --mark` renders them to Resources/Mark), so the sun can
 /// move behind the wave. It drifts while the organizer waits, rises and sets while it works, and
-/// blinks when it needs you. Core Animation runs the loops in the render server, so they cost
+/// glows when it needs you. Core Animation runs the loops in the render server, so they cost
 /// Kuronami next to nothing, and Reduce Motion holds it still.
 struct KuronamiMark: NSViewRepresentable {
     enum Mood: Equatable { case resting, working, needsYou }
@@ -70,6 +70,7 @@ struct KuronamiMark: NSViewRepresentable {
 
         private func animate() {
             sun.removeAllAnimations()
+            sun.shadowOpacity = 0
             let side = sun.bounds.height
             guard !Motion.reduced, side > 0 else { return }
             switch mood {
@@ -78,7 +79,11 @@ struct KuronamiMark: NSViewRepresentable {
             case .working:
                 sun.add(Self.loop("transform.translation.y", from: -side * 0.18, to: side * 0.06, period: 1.6), forKey: "rise")
             case .needsYou:
-                sun.add(Self.loop("opacity", from: 1, to: 0.3, period: 0.6), forKey: "blink")
+                // The sun's own shape glows; the button's circle clips the outer edge of it.
+                sun.shadowColor = Ink.accent.cgColor
+                sun.shadowOffset = .zero
+                sun.shadowOpacity = 1
+                sun.add(Self.loop("shadowRadius", from: side * 0.02, to: side * 0.14, period: 1.2), forKey: "glow")
             }
         }
 

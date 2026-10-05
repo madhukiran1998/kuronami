@@ -9,6 +9,7 @@ import SwiftUI
 final class OrganizerDock {
     final class State: ObservableObject {
         @Published var isOpen = false
+        @Published var markSize: CGFloat = 40
     }
 
     private let store: SessionStore
@@ -19,15 +20,20 @@ final class OrganizerDock {
     private let container = SurfaceContainer()
     private weak var session: TerminalSession?
 
-    static let buttonSize: CGFloat = 40
-    static let markSize: CGFloat = 30
+    /// The mark grows with the screen: 5% of its shorter side, between 40 and 60 points.
+    static func markSize(for screen: NSScreen?) -> CGFloat {
+        let visible = screen?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
+        return min(60, max(40, (min(visible.width, visible.height) * 0.05).rounded()))
+    }
+
+    private var buttonSize: CGFloat { state.markSize + Space.s }
     private static let inset: CGFloat = Space.m
     private static let panelSize = NSSize(width: 620, height: 460)
     private static let headerHeight: CGFloat = 36
 
     init(store: SessionStore) {
         self.store = store
-        button = NSPanel(contentRect: NSRect(x: 0, y: 0, width: Self.buttonSize, height: Self.buttonSize),
+        button = NSPanel(contentRect: NSRect(x: 0, y: 0, width: state.markSize + Space.s, height: state.markSize + Space.s),
                          styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel = OrganizerPanel(contentRect: NSRect(origin: .zero, size: Self.panelSize),
                                styleMask: [.borderless], backing: .buffered, defer: false)
@@ -80,11 +86,13 @@ final class OrganizerDock {
     func reposition() {
         guard let window else { return }
         let frame = window.frame
+        let markSize = Self.markSize(for: window.screen)
+        if state.markSize != markSize { state.markSize = markSize }
         let origin = NSPoint(x: frame.minX + Self.inset, y: frame.minY + Self.inset)
-        button.setFrame(NSRect(origin: origin, size: NSSize(width: Self.buttonSize, height: Self.buttonSize)), display: true)
+        button.setFrame(NSRect(origin: origin, size: NSSize(width: buttonSize, height: buttonSize)), display: true)
         // Above the button, never taller or wider than the window leaves room for.
         let top = frame.maxY - 52
-        let bottom = origin.y + Self.buttonSize + Space.s
+        let bottom = origin.y + buttonSize + Space.s
         let size = NSSize(width: min(Self.panelSize.width, frame.width - Self.inset * 2),
                           height: min(Self.panelSize.height, top - bottom))
         panel.setFrame(NSRect(origin: NSPoint(x: origin.x, y: bottom), size: size), display: true)
@@ -192,7 +200,7 @@ private struct OrganizerButton: View {
     var body: some View {
         Button(action: toggle) {
             KuronamiMark(mood: mood)
-                .frame(width: OrganizerDock.markSize, height: OrganizerDock.markSize)
+                .frame(width: dock.markSize, height: dock.markSize)
                 .scaleEffect(hovering || dock.isOpen ? 1.08 : 1)
                 .animation(Motion.animation(reduceMotion, Motion.quick), value: hovering || dock.isOpen)
                 .overlay(alignment: .topTrailing) {
@@ -200,7 +208,7 @@ private struct OrganizerButton: View {
                         OrganizerDot(session: organizer)
                     }
                 }
-                .frame(width: OrganizerDock.buttonSize, height: OrganizerDock.buttonSize)
+                .frame(width: dock.markSize + Space.s, height: dock.markSize + Space.s)
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
