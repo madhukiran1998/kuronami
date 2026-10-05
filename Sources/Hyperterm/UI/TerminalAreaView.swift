@@ -82,6 +82,7 @@ final class TerminalAreaView: NSView {
             zoom: { [weak self] in self?.onZoomTile?(id) },
             minimize: { [weak self] in self?.onMinimizeTile?(id) },
             close: { [weak self] in self?.onCloseTile?(id) },
+            wake: { [weak session] in if let session { session.store?.wake(session) } },
             drag: { [weak self] translation in self?.dragTile(id, by: translation) },
             dragEnded: { [weak self] in self?.endDrag(id) }))
         tile.isHidden = true

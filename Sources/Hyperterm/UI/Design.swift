@@ -431,6 +431,16 @@ struct StatusDot: View {
     }
 }
 
+/// A sleeping agent: quiet, not a status that asks for anything.
+struct AsleepMark: View {
+    var body: some View {
+        Image(systemName: "moon.zzz")
+            .font(Typeface.caption)
+            .foregroundStyle(Tone.faint)
+            .accessibilityLabel("Asleep")
+    }
+}
+
 /// A small rounded tag: "+128 −41", ":5173", "3 queued".
 struct Tag: View {
     let text: String
@@ -595,6 +605,8 @@ extension AgentState {
 extension TerminalSession {
     /// Idle after finishing a turn reads as "Done"; idle before any work reads as "Idle".
     var statusWord: String {
+        if isAsleep { return "Asleep" }
+        if isWaking { return "Waking…" }
         if state == .idle, summary != nil || !timeline.isEmpty { return "Done" }
         return state.phrase
     }

@@ -93,6 +93,8 @@ struct SessionInfo: Codable, Equatable {
     var branch: String?
     /// The agent behind the sidebar's box, which runs the user's other sessions.
     var organizer: Bool?
+    /// The agent CLI quit to free memory; a message or keystroke resumes its conversation.
+    var asleep: Bool?
 }
 
 struct ControlResponse: Codable {

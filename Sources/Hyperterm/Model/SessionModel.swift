@@ -152,6 +152,8 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     var organizer: Bool?
     /// What it was for and how it ended. Nil in specs saved before sessions remembered.
     var memory: SessionMemory?
+    /// Agents: asleep (CLI quit to free memory), so a restore leaves it asleep instead of relaunching.
+    var asleep: Bool?
 
     /// Where the agent's files actually live.
     var workPath: String {

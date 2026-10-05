@@ -296,6 +296,7 @@ struct TileHeaderSnapshot: Equatable {
     let statusWord: String
     let ports: [Int]
     let summary: String?
+    let asleep: Bool
 
     @MainActor init(session: TerminalSession) {
         label = session.label
@@ -304,6 +305,7 @@ struct TileHeaderSnapshot: Equatable {
         stateChangedAt = session.stateChangedAt
         statusWord = session.statusWord
         ports = session.ports
+        asleep = session.isAsleep
         if case .needsInput(let reason) = session.state {
             summary = session.pendingRequest ?? reason
         } else {
@@ -319,6 +321,7 @@ struct TileActions {
     var zoom: () -> Void
     var minimize: () -> Void
     var close: () -> Void
+    var wake: () -> Void
     /// Header drag in progress: translation from where it started (SwiftUI, y down).
     var drag: (CGSize) -> Void
     var dragEnded: () -> Void
@@ -359,6 +362,8 @@ struct TileHeader: View {
                 BrowserDriverBadge(label: snapshot.label)
             } else if hovering || compact {
                 controls(compact: compact)
+            } else if snapshot.asleep {
+                AsleepMark().help("Asleep · type or send a message to wake it")
             } else {
                 StatusDot(state: snapshot.state, size: 6)
                     .help(snapshot.statusWord)
@@ -381,6 +386,7 @@ struct TileHeader: View {
             Button("Focus", action: actions.select)
             Button("Zoom", action: actions.zoom)
             Button("Minimize to Shelf", action: actions.minimize)
+            if snapshot.asleep { Button("Wake", action: actions.wake) }
             Divider()
             Button("Close", action: actions.close)
         }
