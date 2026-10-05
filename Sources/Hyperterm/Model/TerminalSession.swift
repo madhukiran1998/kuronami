@@ -191,6 +191,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         asleepScreen = surface.readText(lastLines: 2000)
         (surface as? TerminalSurfaceView)?.freezeFrame()
         isAsleep = true
+        fellAsleepAt = Date()
         spec.asleep = true
         record(.note, "Asleep: the agent quit to free memory; its conversation resumes on the next message")
         type(kind == .codex ? "/quit" : "/exit", submit: true, countsAsWork: false)
@@ -207,6 +208,21 @@ final class TerminalSession: ObservableObject, Identifiable {
         lastHookSentAt = 0
         apply(.processStarted, source: "wake", force: .starting)
         if shellAtPrompt { sendPendingInput() }
+    }
+
+    /// When it was told to quit, to notice a CLI that didn't.
+    private(set) var fellAsleepAt: Date?
+
+    /// The CLI is still running after its exit command (it asked something instead): close
+    /// whatever it asked and show the live terminal again, awake.
+    func abortSleep() {
+        guard isAsleep else { return }
+        _ = surface.pressKey(named: "esc")
+        endSleep()
+        fellAsleepAt = nil
+        (surface as? TerminalSurfaceView)?.thawFrame()
+        record(.note, "Stayed awake: the agent didn't quit when asked")
+        store?.persist()
     }
 
     private func endSleep() {

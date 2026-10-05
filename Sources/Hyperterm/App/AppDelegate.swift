@@ -271,6 +271,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func trackAgentProcess(_ session: TerminalSession, _ snapshot: ProcessSnapshot?) {
         let name = session.kind == .claude ? "claude" : "codex"
         let alive = snapshot?.programs.contains { $0.contains(name) } ?? false
+        if session.isAsleep {
+            if alive, let since = session.fellAsleepAt, Date().timeIntervalSince(since) > 8 { session.abortSleep() }
+            return
+        }
         if alive {
             session.agentProcessSeen = true
             if case .exited = session.state { session.apply(.processStarted, source: "process", force: .idle) }

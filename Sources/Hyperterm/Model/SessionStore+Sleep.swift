@@ -8,6 +8,9 @@ extension SessionStore {
         guard session.kind.isAgent, !session.isOrganizer, !session.isAsleep, !session.isWaking,
               session.state == .idle, session.pendingMessages.isEmpty, session.inputIsEmpty,
               let id = session.spec.agentSessionId, isSafeIdentifier(id) else { return false }
+        // Claude asks whether to keep a worktree it made (--worktree) on exit, or removes a clean
+        // one, which would leave nothing to resume in.
+        if session.kind == .claude, session.spec.worktreeName != nil { return false }
         // A conversation that never had a turn has nothing to resume.
         let hadTurn = session.summary != nil || session.timeline.contains { $0.kind == .prompt }
         return hadTurn && !session.dialogOnScreen
