@@ -22,6 +22,7 @@ final class SessionStore: ObservableObject {
     /// Terminals the organizer waits on, each with the note it left for when that one finishes.
     var organizerWatches: [UUID: String] = [:]
     var organizerDigest = OrganizerDigest()
+    var overlapWatch = OverlapWatch()
     /// Called when a session's status changes. It can change which tiles show (grid hides exited
     /// sessions) and their chrome, but must not pull keyboard focus away from where the user is.
     var onStatusChange: (() -> Void)?
@@ -331,8 +332,13 @@ final class SessionStore: ObservableObject {
             let preferred = AccountStore.shared.preferredID(for: spec.kind)
             if preferred != AgentAccount.defaultID { spec.account = preferred }
         }
+        if spec.kind.isAgent, spec.worktreeBranch != nil || spec.worktreeName != nil {
+            spec.portSlot = PortSlots.assign(current: spec.portSlot, taken: Set(sessions.compactMap(\.spec.portSlot)))
+        }
         if spec.kind.isAgent, spec.port == nil, let config = prepared.config {
-            spec.port = Ports.allocate(config: config, taken: Set(sessions.compactMap(\.spec.port)))
+            // Other agents' port ranges are theirs, so a dev server port never lands in one.
+            let ranges = sessions.compactMap(\.spec.portSlot).flatMap(PortSlots.range)
+            spec.port = Ports.allocate(config: config, taken: Set(sessions.compactMap(\.spec.port) + ranges))
         }
         // The first task is what the session was for; a resumed one keeps it.
         if let task, !task.isEmpty, spec.memory?.task == nil {
@@ -350,6 +356,8 @@ final class SessionStore: ObservableObject {
         if select { self.select(session) }
         persist()
         if !resume { startDevServerIfConfigured(for: session, config: prepared.config) } else { loadTurns(session) }
+        // Claude copies `.worktreeinclude` files into its own worktrees.
+        if !resume, spec.kind != .claude, spec.worktreeBranch != nil { warmWorktree(session) }
         // Codex has no prompt hook, and an agent started with a task never rests before its first
         // turn, so that turn's start is recorded here.
         if spec.kind == .codex, !resume, let task, !task.isEmpty { checkpoint(session, phase: .start, prompt: task) }
@@ -386,6 +394,7 @@ final class SessionStore: ObservableObject {
         }
         session.terminate()
         sessions.removeAll { $0.id == session.id }
+        forgetOverlaps(with: session)
         childCancellables[session.id] = nil
         recent.removeAll { $0 == session.id }
         onRemove?(session)
@@ -503,6 +512,7 @@ final class SessionStore: ObservableObject {
         notifier.updateBadge(count: attentionCount)
         onStatusChange?()
         reportToOrganizer(session, from: previous)
+        watchOverlaps(session, from: previous)
         let isVisible = visibleIDs.contains(session.id) && NSApp.isActive
         switch session.state {
         case .needsInput(let reason):

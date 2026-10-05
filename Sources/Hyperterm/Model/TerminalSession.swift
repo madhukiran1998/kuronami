@@ -49,6 +49,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var resumeAt: Date?
     /// Review comments drafted in the Changes tab and not yet sent.
     @Published var reviewComments: [ReviewComment] = []
+    /// Files that would conflict with each other live agent's workspace, by session.
+    @Published var overlaps: [UUID: [String]] = [:]
 
     /// Whether the agent CLI process has been seen running in this terminal.
     var agentProcessSeen = false
@@ -372,7 +374,7 @@ final class TerminalSession: ObservableObject, Identifiable {
             cwd: abbreviateHome(spec.cwd), command: spec.command, ports: ports, unread: unread,
             agentSessionId: spec.agentSessionId, labelSource: (spec.labelSource ?? .user).rawValue,
             activity: activity, project: git?.project, branch: git?.branch,
-            organizer: isOrganizer ? true : nil)
+            organizer: isOrganizer ? true : nil, conflicts: conflictsByLabel)
     }
 }
 

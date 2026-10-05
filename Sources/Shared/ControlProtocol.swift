@@ -93,6 +93,8 @@ struct SessionInfo: Codable, Equatable {
     var branch: String?
     /// The agent behind the sidebar's box, which runs the user's other sessions.
     var organizer: Bool?
+    /// Agents whose workspaces would conflict with this one's if merged, by label, with the files.
+    var conflicts: [String: [String]]?
 }
 
 struct ControlResponse: Codable {
