@@ -162,6 +162,7 @@ private struct Composer: View {
                 } label: {
                     Text(agentTitle).foregroundStyle(kinds.count == 1 ? kinds[0].tint : Tone.text)
                 }
+                .tint(kinds.count == 1 ? kinds[0].tint : Tone.text)
                 .fixedSize()
                 .help("Which agents take the task. Several agents each get their own worktree.")
                 Menu {
@@ -174,6 +175,7 @@ private struct Composer: View {
                     Image(systemName: mode?.symbol ?? "hand.raised")
                         .foregroundStyle(mode == nil ? Tone.faint : Tone.text)
                 }
+                .tint(mode == nil ? Tone.faint : Tone.text)
                 .fixedSize()
                 .help(mode.map { "\($0.title): \($0.detail)" } ?? "Permissions: as configured in the agent")
                 Menu {
@@ -186,6 +188,7 @@ private struct Composer: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
+                .tint(Tone.muted)
                 .fixedSize()
                 .help("Project: " + abbreviateHome(targetFolder))
                 Spacer(minLength: 0)
@@ -445,6 +448,7 @@ private struct ApprovalStrip: View {
                 } label: {
                     Image(systemName: "ellipsis").font(Typeface.caption.weight(.semibold)).foregroundStyle(Tone.muted)
                 }
+                .tint(Tone.muted)
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()

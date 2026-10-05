@@ -44,13 +44,13 @@ private struct InspectorContent: View {
         VStack(spacing: 0) {
             header
             if tabs.count > 1 {
-                Picker("Inspector", selection: Binding(get: { tab }, set: { store.inspectorTab = $0 })) {
-                    ForEach(tabs) { Text($0.rawValue).tag($0) }
+                HStack {
+                    SegmentedTabs(options: tabs.map { ($0, $0.rawValue) },
+                                  selection: Binding(get: { tab }, set: { store.inspectorTab = $0 }),
+                                  style: .underline)
+                    Spacer(minLength: 0)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
                 .padding(.horizontal, Space.m)
-                .padding(.bottom, Space.m)
             }
             Hairline()
             switch tab {
@@ -79,7 +79,7 @@ private struct InspectorContent: View {
         }
         .padding(.horizontal, Space.m)
         .padding(.top, Space.m)
-        .padding(.bottom, Space.m)
+        .padding(.bottom, Space.s)
     }
 }
 
@@ -967,7 +967,7 @@ private struct InfoView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Space.l) {
+            VStack(alignment: .leading, spacing: Space.xl) {
                 section(session.kind == .browser ? "Browser" : "Session") {
                     row("Kind", session.kind.displayName)
                     row("Status", session.statusWord + (session.state.detail.map { " · " + $0 } ?? ""))
@@ -988,65 +988,72 @@ private struct InfoView: View {
                 }
                 let tasks = session.tasks
                 if tasks.total > 0 {
-                    section("Tasks") {
-                        ProgressView(value: Double(tasks.done), total: Double(tasks.total)).controlSize(.small)
+                    section("Tasks", trailing: "\(tasks.done) of \(tasks.total)") {
+                        Meter(fraction: Double(tasks.done) / Double(tasks.total))
+                            .padding(.bottom, Space.xxs)
                         ForEach(tasks.order, id: \.self) { id in
-                            Label(tasks.subjects[id] ?? "Task", systemImage: tasks.completed.contains(id) ? "checkmark.circle.fill" : "circle")
-                                .font(Typeface.callout)
-                                .foregroundStyle(tasks.completed.contains(id) ? Tone.faint : Tone.text)
+                            let done = tasks.completed.contains(id)
+                            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                                Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                                    .font(Typeface.caption)
+                                    .foregroundStyle(done ? Palette.running : Tone.faint)
+                                Text(tasks.subjects[id] ?? "Task")
+                                    .foregroundStyle(done ? Tone.faint : Tone.text)
+                                    .strikethrough(done, color: Tone.faint)
+                            }
                         }
                     }
                 }
-                if session.kind == .claude {
+                if session.kind.isAgent {
                     section("Usage") {
-                        row("Model", session.usage.model ?? "—")
-                        row("Cost", session.usage.costUSD.map { String(format: "$%.2f", $0) } ?? "—")
+                        if let model = session.usage.model { row("Model", model) }
+                        if let cost = session.usage.costUSD { row("Cost", String(format: "$%.2f", cost)) }
                         if let context = session.usage.contextPercent {
                             HStack(spacing: Space.s) {
                                 Text("Context").foregroundStyle(Tone.muted).frame(width: 72, alignment: .leading)
-                                ProgressView(value: min(max(context, 0), 100), total: 100)
-                                    .controlSize(.small)
-                                    .tint(context >= 90 ? Palette.attention : Palette.accent)
+                                Meter(fraction: context / 100, warning: 0.9)
                                 Text("\(Int(context))%").monospacedDigit()
-                                    .foregroundStyle(context >= 90 ? Palette.attention : Tone.text)
+                                    .foregroundStyle(context >= 90 ? Palette.attention : Tone.muted)
+                                    .frame(width: 34, alignment: .trailing)
                             }
                         }
-                        if let evidence = session.testEvidence {
-                            row("Tests", evidence.summary)
+                        if let limits = session.usage.limits { row("Limits", limitsText(limits)) }
+                        if let evidence = session.testEvidence { row("Tests", evidence.summary) }
+                        if session.usage == UsageSnapshot(), session.testEvidence == nil {
+                            Text("Shows after the first turn.").foregroundStyle(Tone.faint)
                         }
                     }
                 }
-                if let id = session.spec.agentSessionId {
-                    section("Conversation") {
-                        row("ID", id, mono: true)
-                        FlowLayout(spacing: Space.s) {
-                            Button(copiedResume ? "Copied" : "Copy Resume Command") {
+                section("Actions") {
+                    VStack(spacing: 0) {
+                        if session.kind != .browser {
+                            ActionRow(symbol: "arrow.up.forward.app", title: "Open in \(Editors.preferred?.name ?? "Editor")", detail: "⌥⌘O") {
+                                Editors.open(session.spec.workPath)
+                            }
+                        }
+                        ActionRow(symbol: "folder", title: "Reveal in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.spec.workPath)])
+                        }
+                        if let id = session.spec.agentSessionId {
+                            ActionRow(symbol: copiedResume ? "checkmark" : "doc.on.doc",
+                                      title: copiedResume ? "Copied" : "Copy Resume Command",
+                                      detail: String(id.prefix(8))) {
                                 let command = session.kind == .claude ? "claude --resume \(id)" : "codex resume \(id)"
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(command, forType: .string)
                                 copiedResume = true
                             }
+                            .help(id)
                             if session.kind == .claude {
-                                Button("Fork") { _ = store.fork(session) }
+                                ActionRow(symbol: "arrow.triangle.branch", title: "Fork Conversation") { _ = store.fork(session) }
                                     .help("Start a new agent from this point in the conversation")
+                                ActionRow(symbol: "iphone", title: "Continue on Phone") { session.openRemoteControl() }
+                                    .help("Continue with Claude Remote Control")
                             }
                         }
-                        .buttonStyle(PanelButtonStyle())
                     }
+                    .padding(.horizontal, -Space.s)
                 }
-                FlowLayout(spacing: Space.s) {
-                    if session.kind != .browser {
-                        Button("Open in \(Editors.preferred?.name ?? "Editor")") { Editors.open(session.spec.workPath) }
-                    }
-                    Button("Reveal in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.spec.workPath)])
-                    }
-                    if session.kind == .claude {
-                        Button("On Phone") { session.openRemoteControl() }
-                            .help("Continue with Claude Remote Control")
-                    }
-                }
-                .buttonStyle(PanelButtonStyle())
             }
             .padding(Space.m)
             .font(Typeface.callout)
@@ -1059,11 +1066,16 @@ private struct InfoView: View {
         }
     }
 
-    private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+    private func section<Content: View>(_ title: String, trailing: String? = nil, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: Space.s) {
-            SectionHeader(title)
+            SectionHeader(title) { if let trailing { Text(trailing) } }
             content()
         }
+    }
+
+    private func limitsText(_ limits: RateLimits) -> String {
+        [limits.fiveHourPercent.map { "5h \(Int($0))%" }, limits.sevenDayPercent.map { "week \(Int($0))%" }]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 
     private func row(_ label: String, _ value: String, mono: Bool = false) -> some View {

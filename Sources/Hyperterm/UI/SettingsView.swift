@@ -46,12 +46,8 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Settings", selection: $pane) {
-                ForEach(Pane.allCases) { Label($0.rawValue, systemImage: $0.symbol).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
+            SegmentedTabs(options: Pane.allCases.map { ($0, $0.rawValue) }, selection: $pane)
+                .frame(width: 360)
             .padding(.vertical, Space.m)
             Hairline()
             switch pane {

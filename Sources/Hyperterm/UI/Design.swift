@@ -188,6 +188,113 @@ extension View {
 
 // MARK: - Components
 
+/// A choice between a few views or values, drawn in the app's own ink instead of AppKit's
+/// gray segmented control. `.underline` for tabs that switch a panel's content (the inspector);
+/// `.pill` for a compact value picker (Settings panes, Quick Ask's agent).
+struct SegmentedTabs<Value: Hashable>: View {
+    enum Style { case underline, pill }
+
+    let options: [(value: Value, title: String)]
+    @Binding var selection: Value
+    var style: Style = .pill
+    @Namespace private var marker
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: style == .pill ? 0 : Space.l) {
+            ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                segment(option.value, option.title)
+            }
+        }
+        .padding(style == .pill ? Space.xxs : 0)
+        .background {
+            if style == .pill {
+                RoundedRectangle(cornerRadius: Radius.row, style: .continuous).fill(Tone.surface)
+                    .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous).strokeBorder(Tone.hairline))
+            }
+        }
+        .animation(Motion.animation(reduceMotion), value: selection)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func segment(_ value: Value, _ title: String) -> some View {
+        let selected = value == selection
+        return Button { selection = value } label: {
+            Text(title)
+                .font(Typeface.callout.weight(selected ? .semibold : .medium))
+                .foregroundStyle(selected ? Tone.text : Tone.muted)
+                .lineLimit(1)
+                .padding(.horizontal, style == .pill ? Space.m : 0)
+                .frame(minHeight: style == .pill ? 24 : 30)
+                .frame(maxWidth: style == .pill ? .infinity : nil)
+                .background {
+                    if selected, style == .pill {
+                        RoundedRectangle(cornerRadius: Radius.row - Space.xxs, style: .continuous)
+                            .fill(Tone.raised)
+                            .matchedGeometryEffect(id: "marker", in: marker)
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    if selected, style == .underline {
+                        Capsule().fill(Palette.accent).frame(height: 2)
+                            .matchedGeometryEffect(id: "marker", in: marker)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// A thin meter: tasks done, context used. Turns gold past `warning`.
+struct Meter: View {
+    let fraction: Double
+    var warning: Double = 2
+
+    var body: some View {
+        GeometryReader { geometry in
+            Capsule().fill(Tone.raised)
+                .overlay(alignment: .leading) {
+                    Capsule().fill(fraction >= warning ? Palette.attention : Tone.muted)
+                        .frame(width: geometry.size.width * min(max(fraction, 0), 1))
+                }
+        }
+        .frame(height: 4)
+        .accessibilityValue("\(Int(fraction * 100)) percent")
+    }
+}
+
+/// A full-width action in a panel: icon, label, and a hover fill. Quieter than a button row
+/// for lists of secondary actions.
+struct ActionRow: View {
+    let symbol: String
+    let title: String
+    var detail: String? = nil
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Space.s) {
+                Image(systemName: symbol)
+                    .font(Typeface.callout)
+                    .foregroundStyle(Tone.muted)
+                    .frame(width: 18)
+                Text(title).font(Typeface.callout).foregroundStyle(Tone.text)
+                Spacer(minLength: Space.xs)
+                if let detail { Text(detail).font(Typeface.caption).foregroundStyle(Tone.faint) }
+            }
+            .padding(.horizontal, Space.s)
+            .frame(minHeight: 28)
+            .background(hovering ? Tone.raised : .clear, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
 /// A key cap: "⌘N".
 struct KeyboardHint: View {
     let keys: String

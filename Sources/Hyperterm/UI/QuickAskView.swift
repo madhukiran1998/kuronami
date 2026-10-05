@@ -35,13 +35,9 @@ struct QuickAskView: View {
                     .acceptsAttachments($text)
             }
             HStack(spacing: Space.s) {
-                Picker("Agent", selection: $kindName) {
-                    Text("Claude Code").tag(SessionKind.claude.rawValue)
-                    Text("Codex").tag(SessionKind.codex.rawValue)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+                SegmentedTabs(options: [(SessionKind.claude.rawValue, "Claude Code"), (SessionKind.codex.rawValue, "Codex")],
+                              selection: $kindName)
+                    .fixedSize()
                 Menu {
                     // Recent folders only: an open panel would take focus and close Quick Ask.
                     if folders.isEmpty { Text("Start an agent in Kuronami first") }
@@ -50,6 +46,7 @@ struct QuickAskView: View {
                     Label(URL(fileURLWithPath: expandTilde(folder)).lastPathComponent, systemImage: "folder")
                 }
                 .menuStyle(.borderlessButton)
+                .tint(Tone.muted)
                 .fixedSize()
                 .help(abbreviateHome(folder))
                 Spacer()
