@@ -424,6 +424,11 @@ final class TerminalSession: ObservableObject, Identifiable {
             pendingMessages.append(text)
             return "queued: @\(label) is busy at a prompt; it gets the message as soon as that clears"
         }
+        // Typed into a CLI that hasn't drawn its prompt yet, a message is lost.
+        if kind.isAgent, submit, state == .starting {
+            pendingMessages.append(text)
+            return "queued: @\(label) is starting; it gets the message once it's ready"
+        }
         type(text, submit: submit)
         if let sender { record(.message, "Message from @\(sender)") }
         return "delivered to @\(label)"
@@ -476,6 +481,9 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     private func type(_ text: String, submit: Bool, countsAsWork: Bool = true) {
         if submit, countsAsWork { lastPrompt = summarize(text) ?? text }
+        // A message ending in "@name" leaves Claude Code's mention picker open, and the picker
+        // takes the Return; a trailing space closes it.
+        let text = submit && kind.isAgent && text.range(of: #"@[^\s@]+$"#, options: .regularExpression) != nil ? text + " " : text
         surface.sendText(text)
         guard submit else { return }
         // Let the paste land before Return so TUIs don't treat it as part of the paste.

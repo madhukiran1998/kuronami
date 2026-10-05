@@ -221,14 +221,19 @@ final class Steward: ObservableObject {
     /// Whether one more agent fits: memory pressure is normal, the free headroom covers the
     /// typical agent's footprint (p75 × 1.2) for it and any launch still warming up, and the
     /// policy's agent cap isn't reached.
-    func canLaunchAgent() -> Bool {
-        reservations.removeAll { Date().timeIntervalSince($0) > 30 }
-        let sessions = store?.sessions ?? []
-        let footprints = sessions.filter(\.kind.isAgent).compactMap { samples[$0.id]?.footprint }
-        let active = sessions.filter { $0.kind.isAgent && ($0.state == .working || $0.state == .starting) }.count
-        return Admission.admits(available: HostMemory.availableBytes(), pressure: MemoryPressure.current(),
-                                estimate: Admission.estimate(footprints), reserved: reservations.count,
-                                activeAgents: active, maxActiveAgents: policy.maxActiveAgents)
+    func canLaunchAgent() -> Bool { launchBlocker() == nil }
+
+    /// Why a new agent would wait right now, or nil. The organizer doesn't count toward the cap,
+    /// and a launch stops being reserved once its session is starting (it's counted there).
+    func launchBlocker() -> String? {
+        reservations.removeAll { Date().timeIntervalSince($0) > 10 }
+        let sessions = (store?.sessions ?? []).filter { $0.kind.isAgent && !$0.isOrganizer }
+        let footprints = sessions.compactMap { samples[$0.id]?.footprint }
+        let active = sessions.filter { $0.state == .working || $0.state == .starting }.count
+        let recent = sessions.filter { Date().timeIntervalSince($0.createdAt) < 10 }.count
+        return Admission.blocker(available: HostMemory.availableBytes(), pressure: MemoryPressure.current(),
+                                 estimate: Admission.estimate(footprints), reserved: max(0, reservations.count - recent),
+                                 activeAgents: active, maxActiveAgents: policy.maxActiveAgents)
     }
 
     /// Runs `work` now when an agent fits, otherwise in order once headroom returns.

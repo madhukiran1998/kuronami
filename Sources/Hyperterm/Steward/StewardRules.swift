@@ -56,9 +56,23 @@ enum Admission {
     /// `reserved` launches started recently whose memory hasn't shown up yet.
     static func admits(available: UInt64, pressure: MemoryPressure, estimate: UInt64, reserved: Int = 0,
                        activeAgents: Int, maxActiveAgents: Int?) -> Bool {
-        guard pressure == .normal else { return false }
-        if let maxActiveAgents, activeAgents + reserved >= maxActiveAgents { return false }
-        return available >= estimate * UInt64(reserved + 1)
+        blocker(available: available, pressure: pressure, estimate: estimate, reserved: reserved,
+                activeAgents: activeAgents, maxActiveAgents: maxActiveAgents) == nil
+    }
+
+    /// Why one more agent has to wait, or nil when it fits. macOS's own pressure level decides:
+    /// "free" memory always looks low on a Mac (cache, compression), so headroom only counts
+    /// once pressure is up.
+    static func blocker(available: UInt64, pressure: MemoryPressure, estimate: UInt64, reserved: Int = 0,
+                        activeAgents: Int, maxActiveAgents: Int?) -> String? {
+        if let maxActiveAgents, activeAgents + reserved >= maxActiveAgents {
+            return "\(maxActiveAgents) agents are already working (the cap)"
+        }
+        switch pressure {
+        case .normal: return nil
+        case .warning: return available >= estimate * UInt64(reserved + 1) ? nil : "memory is short"
+        case .critical: return "memory is critically short"
+        }
     }
 }
 

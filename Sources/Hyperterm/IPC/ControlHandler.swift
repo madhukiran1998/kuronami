@@ -328,9 +328,10 @@ struct ControlHandler {
         let isolate = request.worktree ?? true
         let store = self.store
         // When memory is short the steward holds the launch; the organizer hears so right away.
-        let queued = !Steward.shared.canLaunchAgent()
-        if queued {
-            reply(.success(text: "queued: memory is short, so the steward starts \(count == 1 ? "it" : "them") when there's room"))
+        let blocker = Steward.shared.launchBlocker()
+        let queued = blocker != nil
+        if let blocker {
+            reply(.success(text: "queued: \(blocker), so the steward starts \(count == 1 ? "it" : "them") when there's room"))
         }
         Steward.shared.enqueueLaunch { Task { @MainActor in
             var started: [TerminalSession] = []

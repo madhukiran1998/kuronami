@@ -42,19 +42,26 @@ final class StewardTests: XCTestCase {
         XCTAssertEqual(Admission.estimate([0, 0]), Admission.defaultAgentFootprint * 6 / 5)
     }
 
-    func testAdmissionNeedsHeadroomForReservedLaunchesToo() {
-        let estimate: UInt64 = 600 << 20
-        XCTAssertTrue(Admission.admits(available: 1 << 30, pressure: .normal, estimate: estimate, activeAgents: 3, maxActiveAgents: nil))
-        XCTAssertFalse(Admission.admits(available: 1 << 30, pressure: .normal, estimate: estimate, reserved: 1,
-                                        activeAgents: 3, maxActiveAgents: nil))
-        XCTAssertFalse(Admission.admits(available: 500 << 20, pressure: .normal, estimate: estimate, activeAgents: 0, maxActiveAgents: nil))
+    func testNormalPressureAdmitsEvenWhenFreeMemoryLooksLow() {
+        // macOS keeps "free" low on purpose; its pressure level is the real signal.
+        XCTAssertTrue(Admission.admits(available: 100 << 20, pressure: .normal, estimate: 2 << 30, reserved: 2,
+                                       activeAgents: 3, maxActiveAgents: nil))
     }
 
-    func testAdmissionStopsUnderPressureAndAtTheCap() {
+    func testUnderWarningAdmissionNeedsHeadroomForReservedLaunchesToo() {
+        let estimate: UInt64 = 600 << 20
+        XCTAssertTrue(Admission.admits(available: 1 << 30, pressure: .warning, estimate: estimate, activeAgents: 3, maxActiveAgents: nil))
+        XCTAssertFalse(Admission.admits(available: 1 << 30, pressure: .warning, estimate: estimate, reserved: 1,
+                                        activeAgents: 3, maxActiveAgents: nil))
+        XCTAssertEqual(Admission.blocker(available: 500 << 20, pressure: .warning, estimate: estimate, activeAgents: 0, maxActiveAgents: nil),
+                       "memory is short")
+    }
+
+    func testAdmissionStopsWhenCriticalAndAtTheCap() {
         let plenty: UInt64 = 32 << 30
-        XCTAssertFalse(Admission.admits(available: plenty, pressure: .warning, estimate: 1, activeAgents: 0, maxActiveAgents: nil))
         XCTAssertFalse(Admission.admits(available: plenty, pressure: .critical, estimate: 1, activeAgents: 0, maxActiveAgents: nil))
-        XCTAssertFalse(Admission.admits(available: plenty, pressure: .normal, estimate: 1, activeAgents: 4, maxActiveAgents: 4))
+        XCTAssertEqual(Admission.blocker(available: plenty, pressure: .normal, estimate: 1, activeAgents: 4, maxActiveAgents: 4),
+                       "4 agents are already working (the cap)")
         XCTAssertTrue(Admission.admits(available: plenty, pressure: .normal, estimate: 1, activeAgents: 3, maxActiveAgents: 4))
     }
 
