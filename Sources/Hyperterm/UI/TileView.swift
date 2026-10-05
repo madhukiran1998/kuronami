@@ -60,7 +60,12 @@ final class TileView: NSView {
         layer?.masksToBounds = false
         header.sizingOptions = []
         content.wantsLayer = true
-        content.layer?.backgroundColor = Theme.terminalBackground.cgColor
+        // Translucent: the surface paints its own see-through background; a fill here would double it.
+        content.layer?.backgroundColor = Theme.isTranslucent ? NSColor.clear.cgColor : Theme.terminalBackground.cgColor
+        if Theme.isTranslucent {
+            header.wantsLayer = true
+            header.layer?.backgroundColor = Theme.terminalBackground.withAlphaComponent(Theme.backgroundOpacity).cgColor
+        }
         content.layer?.cornerCurve = .continuous
         content.layer?.masksToBounds = true
         addSubview(content)

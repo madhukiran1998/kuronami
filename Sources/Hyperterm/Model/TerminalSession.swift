@@ -443,6 +443,10 @@ extension TerminalSession: TerminalSurfaceEvents {
     func surfaceSearch(total: Int?, selected: Int?, start: Bool) {
         store?.onSearchUpdate?(self, total, selected, start)
     }
+
+    func surfaceMentionRequested() {
+        store?.onMentionRequest?(self)
+    }
 }
 
 @MainActor

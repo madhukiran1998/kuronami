@@ -78,6 +78,10 @@ targets:
         PRODUCT_NAME: Kuronami
         PRODUCT_MODULE_NAME: Hyperterm
         OTHER_LDFLAGS: "-lc++"
+      # The debug build runs next to the installed app, so it keeps its own preferences.
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: dev.hyperterm.app.dev
     postBuildScripts:
       - name: Embed ht CLI
         script: |

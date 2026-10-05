@@ -24,6 +24,7 @@ final class SessionStore: ObservableObject {
     var onStatusChange: (() -> Void)?
     var onRemove: ((TerminalSession) -> Void)?
     var onSearchUpdate: ((TerminalSession, Int?, Int?, Bool) -> Void)?
+    var onMentionRequest: ((TerminalSession) -> Void)?
 
     /// Most recently selected first; split view shows the top two.
     private var recent: [UUID] = []
@@ -282,7 +283,7 @@ final class SessionStore: ObservableObject {
 
     @discardableResult
     func create(_ spec: LaunchSpec, resume: Bool = false, select: Bool = true, worktree: Bool = false, task: String? = nil) -> TerminalSession {
-        let spec = labeled(spec, task: task)
+        let spec = labeled(spec)
         let prepared = SessionLaunchPreparation.synchronous(spec, resume: resume, worktree: worktree)
         return finishLaunch(prepared, resume: resume, select: select, task: task)
     }
@@ -292,7 +293,7 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func launch(_ spec: LaunchSpec, resume: Bool = false, select: Bool = true, worktree: Bool = false,
                 isolateIfPossible: Bool = false, task: String? = nil) async -> TerminalSession {
-        var spec = labeled(spec, task: task)
+        var spec = labeled(spec)
         spec.label = launchLabels.reserve(spec.label, for: spec.id, occupied: Set(sessions.map(\.label)))
         launchingCount += 1
         defer {
@@ -304,9 +305,15 @@ final class SessionStore: ObservableObject {
         return finishLaunch(prepared, resume: resume, select: select, task: task)
     }
 
-    private func labeled(_ original: LaunchSpec, task: String?) -> LaunchSpec {
+    private func labeled(_ original: LaunchSpec) -> LaunchSpec {
         var spec = original
-        if spec.label.isEmpty, let task, !task.isEmpty { spec.label = labelFromTask(task) }
+        // Unnamed agents, shells and browsers get a short name (alpha, bravo…) that stays put, so
+        // it's quick to refer to; the task shows as the summary instead.
+        if spec.label.isEmpty, spec.kind != .server {
+            spec.label = nextPhoneticLabel(excluding: spec.id)
+            spec.labelSource = .user
+            return spec
+        }
         spec.label = uniqueLabel(spec.label.isEmpty ? defaultLabel(for: spec) : spec.label, excluding: spec.id)
         return spec
     }
@@ -441,8 +448,11 @@ final class SessionStore: ObservableObject {
     func find(_ target: String) -> TerminalSession? {
         if let uuid = UUID(uuidString: target) { return sessions.first { $0.id == uuid } }
         let label = normalizeLabel(target)
+        // A single letter is short for its default name: "b" is @bravo.
+        let spelled = label.count == 1 ? phoneticLabels.first { $0.hasPrefix(label) } : nil
         return sessions.first { $0.label == label }
             ?? sessions.first { ($0.spec.previousLabels ?? []).contains(label) }
+            ?? spelled.flatMap { name in sessions.first { $0.label == name } }
     }
 
     func session(forEnvironmentID id: String?) -> TerminalSession? {
@@ -572,10 +582,17 @@ final class SessionStore: ObservableObject {
         let folder = URL(fileURLWithPath: expandTilde(spec.cwd)).lastPathComponent
         switch spec.kind {
         case .server: return normalizeLabel(folder + "-server")
-        case .browser: return "web"
         case .shell: return normalizeLabel(folder)
         default: return normalizeLabel(folder)
         }
+    }
+
+    /// The first free name in alpha…zulu; after all 26, alpha-2 and so on.
+    func nextPhoneticLabel(excluding id: UUID? = nil) -> String {
+        let taken = Set(sessions.filter { $0.id != id }.map(\.label))
+            .union(launchLabels.occupied(excluding: id ?? UUID()))
+        if let free = phoneticLabels.first(where: { !taken.contains($0) }) { return free }
+        return SessionLabelReservations.available(phoneticLabels[0], taken: taken)
     }
 
     /// Labels are addresses, so they must be unique: api, api-2, api-3.

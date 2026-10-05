@@ -3,7 +3,7 @@ import Foundation
 /// `ht browser-mcp`: an agent's browser tools. Proxies `chrome-devtools-mcp`, which is attached
 /// to Kuronami's Chromium and sees every Kuronami browser, and scopes it to this agent:
 ///
-/// - Chromium (and this agent's browser session, @<agent>-web) starts on the first tool call.
+/// - Chromium (and this agent's browser session) starts on the first tool call.
 /// - `pageId` defaults to the agent's own browser and stops being required, so agents never act
 ///   on another agent's page by accident; passing another browser's pageId is still allowed.
 /// - `list_pages` names each page's Kuronami browser, so agents can find others by @label.
@@ -351,7 +351,7 @@ private func pageNumbers(in listing: String) -> [Int] {
     listing.split(separator: "\n").compactMap(pageNumber(in:))
 }
 
-/// evaluate_script replies with the value as JSON in a code block: `"api-web"` or `null`.
+/// evaluate_script replies with the value as JSON in a code block: `"charlie"` or `null`.
 private func firstQuotedString(in text: String) -> String? {
     guard let start = text.firstIndex(of: "\"") else { return nil }
     let rest = text[text.index(after: start)...]

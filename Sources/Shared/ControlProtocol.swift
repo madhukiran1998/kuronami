@@ -115,9 +115,13 @@ struct ControlResponse: Codable {
 
 enum ControlPaths {
     /// ~/.hyperterm: short and space-free because these paths are typed into shells and
-    /// embedded in agent configs.
+    /// embedded in agent configs. $HT_HOME moves it, so a dev build (scripts/run.sh) keeps its
+    /// sessions, socket and browser profile apart from the installed app's.
     static var supportDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hyperterm", isDirectory: true)
+        if let env = ProcessInfo.processInfo.environment["HT_HOME"], !env.isEmpty {
+            return URL(fileURLWithPath: env, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hyperterm", isDirectory: true)
     }
 
     /// $HT_SOCKET wins so sessions always talk to the app instance that spawned them.
@@ -126,6 +130,12 @@ enum ControlPaths {
         return supportDirectory.appendingPathComponent("control.sock").path
     }
 }
+
+/// Default names for new agents and shells, used in order: short to say, and each one's first
+/// letter also finds it ("b" is @bravo).
+let phoneticLabels = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
+                      "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo",
+                      "sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu"]
 
 /// Normalizes "@api", "api", " API " to "api".
 func normalizeLabel(_ raw: String) -> String {

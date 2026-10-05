@@ -8,8 +8,9 @@ private func scrubInheritedSessionEnvironment() {
     let exact: Set<String> = ["CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_CODE_ENTRYPOINT",
                               "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_CHILD_SESSION", "CODEX_THREAD_ID"]
     let prefixes = ["CLAUDE_CODE_SESSION_", "CLAUDE_CODE_MESSAGING_", "CODEX_SANDBOX", "HT_"]
+    // HT_HOME picks this instance's data folder (a dev build's), not a session; it stays.
     for key in ProcessInfo.processInfo.environment.keys
-    where exact.contains(key) || prefixes.contains(where: key.hasPrefix) {
+    where key != "HT_HOME" && (exact.contains(key) || prefixes.contains(where: key.hasPrefix)) {
         unsetenv(key)
     }
 }

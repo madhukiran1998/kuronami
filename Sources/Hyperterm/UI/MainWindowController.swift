@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import GhosttyKit
 import SwiftUI
 
 @MainActor
@@ -20,10 +21,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered, defer: false)
         window.title = "Kuronami"
         window.toolbarStyle = .unifiedCompact
-        // Graphite: one opaque surface that terminals float on as rounded panes. Always dark,
-        // and no live blur behind every tile.
-        window.isOpaque = true
-        window.backgroundColor = Ink.floor
+        // Graphite: one surface that terminals float on as rounded panes. Always dark. Opaque
+        // unless the user's Ghostty config asks for `background-opacity` below 1; then it's
+        // see-through with their `background-blur`, the same as Ghostty.
+        if Theme.isTranslucent {
+            window.isOpaque = false
+            // Nearly clear rather than clear, so the window server still applies the blur.
+            window.backgroundColor = .white.withAlphaComponent(0.001)
+        } else {
+            window.isOpaque = true
+            window.backgroundColor = Ink.floor
+        }
         window.appearance = NSAppearance(named: .darkAqua)
         window.titlebarAppearsTransparent = true
         // The sidebar and inspector already say what's selected; the toolbar stays uncluttered.
@@ -40,6 +48,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             window.center()
         }
         window.setFrameAutosaveName("HypertermMain")
+        if Theme.isTranslucent, let app = GhosttyRuntime.shared.app {
+            ghostty_set_window_background_blur(app, Unmanaged.passUnretained(window).toOpaque())
+        }
         bindStore()
     }
 
@@ -109,7 +120,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let wrapper = NSViewController()
         let effect = NSView()
         effect.wantsLayer = true
-        effect.layer?.backgroundColor = color.cgColor
+        effect.layer?.backgroundColor = color.withAlphaComponent(Theme.backgroundOpacity).cgColor
         wrapper.addChild(child)
         child.view.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(child.view)
@@ -178,6 +189,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self.confirmClose(session)
         }
         terminalArea.onReorder = { [weak self] order in self?.store.setTileOrder(order) }
+        store.onMentionRequest = { [weak self] session in self?.showMentionPicker(for: session) }
         store.onSearchUpdate = { [weak self] session, total, selected, start in
             if start { self?.terminalArea.showSearch(for: session.id) }
             self?.terminalArea.searchResults(for: session.id, total: total, selected: selected)
@@ -243,6 +255,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         switcher = panel
     }
 
+    // MARK: - Mention picker
+
+    private var mentionPicker: SwitcherPanel?
+
+    /// Opens under the terminal's cursor; the picked session's name is typed where @@ was.
+    func showMentionPicker(for session: TerminalSession) {
+        mentionPicker?.close()
+        guard let window else { return }
+        let panel = SwitcherPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                                  backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .floating
+        panel.appearance = NSAppearance(named: .darkAqua)
+        let surface = session.surface
+        let close = { [weak panel, weak window] in
+            panel?.close()
+            window?.makeFirstResponder(surface)
+        }
+        let view = MentionPickerView(store: store, origin: session,
+                                     pick: { picked in close(); surface.sendText(picked.label + " ") },
+                                     dismiss: close)
+        let host = NSHostingView(rootView: view)
+        host.frame.size = host.fittingSize
+        panel.contentView = host
+        panel.setContentSize(host.fittingSize)
+        let cursor = (surface as? TerminalSurfaceView)?.firstRect(forCharacterRange: NSRange(), actualRange: nil)
+        let anchor = cursor.flatMap { $0 == .zero ? nil : NSPoint(x: $0.minX, y: $0.minY - 4) }
+            ?? NSPoint(x: window.frame.midX - host.fittingSize.width / 2, y: window.frame.midY)
+        panel.setFrameTopLeftPoint(anchor)
+        window.addChildWindow(panel, ordered: .above)
+        panel.makeKeyAndOrderFront(nil)
+        mentionPicker = panel
+    }
+
     // MARK: - Quick Ask
 
     private var quickAsk: SwitcherPanel?
@@ -284,7 +332,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             $0.kind.isAgent && $0.git.map(GitInfo.mainRoot) == currentRoot
         }
         let recents = Array(NSOrderedSet(array: store.sessions.map(\.spec.cwd).reversed()).array as? [String] ?? [])
-        let view = NewSessionView(draft: draft, recentDirectories: recents,
+        let view = NewSessionView(draft: draft, recentDirectories: recents, defaultName: store.nextPhoneticLabel(),
             onCreate: { [weak self] draft in
                 self?.dismissSheet()
                 self?.createSession(from: draft)

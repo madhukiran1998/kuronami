@@ -21,6 +21,8 @@ protocol TerminalSurfaceEvents: AnyObject {
     func surfaceUserSubmitted()
     func surfaceSearch(total: Int?, selected: Int?, start: Bool)
     func surfaceUserEdited(clearsDraft: Bool)
+    /// The user typed @@: pick a session to name.
+    func surfaceMentionRequested()
 }
 
 struct SurfaceLaunch {
@@ -43,6 +45,8 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private var markedText = NSMutableAttributedString()
     private var keyTextAccumulator: [String]?
     private var lastPerformKeyEvent: TimeInterval?
+    /// The last key typed was a plain @, so another one opens the session picker.
+    private var lastKeyWasAt = false
     private var focused = false
     private var pointerStyle: NSCursor = .iBeam
     private var trackingArea: NSTrackingArea?
@@ -415,6 +419,16 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     override func keyDown(with event: NSEvent) {
         guard let surface else {
             interpretKeyEvents([event])
+            return
+        }
+        // @@ opens the session picker. The first @ already reached the program; erasing it also
+        // closes Claude Code's file picker that it opened.
+        let typedAt = event.characters == "@" && markedText.length == 0
+            && event.modifierFlags.isDisjoint(with: [.command, .control, .option])
+        defer { lastKeyWasAt = typedAt && !lastKeyWasAt }
+        if typedAt && lastKeyWasAt {
+            _ = pressKey(named: "backspace")
+            events?.surfaceMentionRequested()
             return
         }
         let translationEvent = GhosttyInput.translationEvent(for: event, surface: surface)

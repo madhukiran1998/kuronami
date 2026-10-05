@@ -138,11 +138,20 @@ enum Palette {
 enum Theme {
     static private(set) var terminalBackground = NSColor(srgbRed: 0.07, green: 0.07, blue: 0.08, alpha: 1)
     static private(set) var terminalForeground = NSColor(white: 0.9, alpha: 1)
+    /// The user's Ghostty `background-opacity`. Below 1 the window turns see-through like Ghostty's.
+    static private(set) var backgroundOpacity: CGFloat = 1
+
+    static var isTranslucent: Bool { backgroundOpacity < 1 }
 
     static func load(from config: ghostty_config_t?) {
         guard let config else { return }
         if let bg = color(config, "background") { terminalBackground = bg }
         if let fg = color(config, "foreground") { terminalForeground = fg }
+        var opacity: Double = 1
+        let key = "background-opacity"
+        if ghostty_config_get(config, &opacity, key, UInt(key.utf8.count)) {
+            backgroundOpacity = CGFloat(min(1, max(0, opacity)))
+        }
     }
 
     private static func color(_ config: ghostty_config_t, _ key: String) -> NSColor? {
@@ -609,7 +618,8 @@ final class InkCanvas: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = Ink.floor.cgColor
+        // Translucent: the window's blur shows through and each terminal tints itself, as in Ghostty.
+        layer?.backgroundColor = Theme.isTranslucent ? NSColor.clear.cgColor : Ink.floor.cgColor
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
