@@ -20,7 +20,7 @@ final class OrganizerDock {
     private weak var session: TerminalSession?
 
     static let buttonSize: CGFloat = 40
-    static let dotSize: CGFloat = 18
+    static let markSize: CGFloat = 30
     private static let inset: CGFloat = Space.m
     private static let panelSize = NSSize(width: 620, height: 460)
     private static let headerHeight: CGFloat = 36
@@ -173,23 +173,31 @@ extension TerminalSession {
 
 // MARK: - Views
 
-/// The round button: a vermilion dot like the icon's sun, with a status dot while it works or
-/// needs you.
+/// The round button: the Kuronami mark, moving with what the organizer is doing.
 private struct OrganizerButton: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var dock: OrganizerDock.State
     let toggle: () -> Void
     @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var mood: KuronamiMark.Mood {
+        switch store.organizer?.state {
+        case .working?, .starting?: return .working
+        case .needsInput?: return .needsYou
+        default: return .resting
+        }
+    }
 
     var body: some View {
         Button(action: toggle) {
-            Circle()
-                .fill(Palette.accent)
-                .brightness(hovering || dock.isOpen ? 0.08 : 0)
-                .frame(width: OrganizerDock.dotSize, height: OrganizerDock.dotSize)
+            KuronamiMark(mood: mood)
+                .frame(width: OrganizerDock.markSize, height: OrganizerDock.markSize)
+                .scaleEffect(hovering || dock.isOpen ? 1.08 : 1)
+                .animation(Motion.animation(reduceMotion, Motion.quick), value: hovering || dock.isOpen)
                 .overlay(alignment: .topTrailing) {
                     if let organizer = store.organizer {
-                        OrganizerDot(session: organizer).offset(x: Space.xs, y: -Space.xs)
+                        OrganizerDot(session: organizer)
                     }
                 }
                 .frame(width: OrganizerDock.buttonSize, height: OrganizerDock.buttonSize)
@@ -202,15 +210,12 @@ private struct OrganizerButton: View {
     }
 }
 
-/// Shows only while there's something to see: working, needing you, or failed.
+/// Failure is the one state the mark's motion doesn't say.
 private struct OrganizerDot: View {
     @ObservedObject var session: TerminalSession
 
     var body: some View {
-        switch session.state {
-        case .working, .starting, .needsInput, .failed: StatusDot(state: session.state)
-        default: EmptyView()
-        }
+        if case .failed = session.state { StatusDot(state: session.state) }
     }
 }
 
