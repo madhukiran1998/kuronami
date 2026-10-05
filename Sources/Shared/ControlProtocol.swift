@@ -93,9 +93,13 @@ struct ControlResponse: Codable {
 
 enum ControlPaths {
     /// ~/.hyperterm: short and space-free because these paths are typed into shells and
-    /// embedded in agent configs.
+    /// embedded in agent configs. $HT_HOME moves it, so a dev build (scripts/run.sh) keeps its
+    /// sessions, socket and browser profile apart from the installed app's.
     static var supportDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hyperterm", isDirectory: true)
+        if let env = ProcessInfo.processInfo.environment["HT_HOME"], !env.isEmpty {
+            return URL(fileURLWithPath: env, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hyperterm", isDirectory: true)
     }
 
     /// $HT_SOCKET wins so sessions always talk to the app instance that spawned them.

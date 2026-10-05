@@ -8,4 +8,6 @@ xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration "${CONF
 APP="$PWD/build/DerivedData/Build/Products/${CONFIG:-Debug}/Kuronami.app"
 PID=$(pgrep -f "$APP/Contents/MacOS/Kuronami" || true)
 if [ -n "$PID" ]; then kill "$PID"; sleep 1.5; fi
-open "$APP"
+# Debug runs beside the installed app with its own data (~/.hyperterm-dev), so iterating here
+# never restarts your real sessions.
+if [ "${CONFIG:-Debug}" = Debug ]; then open -n --env HT_HOME="$HOME/.hyperterm-dev" "$APP"; else open "$APP"; fi
