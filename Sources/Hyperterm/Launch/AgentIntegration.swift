@@ -176,6 +176,16 @@ enum AgentIntegration {
     /// apply, the command shows in history, and the shell remains after the program exits.
     /// Everything Kuronami interpolates is shell-quoted; only the user's own server command and
     /// agent arguments (typed by the user, never by agents) are passed through as written.
+    /// Whether Claude saved a conversation under this id. A variable so tests can stand in for it.
+    nonisolated(unsafe) static var claudeConversationExists: (LaunchSpec, String) -> Bool = hasClaudeConversation
+
+    private static func hasClaudeConversation(_ spec: LaunchSpec, _ id: String) -> Bool {
+        // Launches are typed on the main thread, where the account store lives.
+        let account = Thread.isMainThread ? MainActor.assumeIsolated { AccountStore.shared.account(spec.account, kind: .claude) } : nil
+        let root = (account ?? AgentAccount(id: AgentAccount.defaultID, kind: .claude, name: "Default")).homeDirectory
+        return AgentTranscript.claudeFile(session: id, cwds: [spec.workPath, expandTilde(spec.cwd)], root: root) != nil
+    }
+
     static func initialInput(for spec: LaunchSpec, resume: Bool, task: String? = nil) -> String? {
         let extra = spec.command.map { " " + $0 } ?? ""
         let prompt = task.flatMap { $0.isEmpty ? nil : " " + shellQuote($0) } ?? ""
@@ -185,7 +195,9 @@ enum AgentIntegration {
         switch spec.kind {
         case .claude:
             var args = "--name \(shellQuote(spec.label))"
-            if resume, let id = spec.agentSessionId, isSafeIdentifier(id) {
+            // An id given up front has no conversation until the first message (say the agent quit
+            // at the folder-trust prompt); resuming it fails, so it starts fresh under the same id.
+            if resume, let id = spec.agentSessionId, isSafeIdentifier(id), claudeConversationExists(spec, id) {
                 args += " --resume \(shellQuote(id))"
             } else if let parent = spec.forkOf, isSafeIdentifier(parent) {
                 // A fork continues the parent's conversation under a new session id; the parent
