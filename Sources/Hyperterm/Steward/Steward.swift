@@ -115,6 +115,7 @@ final class Steward: ObservableObject {
         let clock = ProcessInfo.processInfo.systemUptime
         let thermal = Thermal(ProcessInfo.processInfo.thermalState)
         let focused = focusedIDs(store)
+        let awake = heldAwakeIDs(store)
         var next: [UUID: Sample] = [:]
         for session in store.sessions {
             let key = session.id.uuidString
@@ -143,7 +144,8 @@ final class Steward: ObservableObject {
                                                        cpu: cpu, agentIdle: agentIdle, now: now) {
                 onEscalation?(escalation)
             }
-            if session.kind.isAgent, sleepTracker.update(sessionID: key, band: band, cpu: workCPU, now: now) {
+            let sleepBand = StewardRules.band(state: session.state, isAgent: true, focused: awake.contains(session.id))
+            if session.kind.isAgent, sleepTracker.update(sessionID: key, band: sleepBand, cpu: workCPU, now: now) {
                 onSleepCandidate?(session)
             }
         }
@@ -164,7 +166,13 @@ final class Steward: ObservableObject {
 
     /// On screen, selected, the organizer, or pinned by the policy.
     private func focusedIDs(_ store: SessionStore) -> Set<UUID> {
-        var ids = Set(store.visibleIDs)
+        heldAwakeIDs(store).union(store.visibleIDs)
+    }
+
+    /// What sleep leaves alone: the selected tile, the organizer and pinned sessions. A tile that
+    /// is merely on screen can sleep, since it keeps showing its last screen and wakes on a key.
+    private func heldAwakeIDs(_ store: SessionStore) -> Set<UUID> {
+        var ids = Set<UUID>()
         if let selected = store.selectedID { ids.insert(selected) }
         for session in store.sessions where session.isOrganizer || policy.pinned.contains(session.label)
             || policy.pinned.contains(session.id.uuidString) {
