@@ -50,6 +50,11 @@ final class SessionStore: ObservableObject {
 
     /// Account-wide usage windows, from the most recent statusLine report of any Claude session.
     @Published var rateLimits: RateLimits?
+    /// The same for Codex, from the session log of the most recent Codex turn.
+    @Published var codexRateLimits: RateLimits?
+    /// Usage windows per account ("claude/work", "codex/default"), so the Accounts window can
+    /// show which account still has room.
+    @Published var accountLimits: [String: RateLimits] = [:]
     /// Labels of closed user-named terminals, kept from agents for an hour so messages meant for
     /// them can't be captured by a rename.
     private var reservedLabels: [String: Date] = [:]

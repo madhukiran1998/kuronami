@@ -43,6 +43,7 @@ extension SessionStore {
             session.apply(.codexTurnComplete, source: "codex notify")
             checkpoint(session, phase: .end, prompt: "")
             refreshReview(session)
+            refreshCodexUsage(session)
         default:
             break
         }
@@ -198,6 +199,50 @@ extension SessionStore {
             let parsed = RateLimits(fiveHourPercent: five.0, fiveHourResets: five.1, sevenDayPercent: seven.0, sevenDayResets: seven.1)
             usage.limits = parsed
             if rateLimits != parsed { rateLimits = parsed }
+            recordLimits(parsed, for: session)
+        }
+        if session.usage != usage { session.usage = usage }
+    }
+
+    private func recordLimits(_ limits: RateLimits, for session: TerminalSession) {
+        let key = "\(session.kind.rawValue)/\(session.spec.account ?? AgentAccount.defaultID)"
+        if accountLimits[key] != limits { accountLimits[key] = limits }
+    }
+
+    // MARK: - Codex usage
+
+    /// Reads the turn's usage from the Codex session log, off the main thread.
+    func refreshCodexUsage(_ session: TerminalSession) {
+        guard session.kind == .codex, let thread = session.spec.agentSessionId else { return }
+        let root = (AccountStore.shared.account(session.spec.account, kind: .codex)
+            ?? AgentAccount(id: AgentAccount.defaultID, kind: .codex, name: "Default")).homeDirectory
+        Self.parseQueue.async {
+            let reading = CodexUsage.logFile(thread: thread, in: root)
+                .flatMap { CodexUsage.tail(of: $0) }
+                .flatMap { CodexUsage.latest(in: $0) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { [weak self, weak session] in
+                    guard let self, let session, let reading else { return }
+                    self.applyCodexUsage(reading, to: session)
+                }
+            }
+        }
+    }
+
+    private func applyCodexUsage(_ reading: CodexUsage.Reading, to session: TerminalSession) {
+        var usage = session.usage
+        usage.contextPercent = reading.contextPercent ?? usage.contextPercent
+        if let limits = reading.limits {
+            usage.limits = limits
+            if codexRateLimits != limits { codexRateLimits = limits }
+            recordLimits(limits, for: session)
+            if reading.limitReached {
+                let resets = [limits.fiveHourResets, limits.sevenDayResets].compactMap { $0 }.filter { $0 > Date() }.min()
+                let text = "Rate-limited" + (resets.map { " · resets \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "")
+                    + " · Move to Account to continue"
+                session.summary = text
+                session.record(.failure, text)
+            }
         }
         if session.usage != usage { session.usage = usage }
     }

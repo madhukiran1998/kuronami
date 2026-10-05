@@ -91,6 +91,10 @@ private struct AccountRow: View {
                     Text(email ?? "Not signed in")
                         .font(Typeface.callout)
                         .foregroundStyle(email == nil ? Palette.attention : Color.secondary)
+                    // Known once an agent on this account has finished a turn.
+                    if let limits = TerminalSessionFactory.store?.accountLimits["\(account.kind.rawValue)/\(account.id)"] {
+                        UsageMeter(limits: limits)
+                    }
                 }
                 Spacer()
                 if !isPreferred {

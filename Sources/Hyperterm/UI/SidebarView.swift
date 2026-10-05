@@ -544,7 +544,12 @@ private struct SidebarFooter: View {
         VStack(spacing: Space.s) {
             Hairline()
             HStack(spacing: Space.s) {
-                if let limits = store.rateLimits { UsageMeter(limits: limits) }
+                // Both meters stack when Claude and Codex are both in use; each is labeled then.
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    let both = store.rateLimits != nil && store.codexRateLimits != nil
+                    if let limits = store.rateLimits { UsageMeter(limits: limits, label: both ? "Claude" : nil) }
+                    if let limits = store.codexRateLimits { UsageMeter(limits: limits, label: both || store.rateLimits == nil ? "Codex" : nil) }
+                }
                 Spacer(minLength: 0)
                 Menu {
                     Button("New Terminal…", action: actions.newSession)
@@ -573,9 +578,14 @@ private struct SidebarFooter: View {
 /// Account usage windows shared by every agent: the thing that actually caps parallelism.
 struct UsageMeter: View {
     let limits: RateLimits
+    var label: String?
 
     var body: some View {
         HStack(spacing: Space.m) {
+            if let label {
+                Text(label).font(Typeface.micro.weight(.medium)).foregroundStyle(Tone.muted)
+                    .frame(width: 38, alignment: .leading)
+            }
             gauge("5h", limits.fiveHourPercent, limits.fiveHourResets)
             gauge("Week", limits.sevenDayPercent, limits.sevenDayResets)
         }
