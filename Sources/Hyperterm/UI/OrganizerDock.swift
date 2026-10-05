@@ -187,7 +187,7 @@ private struct OrganizerButton: View {
                     .overlay(Circle().strokeBorder(Tone.hairline, lineWidth: Size.hairline))
                     .overlay {
                         Image(systemName: dock.isOpen ? "chevron.down" : "sparkles")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(Typeface.buttonGlyph)
                             .foregroundStyle(dock.isOpen ? Tone.text : SessionStore.organizerKind.tint)
                     }
                 if let organizer = store.organizer {
