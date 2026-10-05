@@ -181,8 +181,10 @@ enum AgentIntegration {
                 // is untouched. Claude finds conversations by folder, so a fork starts in the
                 // parent's own working folder.
                 args += " --resume \(shellQuote(parent)) --fork-session"
-            } else if let worktree = spec.worktreeName {
-                args += " --worktree \(shellQuote(worktree))"
+            } else {
+                // Pre-assigned, so resume never waits on a hook to learn the id.
+                if let id = spec.agentSessionId, UUID(uuidString: id) != nil { args += " --session-id \(shellQuote(id))" }
+                if let worktree = spec.worktreeName { args += " --worktree \(shellQuote(worktree))" }
             }
             return "\(shellQuote(binDirectory.appendingPathComponent("claude").path)) \(args)\(options(.claude))\(extra)\(prompt)\n"
         case .codex:

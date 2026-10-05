@@ -494,6 +494,7 @@ struct ControlHandler {
         if let target = request.target, !target.isEmpty {
             guard let session = resolve(target) else { return notFound(target) }
             guard !session.isOrganizer else { return .failure("the organizer stays in the sidebar; focus another terminal") }
+            store.wake(session)
             focus = session
         }
         var tiles: LayoutNode?
@@ -567,7 +568,12 @@ struct ControlHandler {
         if !isUser && target.kind == .shell && target.id != callerSession?.id {
             return .failure("@\(target.label) is a shell; agents can't read shells")
         }
-        return .success(text: target.surface.readText(lastLines: min(request.lines ?? 60, 2000)))
+        let lines = min(request.lines ?? 60, 2000)
+        // Asleep, the terminal holds a bare shell; the agent's last screen is what was asked for.
+        if let kept = target.asleepScreen {
+            return .success(text: kept.split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).joined(separator: "\n"))
+        }
+        return .success(text: target.surface.readText(lastLines: lines))
     }
 
     /// Agents rename only themselves, never over a name the user chose, and never onto a label

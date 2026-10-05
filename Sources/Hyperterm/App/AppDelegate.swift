@@ -46,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startControlServer()
         Steward.shared.start(store: store)
         Steward.shared.onEscalation = { [weak store] in store?.reportToOrganizer($0) }
+        Steward.shared.onSleepCandidate = { [weak store] in store?.sleep($0) }
         startInspector()
         store.notifier.onActivate = { [weak self] id in
             guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }

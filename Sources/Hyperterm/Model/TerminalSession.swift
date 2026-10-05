@@ -51,6 +51,15 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var reviewComments: [ReviewComment] = []
     /// Files that would conflict with each other live agent's workspace, by session.
     @Published var overlaps: [UUID: [String]] = [:]
+    /// The agent CLI quit to free its memory; its screen stays and its conversation resumes on
+    /// the next message or keystroke. Status events are ignored meanwhile.
+    @Published private(set) var isAsleep = false
+    /// Relaunched from sleep and not yet at its prompt; keystrokes wait in `wakeDraft`.
+    @Published private(set) var isWaking = false
+    /// What the user typed while it slept or woke, put in the agent's prompt once it is ready.
+    private var wakeDraft = ""
+    /// The screen text when it fell asleep, for readers (the terminal itself now holds a shell).
+    private(set) var asleepScreen: String?
 
     /// Whether the agent CLI process has been seen running in this terminal.
     var agentProcessSeen = false
@@ -67,6 +76,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published private(set) var pendingMessages: [String] = []
     /// The command to type once the shell shows its first prompt.
     private var pendingInput: String?
+    /// The shell reported a prompt (OSC 7) and nothing was typed since, so input lands at it.
+    private var shellAtPrompt = false
     private var inputGeneration = 0
     /// A label Claude Code itself should adopt via /rename at its next idle prompt, so its
     /// native SendMessage name matches the Kuronami label.
@@ -85,7 +96,17 @@ final class TerminalSession: ObservableObject, Identifiable {
         self.surface.events = self
         self.summary = spec.summary.flatMap { $0.hasPrefix("~") || $0.count < 3 ? nil : $0 }
         if !spec.kind.isAgent { state = .running }
-        scheduleInitialInput(resume: resume, task: task)
+        // A known id makes resume independent of hooks reporting it.
+        if spec.kind == .claude, spec.agentSessionId == nil, spec.forkOf == nil {
+            self.spec.agentSessionId = UUID().uuidString.lowercased()
+        }
+        if spec.asleep == true, spec.kind.isAgent {
+            // Restored asleep: a plain shell until something wakes it.
+            isAsleep = true
+            state = .idle
+        } else {
+            scheduleInitialInput(resume: resume, task: task)
+        }
         bindBrowser()
     }
 
@@ -126,6 +147,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     private func sendPendingInput() {
         guard let input = pendingInput else { return }
         pendingInput = nil
+        shellAtPrompt = false
         surface.sendText(input.trimmingCharacters(in: .newlines))
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(60)) { [weak self] in
             self?.surface.sendReturn()
@@ -135,6 +157,10 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// Kills the current process and starts the same spec again. Queued messages survive.
     func restart() {
         store?.dropApproval(for: self)
+        endSleep()
+        isWaking = false
+        wakeDraft = ""
+        shellAtPrompt = false
         surface.events = nil
         surface.destroy()
         surface.removeFromSuperview()
@@ -157,9 +183,80 @@ final class TerminalSession: ObservableObject, Identifiable {
         surface.removeFromSuperview()
     }
 
+    // MARK: - Sleep
+
+    /// Quits the agent CLI with its own exit command, holding its last frame on screen. The
+    /// store checks it is idle at an empty prompt first.
+    func fallAsleep() {
+        asleepScreen = surface.readText(lastLines: 2000)
+        (surface as? TerminalSurfaceView)?.freezeFrame()
+        isAsleep = true
+        spec.asleep = true
+        record(.note, "Asleep: the agent quit to free memory; its conversation resumes on the next message")
+        type(kind == .codex ? "/quit" : "/exit", submit: true, countsAsWork: false)
+    }
+
+    /// Resumes the conversation in the same shell, which is back at its prompt.
+    func wakeUp() {
+        endSleep()
+        isWaking = true
+        record(.note, "Woke: resuming the conversation")
+        scheduleInitialInput(resume: true)
+        agentProcessSeen = false
+        createdAt = Date()
+        lastHookSentAt = 0
+        apply(.processStarted, source: "wake", force: .starting)
+        if shellAtPrompt { sendPendingInput() }
+    }
+
+    private func endSleep() {
+        isAsleep = false
+        asleepScreen = nil
+        spec.asleep = nil
+    }
+
+    /// The agent is back at its prompt (or failed to start): the live terminal replaces the held
+    /// frame, and what the user typed meanwhile becomes their draft.
+    private func finishWaking() {
+        isWaking = false
+        (surface as? TerminalSurfaceView)?.thawFrame()
+        let draft = wakeDraft
+        wakeDraft = ""
+        guard !draft.isEmpty, state == .idle || state == .working else { return }
+        // A draft holds queued messages back, as one the user typed would.
+        userDraftInProgress = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(400)) { [weak self] in
+            self?.surface.sendText(draft)
+        }
+    }
+
+    /// Keystrokes while asleep or waking: the first wakes it; printable text is kept as a draft
+    /// and Return queues it as a message, so nothing reaches the bare shell.
+    private func interceptWhileAsleep(_ event: NSEvent) -> Bool {
+        guard isAsleep || isWaking else { return false }
+        if isAsleep { store?.wake(self) }
+        if !event.modifierFlags.isDisjoint(with: [.command, .control]) { return true }
+        let chars = event.characters ?? ""
+        switch chars {
+        case "\r":
+            if !wakeDraft.isEmpty { pendingMessages.append(wakeDraft) }
+            wakeDraft = ""
+        case "\u{7f}":
+            if !wakeDraft.isEmpty { wakeDraft.removeLast() }
+        default:
+            // Function and arrow keys arrive as private-use characters.
+            if chars.unicodeScalars.allSatisfy({ $0.value >= 0x20 && !(0xF700...0xF8FF).contains($0.value) }) {
+                wakeDraft += chars
+            }
+        }
+        return true
+    }
+
     // MARK: - Status
 
     func apply(_ event: StatusEvent, source: String, force: AgentState? = nil) {
+        // Asleep, the agent's process is gone on purpose; its exit is not news.
+        guard !isAsleep else { return }
         let next = force ?? reduceState(state, kind: kind, event: event)
         guard next != state else { return }
         if !next.needsAttention { pendingRequest = nil }
@@ -168,6 +265,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         state = next
         stateSource = source
         stateChangedAt = Date()
+        if isWaking, next != .starting { finishWaking() }
         // Codex has no prompt hook: a turn starts when work starts from rest. Claude's turns
         // come from its UserPromptSubmit and Stop hooks instead.
         if kind == .codex, next == .working, previous == .idle || previous == .starting,
@@ -211,7 +309,9 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     /// Called on each poll: delivers queued messages once the agent is free.
     func retryPendingMessages() {
-        guard !pendingMessages.isEmpty, kind.isAgent, atRest else { return }
+        guard !pendingMessages.isEmpty, kind.isAgent else { return }
+        if isAsleep { store?.wake(self); return }
+        guard atRest, !isWaking else { return }
         flushPendingMessages()
     }
 
@@ -219,6 +319,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// agent CLI is running (they'd run as shell commands), not after it exited. Codex stays
     /// "starting" until its first turn, so a running CLI counts as ready.
     var atRest: Bool {
+        if isAsleep { return false }
         switch state {
         case .idle, .failed: return true
         case .starting: return agentProcessSeen
@@ -264,7 +365,7 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     /// Typed only at an idle, empty prompt so it never lands in the user's half-written message.
     private func applyPendingNativeRename() {
-        guard let name = pendingNativeRename, kind == .claude, state == .idle else { return }
+        guard let name = pendingNativeRename, kind == .claude, state == .idle, !isAsleep else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(300)) { [weak self] in
             guard let self, self.state == .idle, self.inputIsEmpty, !self.dialogOnScreen else { return }
             self.pendingNativeRename = nil
@@ -276,10 +377,11 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// empty prompt.
     func openRemoteControl() {
         guard kind == .claude else { return }
-        if state == .idle && inputIsEmpty && !dialogOnScreen {
+        if state == .idle && !isAsleep && inputIsEmpty && !dialogOnScreen {
             type("/remote-control", submit: true, countsAsWork: false)
         } else {
             pendingMessages.append("/remote-control")
+            if isAsleep { store?.wake(self) }
         }
     }
 
@@ -299,6 +401,12 @@ final class TerminalSession: ObservableObject, Identifiable {
     func deliver(_ text: String, submit: Bool = true, from sender: String?) -> String {
         if kind == .browser {
             return "@\(label) is a browser; use the browser tools (pageId for @\(label)) to act on it"
+        }
+        if kind.isAgent, isAsleep || isWaking {
+            pendingMessages.append(text)
+            if let sender { record(.message, "Message from @\(sender)") }
+            if isAsleep { store?.wake(self) }
+            return "queued: @\(label) was asleep; it wakes with the same conversation and gets the message once ready"
         }
         if submit, store?.pushViaChannel(text, to: self) == true {
             if let sender { record(.message, "Message from @\(sender)") }
@@ -371,12 +479,12 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     func info() -> SessionInfo {
         SessionInfo(
-            id: id.uuidString, label: label, kind: kind.rawValue, state: state.key,
+            id: id.uuidString, label: label, kind: kind.rawValue, state: isAsleep ? "asleep" : state.key,
             stateDetail: state.detail, summary: agentStatus ?? summary, title: title.isEmpty ? nil : title,
             cwd: abbreviateHome(spec.cwd), command: spec.command, ports: ports, unread: unread,
             agentSessionId: spec.agentSessionId, labelSource: (spec.labelSource ?? .user).rawValue,
             activity: activity, project: git?.project, branch: git?.branch,
-            organizer: isOrganizer ? true : nil, conflicts: conflictsByLabel)
+            organizer: isOrganizer ? true : nil, conflicts: conflictsByLabel, asleep: isAsleep ? true : nil)
     }
 }
 
@@ -395,6 +503,7 @@ extension TerminalSession: TerminalSurfaceEvents {
     }
 
     func surfacePwdChanged(_ pwd: String) {
+        shellAtPrompt = true
         if pendingInput != nil { sendPendingInput() }
         guard !pwd.isEmpty, let url = URL(string: pwd), url.isFileURL || pwd.hasPrefix("/") else { return }
         let path = url.isFileURL ? url.path : pwd
@@ -459,6 +568,10 @@ extension TerminalSession: TerminalSurfaceEvents {
 
     func surfaceMentionRequested() {
         store?.onMentionRequest?(self)
+    }
+
+    func surfaceInterceptsKey(_ event: NSEvent) -> Bool {
+        interceptWhileAsleep(event)
     }
 }
 

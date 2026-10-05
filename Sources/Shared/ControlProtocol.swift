@@ -99,6 +99,8 @@ struct SessionInfo: Codable, Equatable {
     var organizer: Bool?
     /// Agents whose workspaces would conflict with this one's if merged, by label, with the files.
     var conflicts: [String: [String]]?
+    /// The agent CLI quit to free memory; a message or keystroke resumes its conversation.
+    var asleep: Bool?
 }
 
 struct ControlResponse: Codable {

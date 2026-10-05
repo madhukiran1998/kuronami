@@ -177,7 +177,7 @@ struct AgentRow: View {
         switch session.state {
         case .failed(let reason): return (reason, false, Palette.failed)
         case .exited: return ("Agent exited · shell open", false, Tone.faint)
-        case .starting: return ("Starting…", false, Tone.faint)
+        case .starting: return (session.isWaking ? "Waking…" : "Starting…", false, Tone.faint)
         case .working:
             if let activity = session.activity { return (activity, true, Tone.muted) }
         default: break
@@ -243,7 +243,7 @@ struct StateLabel: View {
     var body: some View {
         // Only the clock ticks; the rest of the row re-renders when the session changes.
         TimelineView(.periodic(from: .now, by: session.state == .working ? 15 : 60)) { context in
-            Text(text(now: context.date))
+            Text(session.isAsleep ? "\(Image(systemName: "moon.zzz")) \(text(now: context.date))" : text(now: context.date))
             .font(Typeface.caption.weight(session.state.needsAttention ? .semibold : .regular).monospacedDigit())
             .foregroundStyle(color)
             .lineLimit(1)
@@ -548,6 +548,13 @@ struct SessionMenu: View {
             Button("Let Agent Name It") { actions.releaseLabel(session) }
         }
         Button("Restart") { actions.restart(session) }
+        if session.isAsleep {
+            Button("Wake") { session.store?.wake(session) }
+        } else if session.kind.isAgent, !session.isOrganizer {
+            Button("Sleep") { session.store?.sleep(session) }
+                .disabled(session.store?.canSleep(session) != true)
+                .help("Quit the agent to free its memory; its next message resumes the conversation")
+        }
         if session.kind.isAgent, AccountStore.shared.accounts(for: session.kind).count > 1 {
             Menu("Move to Account") {
                 ForEach(AccountStore.shared.accounts(for: session.kind)) { account in

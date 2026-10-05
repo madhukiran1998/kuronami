@@ -195,6 +195,7 @@ extension SessionStore {
         guard session.kind.isAgent, !session.isOrganizer else { return }
         var spec = session.spec
         spec.minimized = nil
+        spec.asleep = nil
         var memory = spec.memory ?? SessionMemory()
         memory.closedAt = Date()
         memory.lastActiveAt = session.stateChangedAt

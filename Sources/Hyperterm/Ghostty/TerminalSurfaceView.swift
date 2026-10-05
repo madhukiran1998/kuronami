@@ -3,6 +3,7 @@
 
 import AppKit
 import Carbon
+import CoreImage
 import GhosttyKit
 
 /// What the host learns from a terminal surface. Implemented by `TerminalSession`.
@@ -23,6 +24,8 @@ protocol TerminalSurfaceEvents: AnyObject {
     func surfaceUserEdited(clearsDraft: Bool)
     /// The user typed @@: pick a session to name.
     func surfaceMentionRequested()
+    /// True when the host takes this keystroke instead of the program (a sleeping agent).
+    func surfaceInterceptsKey(_ event: NSEvent) -> Bool
 }
 
 struct SurfaceLaunch {
@@ -122,6 +125,42 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     var processExited: Bool {
         guard let surface else { return true }
         return ghostty_surface_process_exited(surface)
+    }
+
+    // MARK: - Frozen frame
+
+    /// The last frame drawn, held over the terminal while the program behind it is gone (a
+    /// sleeping agent), so a full-screen TUI's exit doesn't take its screen with it.
+    private var frozenFrame: NSImageView?
+
+    /// Holds the current frame on screen. False when there is no drawn frame to hold.
+    @discardableResult
+    func freezeFrame() -> Bool {
+        guard frozenFrame == nil, let image = currentFrame() else { return frozenFrame != nil }
+        let view = PassthroughImageView(image: image)
+        view.imageScaling = .scaleNone
+        view.imageAlignment = .alignTopLeft
+        view.frame = bounds
+        view.autoresizingMask = [.width, .height]
+        addSubview(view)
+        frozenFrame = view
+        return true
+    }
+
+    func thawFrame() {
+        frozenFrame?.removeFromSuperview()
+        frozenFrame = nil
+    }
+
+    /// libghostty presents each frame as an IOSurface in its layer's contents.
+    private func currentFrame() -> NSImage? {
+        let layers = [layer].compactMap { $0 } + (layer?.sublayers ?? [])
+        guard let contents = layers.lazy.compactMap({ $0.contents as CFTypeRef? }).first(where: {
+            CFGetTypeID($0) == IOSurfaceGetTypeID()
+        }) else { return nil }
+        let image = CIImage(ioSurface: unsafeBitCast(contents, to: IOSurfaceRef.self))
+        guard let cgImage = CIContext().createCGImage(image, from: image.extent) else { return nil }
+        return NSImage(cgImage: cgImage, size: bounds.size)
     }
 
     // MARK: - Host-driven input
@@ -421,6 +460,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
             interpretKeyEvents([event])
             return
         }
+        if events?.surfaceInterceptsKey(event) == true { return }
         // @@ opens the session picker. The first @ already reached the program; erasing it also
         // closes Claude Code's file picker that it opened.
         let typedAt = event.characters == "@" && markedText.length == 0
@@ -669,6 +709,11 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
         return false
     }
+}
+
+/// Clicks fall through to the terminal, so focusing a frozen tile still works.
+private final class PassthroughImageView: NSImageView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 private func withOptionalCString<T>(_ value: String?, _ body: (UnsafePointer<CChar>?) -> T) -> T {
