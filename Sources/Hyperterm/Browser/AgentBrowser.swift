@@ -1,4 +1,5 @@
 import AppKit
+import CCefAppKit
 import CefSwiftUI
 import Observation
 
@@ -59,6 +60,9 @@ final class AgentBrowser {
         configuration.persistSessionCookies = true
         do {
             try CefRuntime.shared.initialize(configuration: configuration)
+            CEFApplication.setTerminateHandler {
+                ObjCBool(MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.terminateWithBrowsers() ?? true })
+            }
             return true
         } catch {
             startError = String(describing: error)

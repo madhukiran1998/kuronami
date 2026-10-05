@@ -407,8 +407,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - NSWindowDelegate
 
+    /// The red button hides the window like any Mac app; sessions keep running, the Dock icon
+    /// brings it back, and ⌘Q quits.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        NSApp.terminate(nil)
+        sender.orderOut(nil)
         return false
     }
 

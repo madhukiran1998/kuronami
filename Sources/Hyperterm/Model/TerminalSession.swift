@@ -417,8 +417,9 @@ extension TerminalSession: TerminalSurfaceEvents {
     }
 
     func surfaceProcessClosed(processAlive: Bool) {
-        // The shell exited (e.g. the user typed `exit`). Keep the row so output stays readable.
+        // The shell exited (e.g. the user typed `exit`): the terminal closes, as in Terminal.app.
         apply(.childExited(0), source: "process")
+        store?.close(self)
     }
 
     func surfaceFocused() {
