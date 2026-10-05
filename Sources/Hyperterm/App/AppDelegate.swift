@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startInspector()
         store.notifier.onActivate = { [weak self] id in
             guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
+            self.windowController?.showWindow(nil)
             self.store.select(session)
         }
         store.notifier.onApprovalAction = { [weak self] id, answer in
@@ -63,15 +64,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard windowController != nil else { return .terminateNow }
+        confirmQuit() ? .terminateNow : .terminateCancel
+    }
+
+    private var quitConfirmed = false
+    private var closingBrowsersToQuit = false
+
+    /// Asked once per quit, before anything shuts down.
+    private func confirmQuit() -> Bool {
+        guard windowController != nil, !quitConfirmed else { return true }
         let busy = store.sessions.filter { $0.state == .working || $0.state.needsAttention }
-        guard !busy.isEmpty else { return .terminateNow }
-        let alert = NSAlert()
-        alert.messageText = "Quit Kuronami?"
-        alert.informativeText = "\(busy.map { "@" + $0.label }.joined(separator: ", ")) \(busy.count == 1 ? "is" : "are") still working. Agent conversations resume the next time you open Kuronami."
-        alert.addButton(withTitle: "Quit")
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+        if !busy.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "Quit Kuronami?"
+            alert.informativeText = "\(busy.map { "@" + $0.label }.joined(separator: ", ")) \(busy.count == 1 ? "is" : "are") still working. Agent conversations resume the next time you open Kuronami."
+            alert.addButton(withTitle: "Quit")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+        }
+        quitConfirmed = true
+        return true
+    }
+
+    /// Quit while Chromium runs. CefSwift's own handler waits for every page to close itself,
+    /// which can stall the quit forever; instead close the browsers outright and quit a moment
+    /// later. Returns true when the quit may go ahead now.
+    func terminateWithBrowsers() -> Bool {
+        if closingBrowsersToQuit { return true }
+        guard confirmQuit() else { return false }
+        closingBrowsersToQuit = true
+        for session in store.sessions where session.kind == .browser { session.terminate() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { NSApp.terminate(nil) }
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {

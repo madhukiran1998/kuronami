@@ -72,6 +72,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     var label: String { spec.label }
     var kind: SessionKind { spec.kind }
     var isMinimized: Bool { spec.minimized == true }
+    var isOrganizer: Bool { spec.organizer == true }
 
     init(spec: LaunchSpec, resume: Bool, task: String? = nil) {
         self.id = spec.id
@@ -361,7 +362,8 @@ final class TerminalSession: ObservableObject, Identifiable {
             stateDetail: state.detail, summary: agentStatus ?? summary, title: title.isEmpty ? nil : title,
             cwd: abbreviateHome(spec.cwd), command: spec.command, ports: ports, unread: unread,
             agentSessionId: spec.agentSessionId, labelSource: (spec.labelSource ?? .user).rawValue,
-            activity: activity, project: git?.project, branch: git?.branch)
+            activity: activity, project: git?.project, branch: git?.branch,
+            organizer: isOrganizer ? true : nil)
     }
 }
 
@@ -417,8 +419,9 @@ extension TerminalSession: TerminalSurfaceEvents {
     }
 
     func surfaceProcessClosed(processAlive: Bool) {
-        // The shell exited (e.g. the user typed `exit`). Keep the row so output stays readable.
+        // The shell exited (e.g. the user typed `exit`): the terminal closes, as in Terminal.app.
         apply(.childExited(0), source: "process")
+        store?.close(self)
     }
 
     func surfaceFocused() {

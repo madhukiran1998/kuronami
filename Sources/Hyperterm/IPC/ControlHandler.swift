@@ -9,6 +9,8 @@ import AppKit
 /// - Anything else from inside Kuronami (detached, unknown) gets read-only access.
 /// Only the user may press keys, answer prompts, close terminals, or type raw text: those would
 /// let one agent answer another's permission prompts or run commands outside its own checks.
+/// The organizer (the agent behind the sidebar's box) also starts agents in any folder, arranges
+/// the view, and closes terminals once the user confirms.
 @MainActor
 struct ControlHandler {
     let store: SessionStore
@@ -22,6 +24,11 @@ struct ControlHandler {
     private var callerAgent: TerminalSession? {
         guard let session = callerSession, session.kind.isAgent else { return nil }
         return session
+    }
+
+    private var callerOrganizer: TerminalSession? {
+        guard let agent = callerAgent, agent.isOrganizer else { return nil }
+        return agent
     }
 
     private var isUser: Bool {
@@ -75,6 +82,10 @@ struct ControlHandler {
         case .subscribe:
             guard let agent = callerAgent, agent.kind == .claude else { reply(.success()); return }
             store.subscribeChannel(agent, reply: reply)
+        case .new where callerOrganizer != nil && (request.kind == SessionKind.claude.rawValue || request.kind == SessionKind.codex.rawValue):
+            startAgentForOrganizer(request, reply: reply)
+        case .close where callerOrganizer != nil:
+            closeForOrganizer(request, reply: reply)
         case .new where callerAgent != nil && request.kind == SessionKind.server.rawValue:
             startServerForAgent(request, reply: reply)
         case .new where callerAgent != nil && (request.kind == SessionKind.claude.rawValue || request.kind == SessionKind.codex.rawValue):
@@ -144,6 +155,15 @@ struct ControlHandler {
             return .success()
         case .restart:
             return restart(request)
+        case .arrange:
+            guard callerOrganizer != nil else { return .failure("only the organizer arranges the view") }
+            return arrange(request)
+        case .layouts:
+            guard callerOrganizer != nil else { return .failure("only the organizer keeps layouts") }
+            return layouts(request)
+        case .watch:
+            guard callerOrganizer != nil else { return .failure("only the organizer watches terminals") }
+            return watch(request)
         case .rename:
             return rename(request)
         case .notify:
@@ -264,6 +284,170 @@ struct ControlHandler {
                 reply(response)
             }
         }
+    }
+
+    // MARK: - Organizer
+
+    /// The user asked the organizer for these agents, so they start without a second prompt, in
+    /// whatever folder it names, isolated in a worktree where the folder is a repo.
+    private func startAgentForOrganizer(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
+        guard let kind = SessionKind(rawValue: request.kind ?? ""), kind.isAgent else {
+            reply(.failure("kind must be claude or codex"))
+            return
+        }
+        if request.command?.isEmpty == false {
+            reply(.failure("agents can't pass extra arguments to new agents"))
+            return
+        }
+        let task = sanitizeMessage(request.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty else {
+            reply(.failure("a new agent needs a task"))
+            return
+        }
+        guard let folder = request.cwd, !folder.isEmpty else {
+            reply(.failure("say which project folder the agent works in"))
+            return
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: expandTilde(folder), isDirectory: &isDirectory), isDirectory.boolValue else {
+            reply(.failure("no folder at \(folder)"))
+            return
+        }
+        let count = request.count ?? 1
+        guard (1...organizerStartCap).contains(count) else {
+            reply(.failure("count must be 1–\(organizerStartCap)"))
+            return
+        }
+        let base = normalizeLabel(request.label ?? "")
+        let isolate = request.worktree ?? true
+        let store = self.store
+        Task { @MainActor in
+            var started: [TerminalSession] = []
+            for index in 1...count {
+                var spec = LaunchSpec(label: base.isEmpty || count == 1 ? base : "\(base)-\(index)",
+                                      kind: kind, cwd: expandTilde(folder))
+                if spec.labelSource == .user { spec.labelSource = .agent }
+                spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
+                let child = await store.launch(spec, select: false, isolateIfPossible: isolate, task: task)
+                child.record(.note, "Started by the organizer")
+                started.append(child)
+            }
+            // Several at once land side by side, like a project window opened for them.
+            if count > 1 { store.arrange(layout: .grid, focus: started.first, tiles: nil) }
+            let labels = started.map { "@" + $0.label }.joined(separator: ", ")
+            var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))")
+            response.session = started.first?.info()
+            reply(response)
+        }
+    }
+
+    /// Named layouts: save the window as it is, put one back, or list them.
+    private func layouts(_ request: ControlRequest) -> ControlResponse {
+        let name = (request.label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        switch request.text {
+        case "save":
+            guard !name.isEmpty else { return .failure("give the layout a name") }
+            store.saveLayout(name)
+            return .success(text: "saved \"\(name)\"")
+        case "restore":
+            guard store.savedLayouts[name] != nil else {
+                let known = store.savedLayouts.keys.sorted().map { "\"\($0)\"" }.joined(separator: ", ")
+                return .failure("no layout named \"\(name)\". Saved: \(known.isEmpty ? "none" : known)")
+            }
+            guard let shown = store.restoreLayout(name) else { return .failure("every terminal in \"\(name)\" has been closed") }
+            return .success(text: "restored \"\(name)\"" + (shown.isEmpty ? "" : ": " + shown.map { "@" + $0 }.joined(separator: ", ")))
+        default:
+            let all = store.savedLayouts
+            guard !all.isEmpty else { return .success(text: "No saved layouts.") }
+            return .success(text: all.keys.sorted().map { name in
+                let saved = all[name]!
+                return "\"\(name)\": \(saved.layout.rawValue)" + (saved.focus.map { ", focus @\($0)" } ?? "")
+            }.joined(separator: "\n"))
+        }
+    }
+
+    /// One report per watch: the organizer hears when the terminal ends its next turn.
+    private func watch(_ request: ControlRequest) -> ControlResponse {
+        guard let target = resolve(request.target) else { return notFound(request.target) }
+        guard target.kind.isAgent, !target.isOrganizer else { return .failure("only other agents can be watched") }
+        let note = sanitizeMessage(request.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        store.organizerWatches[target.id] = note.isEmpty ? "(none)" : String(note.prefix(1000))
+        return .success(text: "you'll get a message when @\(target.label) finishes its turn")
+    }
+
+    /// Closing ends a process and whatever it hadn't saved, so the user confirms each one.
+    private func closeForOrganizer(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
+        guard let target = resolve(request.target) else { reply(notFound(request.target)); return }
+        guard !target.isOrganizer else { reply(.failure("the organizer can't close itself")); return }
+        store.confirm("The organizer wants to close @\(target.label)", abbreviateHome(target.spec.workPath)) { [store] approved in
+            guard approved else {
+                reply(.failure("the user kept @\(target.label) open"))
+                return
+            }
+            store.close(target)
+            reply(.success(text: "closed @\(target.label)"))
+        }
+    }
+
+    /// Any of: a layout, a terminal to bring to the front, and the grid's exact tiles.
+    private func arrange(_ request: ControlRequest) -> ControlResponse {
+        var layout: LayoutMode?
+        if let text = request.text, !text.isEmpty {
+            guard let mode = LayoutMode(rawValue: text) else { return .failure("layout must be focus, split, or grid") }
+            layout = mode
+        }
+        var focus: TerminalSession?
+        if let target = request.target, !target.isEmpty {
+            guard let session = resolve(target) else { return notFound(target) }
+            guard !session.isOrganizer else { return .failure("the organizer stays in the sidebar; focus another terminal") }
+            focus = session
+        }
+        var tiles: LayoutNode?
+        if let spec = request.tiles {
+            if let layout, layout != .grid { return .failure("tiles arrange the grid; leave layout out or pass grid") }
+            var seen = Set<UUID>()
+            switch tileNode(spec, seen: &seen) {
+            case .success(let node): tiles = node
+            case .failure(let error): return .failure(error.message)
+            }
+            if let focus, !seen.contains(focus.id) { return .failure("@\(focus.label) isn't one of the tiles") }
+            layout = .grid
+        }
+        guard layout != nil || focus != nil || tiles != nil else { return .failure("pass a layout, a terminal to focus, or tiles") }
+        store.arrange(layout: layout, focus: focus, tiles: tiles)
+        return .success(text: "arranged")
+    }
+
+    private struct TileError: Error { let message: String }
+
+    /// Labels resolve to sessions; each may appear once, and the organizer never takes a tile.
+    private func tileNode(_ spec: TileSpec, seen: inout Set<UUID>) -> Result<LayoutNode, TileError> {
+        if let label = spec.terminal {
+            guard let session = resolve(label) else { return .failure(TileError(message: notFound(label).error ?? "unknown terminal")) }
+            guard !session.isOrganizer else { return .failure(TileError(message: "the organizer stays in the sidebar; leave it out of the tiles")) }
+            guard seen.insert(session.id).inserted else { return .failure(TileError(message: "@\(session.label) appears twice")) }
+            return .success(.leaf(session.id))
+        }
+        let axis: LayoutAxis
+        switch spec.split {
+        case "row": axis = .horizontal
+        case "column": axis = .vertical
+        default: return .failure(TileError(message: "each tile is a terminal label or a split of \"row\" or \"column\""))
+        }
+        let children = spec.children ?? []
+        let sizes = spec.sizes ?? Array(repeating: 1, count: children.count)
+        guard sizes.count == children.count, sizes.allSatisfy({ $0 > 0 }) else {
+            return .failure(TileError(message: "sizes needs one positive number per child"))
+        }
+        var pairs: [(weight: Double, node: LayoutNode)] = []
+        for (size, child) in zip(sizes, children) {
+            switch tileNode(child, seen: &seen) {
+            case .success(let node): pairs.append((size, node))
+            case .failure(let error): return .failure(error)
+            }
+        }
+        guard let node = LayoutNode.split(axis, pairs) else { return .failure(TileError(message: "a split needs children")) }
+        return .success(node)
     }
 
     private func send(_ request: ControlRequest) -> ControlResponse {

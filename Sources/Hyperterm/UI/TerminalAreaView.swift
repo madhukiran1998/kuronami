@@ -154,6 +154,15 @@ final class TerminalAreaView: NSView {
         animateToLayout()
     }
 
+    /// Adopts a tile shape chosen for the user (the organizer), kept like one they dragged.
+    /// Frames follow on the next layout pass, once the store has shown exactly these tiles.
+    func setTree(_ root: LayoutNode, for mode: LayoutMode) {
+        let tree = LayoutTree(root: root, customized: true)
+        trees[mode] = tree
+        LayoutTreeStore.save(tree, mode.rawValue)
+        needsLayout = true
+    }
+
     private var multiTile: Bool { mode != .focus && visibleOrder.count > 1 }
 
     override func layout() {

@@ -9,6 +9,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let terminalArea = TerminalAreaView()
     private var sheetWindow: NSWindow?
     private lazy var toolbarController = ToolbarController(store: store, actions: actions)
+    private lazy var organizerDock = OrganizerDock(store: store)
 
     private var inspectorItem: NSSplitViewItem?
     private var subscriptions: Set<AnyCancellable> = []
@@ -52,6 +53,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             ghostty_set_window_background_blur(app, Unmanaged.passUnretained(window).toOpaque())
         }
         bindStore()
+        organizerDock.install(in: window)
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
@@ -64,7 +66,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             restart: { [weak self] in self?.confirmRestart($0) },
             close: { [weak self] in self?.confirmClose($0) },
             review: { [weak self] in self?.showInspector(for: $0) },
-            dispatch: { [weak self] task, kinds, cwd, options in self?.store.dispatch(task, kinds: kinds, cwd: cwd, options: options) },
             showPlan: { [weak self] in self?.showInspector(for: $0, tab: .plan) },
             pickWinner: { [weak self] in self?.confirmPickWinner($0) })
     }
@@ -161,9 +162,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] error in MainActor.assumeIsolated { self?.reportLaunchError(error) } }
             .store(in: &subscriptions)
-        store.onSurfaceChange = { [weak self] session in self?.terminalArea.mount(session) }
-        store.onRemove = { [weak self] session in self?.terminalArea.unmount(session) }
+        // The organizer's terminal lives in its floating panel; every other session gets a tile.
+        store.onSurfaceChange = { [weak self] session in
+            if session.isOrganizer { self?.organizerDock.attach(session) } else { self?.terminalArea.mount(session) }
+        }
+        store.onRemove = { [weak self] session in
+            if session.isOrganizer { self?.organizerDock.detach(session) } else { self?.terminalArea.unmount(session) }
+        }
+        store.onShowOrganizer = { [weak self] in self?.organizerDock.open() }
         store.onArrangementChange = { [weak self] in self?.arrange(takeFocus: true) }
+        store.onArrangeTiles = { [weak self] root in self?.terminalArea.setTree(root, for: .grid) }
         store.onStatusChange = { [weak self] in self?.arrange(takeFocus: false) }
         store.confirmHandler = { [weak self] title, message, completion in
             guard let window = self?.window else { completion(false); return }
@@ -455,12 +463,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - NSWindowDelegate
 
+    /// The red button hides the window like any Mac app; sessions keep running, the Dock icon
+    /// brings it back, and ⌘Q quits.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        NSApp.terminate(nil)
+        sender.orderOut(nil)
         return false
     }
 
+    /// In full screen AppKit moves the toolbar into its own window with an opaque titlebar
+    /// background, a gray band over the sidebar and canvas. The content already runs under it
+    /// (full-size content view), so clear that background and let it show through, as it does
+    /// in a normal window.
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        guard let toolbarWindow = window?.standardWindowButton(.closeButton)?.window,
+              toolbarWindow !== window, let root = toolbarWindow.contentView?.superview else { return }
+        toolbarWindow.isOpaque = false
+        toolbarWindow.backgroundColor = .clear
+        func clear(_ view: NSView) {
+            if view is NSVisualEffectView || String(describing: type(of: view)).contains("TitlebarBackground") {
+                view.isHidden = true
+            }
+            view.subviews.forEach(clear)
+        }
+        clear(root)
+    }
+
+    func windowDidResize(_ notification: Notification) { organizerDock.reposition() }
+
     func windowDidBecomeKey(_ notification: Notification) {
+        // Hiding the window drops its child windows; bring the organizer's button back with it.
+        if let window { organizerDock.install(in: window) }
         guard let window, window.firstResponder == nil || window.firstResponder === window else { return }
         if let session = store.selected { window.makeFirstResponder(session.surface) }
     }
