@@ -1,0 +1,5 @@
+// Ad hoc by default. An ad hoc signature changes with every build, so macOS forgets what you
+// allowed (Desktop, Documents, …) each time; scripts/make-signing-cert.sh makes a local
+// certificate and writes Signing.local.xcconfig so builds keep one identity.
+CODE_SIGN_IDENTITY = -
+#include? "Signing.local.xcconfig"

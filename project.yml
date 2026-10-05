@@ -9,13 +9,15 @@ packages:
   CefSwift:
     url: https://github.com/Rajaniraiyn/CefSwift
     revision: 59cad64e124b8efdb6b2ee811963097bb6e689e8
+configFiles:
+  Debug: Signing.xcconfig
+  Release: Signing.xcconfig
 settings:
   base:
     SWIFT_VERSION: "5.0"
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     ARCHS: arm64
     ONLY_ACTIVE_ARCH: YES
-    CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
     ENABLE_HARDENED_RUNTIME: NO
     DEAD_CODE_STRIPPING: YES
@@ -33,6 +35,10 @@ targets:
         type: folder
         buildPhase: resources
       - path: Resources/AppIcon.icns
+        buildPhase: resources
+      # The icon's layers for the organizer's button: swift scripts/make-icon.swift --mark
+      - path: Resources/Mark
+        type: folder
         buildPhase: resources
     dependencies:
       - framework: GhosttyKit.xcframework
@@ -88,7 +94,7 @@ targets:
           set -e
           mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/bin"
           cp -f "$BUILT_PRODUCTS_DIR/ht" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/bin/ht"
-          codesign --force --sign - "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/bin/ht"
+          codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/bin/ht"
         basedOnDependencyAnalysis: false
       - name: Copy Kuronami terminal defaults
         script: |

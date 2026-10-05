@@ -6,3 +6,4 @@ DerivedData/
 .DS_Store
 Resources/ghostty/
 Resources/terminfo/
+Signing.local.xcconfig

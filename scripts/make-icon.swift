@@ -153,6 +153,27 @@ func run(_ path: String, _ args: [String]) {
     try! process.run()
     process.waitUntilExit()
 }
+// The organizer's button animates the icon's parts separately, so `--mark` renders them as
+// layers (the icon's square, uncropped; the app clips it round): Resources/Mark/*.png.
+if CommandLine.arguments.contains("--mark") {
+    let night = NSColor(srgbRed: 0.05, green: 0.05, blue: 0.055, alpha: 1)
+    func layer(_ name: String, _ draw: () -> Void) {
+        seed = 7
+        let img = NSImage(size: NSSize(width: S, height: S))
+        img.lockFocus(); draw(); img.unlockFocus()
+        let full = "build/mark-\(name).png"
+        try! NSBitmapImageRep(data: img.tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: full))
+        run("/usr/bin/sips", ["-c", "824", "824", full, "--out", full])
+        run("/usr/bin/sips", ["-z", "192", "192", full, "--out", "Resources/Mark/\(name).png"])
+    }
+    try FileManager.default.createDirectory(atPath: "Resources/Mark", withIntermediateDirectories: true)
+    layer("ground") { paper(night, fibers: .white) }
+    layer("sun") { vermilion.setFill(); NSBezierPath(ovalIn: NSRect(x: 560, y: 560, width: 300, height: 300)).fill() }
+    layer("wave") { wave(bone, ground: night) }
+    print("Resources/Mark/ground.png, sun.png, wave.png")
+    exit(0)
+}
+
 let master = "build/icon-1024.png"
 let iconset = URL(fileURLWithPath: "build/AppIcon.iconset")
 try? FileManager.default.removeItem(at: iconset)

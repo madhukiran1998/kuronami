@@ -1,11 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// The app icon in miniature, for the organizer's button: a vermilion sun behind the bone wave,
-/// on black. It moves with the organizer so it reads as something alive: the sun breathes while
-/// it waits, the wave rocks while it works, and the sun pulses when it needs you. Core Animation
-/// runs the loops in the render server, so they cost Kuronami next to nothing, and Reduce Motion
-/// holds it still.
+/// The app icon, for the organizer's button: its own black ground, vermilion sun and brushed
+/// wave (`swift scripts/make-icon.swift --mark` renders them to Resources/Mark), so the sun can
+/// move behind the wave. It drifts while the organizer waits, rises and sets while it works, and
+/// blinks when it needs you. Core Animation runs the loops in the render server, so they cost
+/// Kuronami next to nothing, and Reduce Motion holds it still.
 struct KuronamiMark: NSViewRepresentable {
     enum Mood: Equatable { case resting, working, needsYou }
 
@@ -16,9 +16,10 @@ struct KuronamiMark: NSViewRepresentable {
     func updateNSView(_ view: MarkView, context: Context) { view.mood = mood }
 
     final class MarkView: NSView {
-        private let ground = CAShapeLayer()
-        private let sun = CAShapeLayer()
-        private let wave = CAShapeLayer()
+        private let ground = CALayer()
+        private let sun = CALayer()
+        private let wave = CALayer()
+        private let rim = CAShapeLayer()
 
         var mood: Mood = .resting {
             didSet { if mood != oldValue { animate() } }
@@ -27,12 +28,15 @@ struct KuronamiMark: NSViewRepresentable {
         override init(frame: NSRect) {
             super.init(frame: frame)
             wantsLayer = true
-            ground.fillColor = Ink.floor.cgColor
-            ground.strokeColor = Ink.hairline.cgColor
-            ground.lineWidth = Size.hairline * 2
-            sun.fillColor = Ink.accent.cgColor
-            wave.fillColor = Ink.text.cgColor
-            for shape in [ground, sun, wave] { layer?.addSublayer(shape) }
+            for (layer, name) in [(ground, "ground"), (sun, "sun"), (wave, "wave")] {
+                layer.contents = Self.image(name)
+                layer.contentsGravity = .resizeAspect
+                self.layer?.addSublayer(layer)
+            }
+            rim.fillColor = nil
+            rim.strokeColor = Ink.hairline.cgColor
+            rim.lineWidth = Size.hairline * 2
+            layer?.addSublayer(rim)
             NotificationCenter.default.addObserver(self, selector: #selector(motionPreferenceChanged),
                                                    name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
                                                    object: NSWorkspace.shared.notificationCenter)
@@ -40,22 +44,24 @@ struct KuronamiMark: NSViewRepresentable {
 
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+        private static func image(_ name: String) -> CGImage? {
+            guard let url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "Mark"),
+                  let image = NSImage(contentsOf: url) else { return nil }
+            return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        }
+
         override func layout() {
             super.layout()
             let side = min(bounds.width, bounds.height)
             let box = CGRect(x: (bounds.width - side) / 2, y: (bounds.height - side) / 2, width: side, height: side)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            ground.path = CGPath(ellipseIn: box, transform: nil)
+            for layer in [ground, sun, wave] { layer.frame = box }
+            let circle = CGPath(ellipseIn: box, transform: nil)
             let mask = CAShapeLayer()
-            mask.path = ground.path
+            mask.path = circle
             layer?.mask = mask
-            // Each shape spins and scales about its own centre.
-            let sunRect = CGRect(x: box.minX + side * 0.52, y: box.minY + side * 0.56, width: side * 0.34, height: side * 0.34)
-            sun.frame = sunRect
-            sun.path = CGPath(ellipseIn: CGRect(origin: .zero, size: sunRect.size), transform: nil)
-            wave.frame = box
-            wave.path = Self.wavePath(in: CGRect(origin: .zero, size: box.size))
+            rim.path = circle
             CATransaction.commit()
             animate()
         }
@@ -64,18 +70,15 @@ struct KuronamiMark: NSViewRepresentable {
 
         private func animate() {
             sun.removeAllAnimations()
-            wave.removeAllAnimations()
-            guard !Motion.reduced, bounds.width > 0 else { return }
+            let side = sun.bounds.height
+            guard !Motion.reduced, side > 0 else { return }
             switch mood {
             case .resting:
-                sun.add(Self.loop("transform.scale", from: 0.94, to: 1.04, period: 4.5), forKey: "breathe")
-                sun.add(Self.loop("opacity", from: 0.82, to: 1, period: 4.5), forKey: "glow")
+                sun.add(Self.loop("transform.translation.y", from: -side * 0.03, to: side * 0.02, period: 6), forKey: "drift")
             case .working:
-                wave.add(Self.loop("transform.rotation.z", from: -0.14, to: 0.14, period: 0.9), forKey: "rock")
-                sun.add(Self.loop("transform.scale", from: 0.9, to: 1.06, period: 0.9), forKey: "breathe")
+                sun.add(Self.loop("transform.translation.y", from: -side * 0.18, to: side * 0.06, period: 1.6), forKey: "rise")
             case .needsYou:
-                sun.add(Self.loop("transform.scale", from: 0.86, to: 1.16, period: 0.6), forKey: "breathe")
-                sun.add(Self.loop("opacity", from: 0.7, to: 1, period: 0.6), forKey: "glow")
+                sun.add(Self.loop("opacity", from: 1, to: 0.3, period: 0.6), forKey: "blink")
             }
         }
 
@@ -88,43 +91,6 @@ struct KuronamiMark: NSViewRepresentable {
             animation.repeatCount = .infinity
             animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             return animation
-        }
-
-        /// The icon's curl (scripts/make-icon.swift) at button size: a tail along the bottom that
-        /// sweeps up the right, over the top, and spirals in, thick in the middle and thin at the ends.
-        private static func wavePath(in box: CGRect) -> CGPath {
-            let side = box.width
-            let center = CGPoint(x: box.minX + side * 0.5, y: box.minY + side * 0.5)
-            let radius = side * 0.3
-            let turns: CGFloat = 1.92, shrink: CGFloat = 0.62
-            var points: [CGPoint] = []
-            for i in 0...20 {
-                let t = CGFloat(i) / 20
-                points.append(CGPoint(x: center.x - radius * 1.15 + radius * 1.15 * t, y: center.y - radius - side * 0.02 * sin(t * .pi)))
-            }
-            for i in 1...120 {
-                let t = CGFloat(i) / 120
-                let theta = -CGFloat.pi / 2 + t * turns * .pi
-                let r = radius * (1 - shrink * pow(t, 1.15))
-                points.append(CGPoint(x: center.x + r * cos(theta), y: center.y + r * sin(theta) * 0.96))
-            }
-            func width(_ t: CGFloat) -> CGFloat {
-                let start = min(1, t / 0.12), end = min(1, (1 - t) / 0.35)
-                return side * 0.15 * pow(max(0, start), 0.7) * pow(max(0, end), 0.9) + side * 0.01
-            }
-            var left: [CGPoint] = [], right: [CGPoint] = []
-            for i in points.indices {
-                let a = points[max(0, i - 1)], b = points[min(points.count - 1, i + 1)]
-                let dx = b.x - a.x, dy = b.y - a.y, length = max(0.001, sqrt(dx * dx + dy * dy))
-                let normal = CGPoint(x: -dy / length, y: dx / length)
-                let half = width(CGFloat(i) / CGFloat(points.count - 1)) / 2
-                left.append(CGPoint(x: points[i].x + normal.x * half, y: points[i].y + normal.y * half))
-                right.append(CGPoint(x: points[i].x - normal.x * half, y: points[i].y - normal.y * half))
-            }
-            let path = CGMutablePath()
-            path.addLines(between: left + right.reversed())
-            path.closeSubpath()
-            return path
         }
     }
 }
