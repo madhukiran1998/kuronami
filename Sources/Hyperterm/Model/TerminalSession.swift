@@ -214,7 +214,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// At its prompt between turns. Queued messages wait for this: not mid-turn, not before the
     /// agent CLI is running (they'd run as shell commands), not after it exited. Codex stays
     /// "starting" until its first turn, so a running CLI counts as ready.
-    private var atRest: Bool {
+    var atRest: Bool {
         switch state {
         case .idle, .failed: return true
         case .starting: return agentProcessSeen
@@ -277,6 +277,15 @@ final class TerminalSession: ObservableObject, Identifiable {
         } else {
             pendingMessages.append("/remote-control")
         }
+    }
+
+    /// Starts a fresh conversation in the same agent (Claude's /clear, Codex's /new). Typed only
+    /// at rest with an empty prompt; false when it couldn't be.
+    func startFreshConversation() -> Bool {
+        guard kind.isAgent, atRest, inputIsEmpty, !dialogOnScreen else { return false }
+        type(kind == .codex ? "/new" : "/clear", submit: true, countsAsWork: false)
+        usage.contextPercent = nil
+        return true
     }
 
     // MARK: - Messaging

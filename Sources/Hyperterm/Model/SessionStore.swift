@@ -21,6 +21,7 @@ final class SessionStore: ObservableObject {
     var onShowOrganizer: (() -> Void)?
     /// Terminals the organizer waits on, each with the note it left for when that one finishes.
     var organizerWatches: [UUID: String] = [:]
+    var organizerDigest = OrganizerDigest()
     /// Called when a session's status changes. It can change which tiles show (grid hides exited
     /// sessions) and their chrome, but must not pull keyboard focus away from where the user is.
     var onStatusChange: (() -> Void)?

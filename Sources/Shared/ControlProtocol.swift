@@ -131,6 +131,11 @@ enum ControlPaths {
         if let env = ProcessInfo.processInfo.environment["HT_SOCKET"], !env.isEmpty { return env }
         return supportDirectory.appendingPathComponent("control.sock").path
     }
+
+    /// The organizer's own notes: the user's preferences, project folders and open threads.
+    static var organizerNotes: String {
+        supportDirectory.appendingPathComponent("organizer-notes.md").path
+    }
 }
 
 /// Default names for new agents and shells, used in order: short to say, and each one's first

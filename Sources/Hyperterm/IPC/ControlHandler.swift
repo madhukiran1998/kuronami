@@ -424,7 +424,7 @@ struct ControlHandler {
         guard let target = resolve(request.target) else { return notFound(request.target) }
         guard target.kind.isAgent, !target.isOrganizer else { return .failure("only other agents can be watched") }
         let note = sanitizeMessage(request.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        store.organizerWatches[target.id] = note.isEmpty ? "(none)" : String(note.prefix(1000))
+        store.organizerWatches[target.id] = String(note.prefix(1000))
         return .success(text: "you'll get a message when @\(target.label) finishes its turn")
     }
 

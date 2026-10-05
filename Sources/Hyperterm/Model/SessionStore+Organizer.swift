@@ -184,19 +184,127 @@ extension SessionStore {
 
     // MARK: - Watching
 
-    /// Tells the organizer when a terminal it is waiting on ends its turn, so it can hand the
-    /// result on: one agent's finished work starts the next.
+    /// Above this much context in use, the organizer starts a fresh conversation before a digest.
+    static let organizerClearPercent: Double = 60
+
+    /// Gathers what the organizer should hear about this change, so one agent's finished work can
+    /// start the next. It wakes once for the digest, not once per event.
     func reportToOrganizer(_ session: TerminalSession, from previous: AgentState) {
-        guard let note = organizerWatches[session.id], let organizer, organizer.id != session.id else { return }
-        let outcome: String
+        guard let organizer else { return }
+        if organizer.id == session.id { flushOrganizerDigest(); return }
+        guard let event = organizerEvent(session, from: previous) else { return }
+        if organizerDigest.isEmpty {
+            DispatchQueue.main.asyncAfter(deadline: .now() + OrganizerDigest.window) { [weak self] in
+                self?.flushOrganizerDigest()
+            }
+        }
+        organizerDigest.add(event)
+    }
+
+    /// What this change means for the organizer, if anything. A watched terminal ending its turn
+    /// uses up the watch; other kinds of event go here.
+    private func organizerEvent(_ session: TerminalSession, from previous: AgentState) -> OrganizerEvent? {
+        guard let note = organizerWatches[session.id] else { return nil }
+        let kind: OrganizerEvent.Kind
         switch session.state {
-        case .idle where previous == .working: outcome = "finished: " + (session.summary ?? "turn complete")
-        case .failed(let reason): outcome = "failed: " + reason
-        case .exited: outcome = "exited"
-        default: return
+        case .idle where previous == .working: kind = .finished(session.summary ?? "turn complete")
+        case .failed(let reason): kind = .failed(reason)
+        case .exited: kind = .exited
+        default: return nil
         }
         organizerWatches[session.id] = nil
-        let report = "Kuronami: @\(session.label) \(outcome) — Your note for this: \(note)"
-        _ = organizer.deliver(report.split(whereSeparator: \.isNewline).joined(separator: " "), from: nil)
+        return OrganizerEvent(label: session.label, kind: kind, note: note.isEmpty ? nil : note)
+    }
+
+    /// Sends the digest once its window has passed and the organizer isn't mid-turn; the
+    /// organizer's own next state change tries again. A mostly full context is cleared first.
+    func flushOrganizerDigest(now: Date = Date()) {
+        guard let organizer, !organizer.isExitedProcess else { organizerDigest = OrganizerDigest(); return }
+        guard organizerDigest.isDue(at: now), !organizerDigest.clearing,
+              organizer.atRest || organizer.state.needsAttention else { return }
+        if organizer.usage.contextPercent ?? 0 >= Self.organizerClearPercent, organizer.startFreshConversation() {
+            organizerDigest.clearing = true
+            deliverDigestAfterClear(attempts: 10)
+            return
+        }
+        if let message = organizerDigest.take() { _ = organizer.deliver(message, from: nil) }
+    }
+
+    /// Waits for the organizer to be back at an empty prompt after clearing, then sends the digest.
+    private func deliverDigestAfterClear(attempts: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            guard let organizer = self.organizer else { self.organizerDigest = OrganizerDigest(); return }
+            if attempts > 1, !(organizer.atRest && organizer.inputIsEmpty && !organizer.dialogOnScreen) {
+                self.deliverDigestAfterClear(attempts: attempts - 1)
+                return
+            }
+            self.organizerDigest.clearing = false
+            if let message = self.organizerDigest.take(cleared: true) { _ = organizer.deliver(message, from: nil) }
+        }
+    }
+}
+
+/// Something the organizer should hear about.
+struct OrganizerEvent: Equatable {
+    enum Kind: Equatable {
+        case finished(String), failed(String), exited
+    }
+
+    var label: String
+    var kind: Kind
+    /// The note watch_terminal left for this terminal.
+    var note: String?
+
+    var line: String {
+        var line = "@\(label) "
+        switch kind {
+        case .finished(let summary): line += "finished: " + summary
+        case .failed(let reason): line += "failed: " + reason
+        case .exited: line += "exited"
+        }
+        if let note { line += " (your note: \(note))" }
+        return line
+    }
+}
+
+/// Events gathered for a few seconds, and while the organizer is mid-turn, so it wakes once for
+/// all of them. The message stays on one line: a typed newline would submit it early.
+struct OrganizerDigest {
+    static let window: TimeInterval = 3
+
+    private(set) var events: [OrganizerEvent] = []
+    private var since: Date?
+    /// The organizer is starting a fresh conversation; the digest waits for it.
+    var clearing = false
+
+    var isEmpty: Bool { events.isEmpty }
+
+    mutating func add(_ event: OrganizerEvent, at now: Date = Date()) {
+        if events.isEmpty { since = now }
+        events.append(event)
+    }
+
+    func isDue(at now: Date) -> Bool {
+        guard let since else { return false }
+        return now.timeIntervalSince(since) >= Self.window
+    }
+
+    /// The message for everything gathered so far; the digest starts over empty.
+    mutating func take(cleared: Bool = false) -> String? {
+        guard !events.isEmpty else { return nil }
+        defer { events = []; since = nil }
+        return Self.message(events, cleared: cleared)
+    }
+
+    static func message(_ events: [OrganizerEvent], cleared: Bool = false) -> String {
+        var text = "Kuronami: "
+        if cleared { text += "Context was cleared. Read \(ControlPaths.organizerNotes) if you need earlier context. " }
+        if events.count == 1 {
+            text += events[0].line
+        } else {
+            text += "\(events.count) updates: " + events.enumerated().map { "[\($0 + 1)] \($1.line)" }.joined(separator: " ")
+        }
+        return text.split(whereSeparator: \.isNewline).joined(separator: " ")
     }
 }

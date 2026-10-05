@@ -39,6 +39,7 @@ final class OrganizerTests: XCTestCase {
 
         store.reportToOrganizer(api, from: .working)
         store.reportToOrganizer(api, from: .working)
+        store.flushOrganizerDigest(now: Date().addingTimeInterval(OrganizerDigest.window))
 
         // Queued because the organizer is at a prompt; one line, so it can't submit early.
         XCTAssertEqual(organizer.pendingMessages.count, 1)
@@ -58,6 +59,53 @@ final class OrganizerTests: XCTestCase {
 
         XCTAssertTrue(organizer.pendingMessages.isEmpty)
         XCTAssertEqual(store.organizerWatches[api.id], "next")
+    }
+
+    func testEventsWaitForTheWindowAndArriveAsOneDigest() {
+        let api = agent("api", state: .idle), db = agent("db", state: .failed("API error"))
+        let organizer = agent("organizer", organizer: true, state: .needsInput("busy"))
+        let store = SessionStore(previewSessions: [api, db, organizer], previewLayout: .grid)
+        api.summary = "Added /orders."
+        store.organizerWatches[api.id] = "tell @web"
+        store.organizerWatches[db.id] = ""
+        let start = Date()
+
+        store.reportToOrganizer(api, from: .working)
+        store.reportToOrganizer(db, from: .working)
+        store.flushOrganizerDigest(now: start.addingTimeInterval(1))
+        XCTAssertTrue(organizer.pendingMessages.isEmpty)
+
+        store.flushOrganizerDigest(now: start.addingTimeInterval(OrganizerDigest.window + 1))
+        XCTAssertEqual(organizer.pendingMessages,
+                       ["Kuronami: 2 updates: [1] @api finished: Added /orders. (your note: tell @web) [2] @db failed: API error"])
+        XCTAssertTrue(store.organizerDigest.isEmpty)
+    }
+
+    func testDigestWaitsWhileTheOrganizerIsMidTurn() {
+        let api = agent("api", state: .exited(0)), organizer = agent("organizer", organizer: true, state: .working)
+        let store = SessionStore(previewSessions: [api, organizer], previewLayout: .grid)
+        store.organizerWatches[api.id] = "restart it"
+
+        store.reportToOrganizer(api, from: .working)
+        store.flushOrganizerDigest(now: Date().addingTimeInterval(OrganizerDigest.window + 1))
+
+        XCTAssertTrue(organizer.pendingMessages.isEmpty)
+        XCTAssertEqual(store.organizerDigest.events, [OrganizerEvent(label: "api", kind: .exited, note: "restart it")])
+    }
+
+    func testDigestWindowStartsAtTheFirstEvent() {
+        var digest = OrganizerDigest()
+        let start = Date(timeIntervalSince1970: 1000)
+        XCTAssertFalse(digest.isDue(at: start))
+        digest.add(OrganizerEvent(label: "api", kind: .exited), at: start)
+        digest.add(OrganizerEvent(label: "web", kind: .exited), at: start.addingTimeInterval(2))
+        XCTAssertFalse(digest.isDue(at: start.addingTimeInterval(2)))
+        XCTAssertTrue(digest.isDue(at: start.addingTimeInterval(OrganizerDigest.window)))
+
+        let message = digest.take(cleared: true) ?? ""
+        XCTAssertTrue(message.hasPrefix("Kuronami: Context was cleared. Read \(ControlPaths.organizerNotes)"), message)
+        XCTAssertTrue(message.hasSuffix("[1] @api exited [2] @web exited"), message)
+        XCTAssertNil(digest.take())
     }
 
     func testTileSpecsDecodeFromTheWire() throws {
