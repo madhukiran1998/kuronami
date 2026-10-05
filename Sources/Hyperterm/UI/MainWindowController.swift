@@ -414,6 +414,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         return false
     }
 
+    /// In full screen AppKit moves the toolbar into its own window with an opaque titlebar
+    /// background, a gray band over the sidebar and canvas. The content already runs under it
+    /// (full-size content view), so clear that background and let it show through, as it does
+    /// in a normal window.
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        guard let toolbarWindow = window?.standardWindowButton(.closeButton)?.window,
+              toolbarWindow !== window, let root = toolbarWindow.contentView?.superview else { return }
+        toolbarWindow.isOpaque = false
+        toolbarWindow.backgroundColor = .clear
+        func clear(_ view: NSView) {
+            if view is NSVisualEffectView || String(describing: type(of: view)).contains("TitlebarBackground") {
+                view.isHidden = true
+            }
+            view.subviews.forEach(clear)
+        }
+        clear(root)
+    }
+
     func windowDidBecomeKey(_ notification: Notification) {
         guard let window, window.firstResponder == nil || window.firstResponder === window else { return }
         if let session = store.selected { window.makeFirstResponder(session.surface) }
