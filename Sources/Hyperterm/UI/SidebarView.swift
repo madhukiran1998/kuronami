@@ -440,10 +440,16 @@ private struct SidebarFooter: View {
                 .fixedSize()
                 .help("New terminal (⌘N)")
             }
-            .padding(.horizontal, Space.m)
-            .padding(.bottom, Space.s)
+            // The organizer's mark floats in this corner (OrganizerDock), so the row starts past it
+            // and is as tall as its button.
+            .frame(minHeight: buttonSize)
+            .padding(.leading, Space.m + buttonSize + Space.s)
+            .padding(.trailing, Space.m)
+            .padding(.bottom, Space.m)
         }
     }
+
+    private var buttonSize: CGFloat { OrganizerDock.markSize(for: NSScreen.main) + Space.s }
 }
 
 /// Account usage windows shared by every agent: the thing that actually caps parallelism.
