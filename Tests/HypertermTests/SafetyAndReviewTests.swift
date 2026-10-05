@@ -101,6 +101,30 @@ final class SafetyAndReviewTests: XCTestCase {
         XCTAssertEqual(DiffStat(added: 3, removed: 1, files: 1).text, "+3 −1 · 1 file")
     }
 
+    func testUntrackedLineCountIsCapped() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data(repeating: 0x0A, count: 300 * 1024).write(to: dir.appendingPathComponent("big.txt"))
+        for index in 0..<3 { try "a\nb\n".write(to: dir.appendingPathComponent("\(index).txt"), atomically: true, encoding: .utf8) }
+        let files = ["big.txt", "0.txt", "1.txt", "2.txt"]
+        // The big file counts 0 lines; only the first `maxFiles` files are read.
+        XCTAssertEqual(Review.untrackedLines(files, at: dir.path), 6)
+        XCTAssertEqual(Review.untrackedLines(files, at: dir.path, maxFiles: 2), 2)
+        XCTAssertEqual(Review.untrackedLines(files, at: dir.path, maxBytes: 1024 * 1024), 300 * 1024 + 6)
+    }
+
+    func testDiffStatCountsEveryUntrackedFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertNotNil(runGit(["-C", dir.path, "init", "-q"]))
+        XCTAssertNotNil(runGit(["-C", dir.path, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "base"]))
+        try Data(repeating: 0x0A, count: 300 * 1024).write(to: dir.appendingPathComponent("big.txt"))
+        try "one\n".write(to: dir.appendingPathComponent("small.txt"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(Review.diffStat(at: dir.path, base: nil), DiffStat(added: 1, removed: 0, files: 2))
+    }
+
     func testSplitPatchKeysEachFile() {
         let patch = """
         diff --git a/src/a b/c.ts b/src/a b/c.ts

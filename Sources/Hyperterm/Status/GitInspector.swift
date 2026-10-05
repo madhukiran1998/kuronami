@@ -172,8 +172,26 @@ final class GitInspector: @unchecked Sendable {
 }
 
 /// Runs git with repo-supplied hooks and fsmonitor disabled: Kuronami runs git inside
-/// agent-controlled repos and must not execute their config.
+/// agent-controlled repos and must not execute their config. It runs at utility priority and
+/// takes no optional locks, so polling never slows or blocks the agents' own git.
 func runGit(_ arguments: [String]) -> String? {
-    let safety = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]
-    return runProcess("/usr/bin/git", safety + arguments, timeout: 15)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"] + arguments
+    process.qualityOfService = .utility
+    var environment = ProcessInfo.processInfo.environment
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    process.environment = environment
+    let out = Pipe()
+    process.standardOutput = out
+    process.standardError = FileHandle.nullDevice
+    process.standardInput = FileHandle.nullDevice
+    do { try process.run() } catch { return nil }
+    let killer = DispatchWorkItem { if process.isRunning { process.terminate() } }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: killer)
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    killer.cancel()
+    guard process.terminationReason == .exit, process.terminationStatus == 0 else { return nil }
+    return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
 }

@@ -10,7 +10,7 @@ extension SessionStore {
     func checkpointQueue(for session: TerminalSession) -> DispatchQueue {
         let key = session.git?.mainRoot ?? session.spec.workPath
         if let queue = checkpointQueues[key] { return queue }
-        let queue = DispatchQueue(label: "dev.hyperterm.checkpoints." + key, qos: .userInitiated)
+        let queue = DispatchQueue(label: "dev.hyperterm.checkpoints." + key, qos: .utility)
         checkpointQueues[key] = queue
         return queue
     }

@@ -1,9 +1,15 @@
 import Foundation
 
+/// The pinned server. scripts/browser-mcp-tools.sh captures its handshake and tools into
+/// BrowserMCPTools.swift; rerun it after changing this.
+let chromeDevtoolsMCP = "chrome-devtools-mcp@1.10.1"
+
 /// `ht browser-mcp`: an agent's browser tools. Proxies `chrome-devtools-mcp`, which is attached
 /// to Kuronami's Chromium and sees every Kuronami browser, and scopes it to this agent:
 ///
-/// - Chromium (and this agent's browser session) starts on the first tool call.
+/// - Nothing starts until the first tool call: the handshake and tool list are answered from
+///   BrowserMCPTools.swift, then Chromium, this agent's browser session and chrome-devtools-mcp
+///   start on that call. If the server exits, the next call starts it again.
 /// - `pageId` defaults to the agent's own browser and stops being required, so agents never act
 ///   on another agent's page by accident; passing another browser's pageId is still allowed.
 /// - `list_pages` names each page's Kuronami browser, so agents can find others by @label.
@@ -14,17 +20,21 @@ func runBrowserMCP(port: Int) -> Never {
 }
 
 private final class BrowserProxy: @unchecked Sendable {
-    private var child = Process()
-    private var toChild = Pipe()
-    private var fromChild = Pipe()
-    /// Where chrome-devtools-mcp is attached; follows the browser if it had to take another port.
+    /// Where chrome-devtools-mcp attaches; follows the browser if it had to take another port.
     private var browserURL: String
-    /// The agent's handshake, replayed when the server is restarted on a new endpoint.
+    /// The agent's handshake, replayed to each server that is started.
     private var handshake: [String] = []
+    private var staticTools: [String: Any] = [:]
     private let outputLock = NSLock()
     private let stateLock = NSLock()
+    /// Held while the browser and server are started, so concurrent first calls start one.
+    private let startLock = NSLock()
 
     // Guarded by stateLock.
+    private var child: Process?
+    private var toChild: FileHandle?
+    /// Agent requests the running server hasn't answered, by id key; failed if it exits.
+    private var pending: [String: Any] = [:]
     private var hiddenReplies: [String: [String: Any]] = [:]
     private var hiddenWaiters: [String: DispatchSemaphore] = [:]
     private var rewrites: [String: Rewrite] = [:]
@@ -42,21 +52,28 @@ private final class BrowserProxy: @unchecked Sendable {
     }
 
     func run() -> Never {
-        launchServer()
+        // A server that died mid-write must not take the proxy with it.
+        signal(SIGPIPE, SIG_IGN)
+        let capture = (try? JSONSerialization.jsonObject(with: Data(browserMCPCapture.utf8))) as? [String: Any] ?? [:]
+        staticTools = rewritten(["result": ["tools": capture["tools"] ?? []]], .toolsList)["result"] as? [String: Any] ?? [:]
         while let line = readLine(strippingNewline: false) {
-            handleAgentLine(line)
+            handleAgentLine(line, capture: capture)
         }
-        try? toChild.fileHandleForWriting.close()
-        child.waitUntilExit()
-        exit(child.terminationStatus)
+        let (process, input) = withState { (self.child, self.toChild) }
+        try? input?.close()
+        process?.waitUntilExit()
+        exit(process?.terminationStatus ?? 0)
     }
 
     // MARK: - Server process
 
-    private func launchServer() {
+    private var serverRunning: Bool { withState { self.child != nil } }
+
+    /// Starts chrome-devtools-mcp at `browserURL` and replays the agent's handshake to it.
+    private func startServer() -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["npx", "-y", "chrome-devtools-mcp@1.10.1", "--browser-url", browserURL,
+        process.arguments = ["npx", "-y", chromeDevtoolsMCP, "--browser-url", browserURL,
                              "--no-usage-statistics", "--no-performance-crux"]
         var environment = ProcessInfo.processInfo.environment
         environment["CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS"] = "1"
@@ -65,62 +82,103 @@ private final class BrowserProxy: @unchecked Sendable {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.standardError
-        process.terminationHandler = { exit($0.terminationStatus) }
-        do { try process.run() } catch { fail("ht: couldn't start chrome-devtools-mcp via npx: \(error)") }
-        child = process
-        toChild = input
-        fromChild = output
-        Thread.detachNewThread { [self] in relayChildOutput(from: output) }
-    }
-
-    /// The browser came up on a different port: restart the server there and replay the
-    /// agent's handshake so the agent never notices.
-    private func reattach(to endpoint: String) {
-        guard endpoint != browserURL else { return }
-        browserURL = endpoint
-        child.terminationHandler = nil
-        child.terminate()
-        launchServer()
+        do { try process.run() } catch {
+            FileHandle.standardError.write(Data("ht: couldn't start chrome-devtools-mcp via npx: \(error)\n".utf8))
+            return false
+        }
+        withState {
+            self.child = process
+            self.toChild = input.fileHandleForWriting
+        }
+        Thread.detachNewThread { [self] in relayChildOutput(from: output, of: process) }
+        // Their replies are ours to swallow: the agent already got them. The first start may
+        // include npx downloading the package.
         for line in handshake {
             guard var message = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
-            if message["id"] != nil {
-                // Its reply is ours to swallow: the agent already got one.
-                message["id"] = "ht-handshake"
-                let semaphore = DispatchSemaphore(value: 0)
-                withState { self.hiddenWaiters["ht-handshake"] = semaphore }
-                sendToChild(message)
-                _ = semaphore.wait(timeout: .now() + 20)
-                withState { self.hiddenReplies["ht-handshake"] = nil }
-            } else {
+            guard message["id"] != nil else {
                 sendToChild(line)
+                continue
             }
+            message["id"] = "ht-handshake"
+            let semaphore = DispatchSemaphore(value: 0)
+            withState { self.hiddenWaiters["ht-handshake"] = semaphore }
+            let answered = sendToChild(message) && semaphore.wait(timeout: .now() + 120) == .success
+            let reply = withState { () -> [String: Any]? in
+                self.hiddenWaiters["ht-handshake"] = nil
+                return self.hiddenReplies.removeValue(forKey: "ht-handshake")
+            }
+            guard answered, reply != nil else {
+                stopServer(process)
+                return false
+            }
+        }
+        return withState { self.child === process }
+    }
+
+    private func stopServer(_ process: Process) {
+        withState {
+            guard self.child === process else { return }
+            self.child = nil
+            self.toChild = nil
+        }
+        process.terminate()
+        childGone(process)
+    }
+
+    /// The server exited: fail what it was asked and let the next call start a new one.
+    private func childGone(_ process: Process) {
+        let (orphans, waiters) = withState { () -> ([Any], [DispatchSemaphore]) in
+            if self.child === process {
+                self.child = nil
+                self.toChild = nil
+            }
+            guard self.child == nil else { return ([], []) }
+            let orphans = Array(self.pending.values), waiters = Array(self.hiddenWaiters.values)
+            for key in self.pending.keys { self.rewrites[key] = nil }
+            self.pending = [:]
+            self.hiddenWaiters = [:]
+            return (orphans, waiters)
+        }
+        waiters.forEach { $0.signal() }
+        for id in orphans {
+            replyRPCError(id: id, "chrome-devtools-mcp exited before answering. Call the tool again to restart it.")
         }
     }
 
     // MARK: - Agent → server
 
-    private func handleAgentLine(_ line: String) {
+    private func handleAgentLine(_ line: String, capture: [String: Any]) {
         guard let message = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
               let method = message["method"] as? String else {
             sendToChild(line)
             return
         }
-        if method == "initialize" || method == "notifications/initialized" { handshake.append(line) }
+        if ["initialize", "notifications/initialized", "logging/setLevel"].contains(method) { handshake.append(line) }
         guard let id = message["id"] else {
             sendToChild(line)
             return
         }
         switch method {
         case "initialize":
-            track(id, .initialize)
-            sendToChild(line)
+            var result = capture["initialize"] as? [String: Any] ?? [:]
+            let requested = (message["params"] as? [String: Any])?["protocolVersion"] as? String
+            result["protocolVersion"] = requested.flatMap { supportedProtocolVersions.contains($0) ? $0 : nil }
+                ?? supportedProtocolVersions[0]
+            writeToAgent(rewritten(["jsonrpc": "2.0", "id": id, "result": result], .initialize))
         case "tools/list":
-            track(id, .toolsList)
-            sendToChild(line)
+            writeToAgent(["jsonrpc": "2.0", "id": id, "result": staticTools])
+        case "ping":
+            writeToAgent(["jsonrpc": "2.0", "id": id, "result": [String: Any]()])
         case "tools/call":
             handleToolCall(message, id: id)
         default:
-            sendToChild(line)
+            if serverRunning {
+                forward(message, id: id)
+            } else if method == "logging/setLevel" {
+                writeToAgent(["jsonrpc": "2.0", "id": id, "result": [String: Any]()])
+            } else {
+                replyRPCError(id: id, code: -32601, "Method not found: \(method)")
+            }
         }
     }
 
@@ -132,10 +190,19 @@ private final class BrowserProxy: @unchecked Sendable {
             replyError(id: id, "Kuronami browsers are sessions the user can see, so pages aren't opened or closed from here. Navigate your own browser with navigate_page; ask the user to open another browser (⇧⌘B) if you need two.")
             return
         }
-        guard let own = ensureBrowser(tool: tool) else {
+        startLock.lock()
+        guard let (own, fresh) = ensureBrowser(tool: tool) else {
+            startLock.unlock()
             replyError(id: id, "Kuronami's browser isn't available right now. Ask the user to check the browser in Kuronami.")
             return
         }
+        guard serverRunning || startServer() else {
+            startLock.unlock()
+            replyRPCError(id: id, "Couldn't start the browser tools (chrome-devtools-mcp via npx). Check that Node.js and npx are installed.")
+            return
+        }
+        if fresh { refreshPageMap(alreadyMarked: true) }
+        startLock.unlock()
         if tool == "list_pages" {
             refreshPageMap()
             track(id, .listPages)
@@ -150,31 +217,46 @@ private final class BrowserProxy: @unchecked Sendable {
             params["arguments"] = arguments
             message["params"] = params
         }
-        sendToChild(message)
+        forward(message, id: id)
+    }
+
+    /// Sends an agent request to the server, failing it if there is no server to answer.
+    private func forward(_ message: [String: Any], id: Any) {
+        let key = "\(id)"
+        let registered = withState { () -> Bool in
+            guard self.child != nil else { return false }
+            self.pending[key] = id
+            return true
+        }
+        guard registered, sendToChild(message) else {
+            let orphaned = withState { () -> Bool in
+                self.rewrites[key] = nil
+                return self.pending.removeValue(forKey: key) != nil || !registered
+            }
+            if orphaned { replyRPCError(id: id, "chrome-devtools-mcp isn't running. Call the tool again to restart it.") }
+            return
+        }
     }
 
     // MARK: - Kuronami
 
-    /// Starts Chromium and this agent's browser on the first call (blocking only that call);
-    /// afterwards just reports the action for the "@agent · click" indicator.
-    private func ensureBrowser(tool: String) -> String? {
-        if let ownLabel = withState({ self.ownLabel }) {
-            var req = ControlRequest(cmd: .browser)
-            req.from = callerSession
-            req.text = tool
-            DispatchQueue.global().async { _ = try? sendControlRequest(req, timeout: 2) }
-            return ownLabel
-        }
+    /// Starts Chromium and this agent's browser when there is no server yet (blocking only that
+    /// call), learning its endpoint; afterwards just reports the action for the
+    /// "@agent · click" indicator. `fresh` means the page map has to be learned again.
+    private func ensureBrowser(tool: String) -> (label: String, fresh: Bool)? {
         var req = ControlRequest(cmd: .browser)
         req.from = callerSession
         req.text = tool
+        if let ownLabel = withState({ self.ownLabel }), serverRunning {
+            DispatchQueue.global().async { _ = try? sendControlRequest(req, timeout: 2) }
+            return (ownLabel, false)
+        }
         guard let response = try? sendControlRequest(req, timeout: 30), response.ok, let label = response.text else {
             return nil
         }
-        if let endpoint = response.endpoint { reattach(to: endpoint) }
+        if let endpoint = response.endpoint { browserURL = endpoint }
         withState { self.ownLabel = label }
-        refreshPageMap(alreadyMarked: true)
-        return label
+        return (label, true)
     }
 
     /// Learns which chrome-devtools-mcp page number is which Kuronami browser: Kuronami tags
@@ -213,8 +295,8 @@ private final class BrowserProxy: @unchecked Sendable {
         }
         let semaphore = DispatchSemaphore(value: 0)
         withState { self.hiddenWaiters[id] = semaphore }
-        sendToChild(["jsonrpc": "2.0", "id": id, "method": "tools/call", "params": ["name": tool, "arguments": arguments]])
-        guard semaphore.wait(timeout: .now() + 15) == .success else {
+        let message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": "tools/call", "params": ["name": tool, "arguments": arguments]]
+        guard sendToChild(message), semaphore.wait(timeout: .now() + 15) == .success else {
             withState { self.hiddenWaiters[id] = nil }
             return nil
         }
@@ -224,7 +306,8 @@ private final class BrowserProxy: @unchecked Sendable {
 
     // MARK: - Server → agent
 
-    private func relayChildOutput(from pipe: Pipe) {
+    private func relayChildOutput(from pipe: Pipe, of process: Process) {
+        defer { childGone(process) }
         guard let stream = fdopen(pipe.fileHandleForReading.fileDescriptor, "r") else { return }
         var buffer: UnsafeMutablePointer<CChar>?
         var capacity = 0
@@ -235,13 +318,13 @@ private final class BrowserProxy: @unchecked Sendable {
     }
 
     private func handleServerLine(_ line: String) {
-        let interesting = withState { !self.hiddenWaiters.isEmpty || !self.rewrites.isEmpty }
-        guard interesting, let message = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+        guard let message = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
               let id = message["id"] else {
             writeToAgent(line)
             return
         }
         let key = "\(id)"
+        if message["method"] == nil { withState { self.pending[key] = nil } }
         if let waiter = withState({ self.hiddenWaiters.removeValue(forKey: key) }) {
             withState { self.hiddenReplies[key] = message }
             waiter.signal()
@@ -306,13 +389,21 @@ private final class BrowserProxy: @unchecked Sendable {
         writeToAgent(["jsonrpc": "2.0", "id": id, "result": ["content": [["type": "text", "text": text]], "isError": true]])
     }
 
-    private func sendToChild(_ line: String) {
-        toChild.fileHandleForWriting.write(Data(line.utf8))
+    private func replyRPCError(id: Any, code: Int = -32603, _ text: String) {
+        writeToAgent(["jsonrpc": "2.0", "id": id, "error": ["code": code, "message": text]])
     }
 
-    private func sendToChild(_ message: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
-        toChild.fileHandleForWriting.write(data + Data("\n".utf8))
+    /// False when no server is running or it has gone away.
+    @discardableResult
+    private func sendToChild(_ line: String) -> Bool {
+        guard let handle = withState({ self.toChild }) else { return false }
+        return (try? handle.write(contentsOf: Data(line.utf8))) != nil
+    }
+
+    @discardableResult
+    private func sendToChild(_ message: [String: Any]) -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return false }
+        return sendToChild(String(decoding: data, as: UTF8.self) + "\n")
     }
 
     private func writeToAgent(_ line: String) {
@@ -332,6 +423,9 @@ private final class BrowserProxy: @unchecked Sendable {
         return body()
     }
 }
+
+/// What the MCP SDK in chrome-devtools-mcp@1.10.1 negotiates, newest first.
+private let supportedProtocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"]
 
 // MARK: - Parsing chrome-devtools-mcp's text output
 

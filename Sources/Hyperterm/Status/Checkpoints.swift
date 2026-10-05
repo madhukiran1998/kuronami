@@ -258,6 +258,7 @@ enum Git {
                     trim: Bool = true, timeout: TimeInterval = 30) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
+        process.qualityOfService = .utility
         // No hooks or fsmonitor: snapshots must never run repository code.
         process.arguments = ["-C", path, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
                              "-c", "commit.gpgsign=false"] + arguments
