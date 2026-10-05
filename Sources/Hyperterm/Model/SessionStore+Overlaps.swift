@@ -21,17 +21,27 @@ extension TerminalSession {
         return named.isEmpty ? nil : Dictionary(named.map { ($0.label, $0.files) }) { first, _ in first }
     }
 
+    /// Agents sharing a workspace are named together: "Conflicts with @a, @b".
     var overlapBadge: OverlapBadge? {
-        let named = overlapPartners
-        guard let first = named.first else { return nil }
-        let title = "Conflicts with @\(first.label)" + (named.count > 1 ? " +\(named.count - 1)" : "")
-        let detail = named.map { "Conflicts with @\($0.label): " + $0.files.joined(separator: ", ") }.joined(separator: "\n")
+        var workspaces: [(path: String, labels: [String], files: [String])] = []
+        for partner in overlapPartners {
+            if let index = workspaces.firstIndex(where: { $0.path == partner.path }) {
+                workspaces[index].labels.append(partner.label)
+            } else {
+                workspaces.append((partner.path, [partner.label], partner.files))
+            }
+        }
+        guard let first = workspaces.first else { return nil }
+        func names(_ labels: [String]) -> String { labels.map { "@" + $0 }.joined(separator: ", ") }
+        let others = workspaces.dropFirst().reduce(0) { $0 + $1.labels.count }
+        let title = "Conflicts with " + names(first.labels) + (others > 0 ? " +\(others)" : "")
+        let detail = workspaces.map { "Conflicts with \(names($0.labels)): " + $0.files.joined(separator: ", ") }.joined(separator: "\n")
         return OverlapBadge(title: title, detail: detail)
     }
 
-    private var overlapPartners: [(label: String, files: [String])] {
+    private var overlapPartners: [(label: String, path: String, files: [String])] {
         guard let store else { return [] }
-        return store.sessions.compactMap { other in overlaps[other.id].map { (other.label, $0) } }
+        return store.sessions.compactMap { other in overlaps[other.id].map { (other.label, other.spec.workPath, $0) } }
     }
 }
 
@@ -75,16 +85,13 @@ extension SessionStore {
 
     private func scanOverlaps(_ repo: String) {
         guard !overlapWatch.running.contains(repo), let finished = overlapWatch.pending.removeValue(forKey: repo) else { return }
-        let live = sessions.filter { session in
-            guard session.kind.isAgent, !session.isOrganizer, session.git?.mainRoot == repo else { return false }
-            if case .exited = session.state { return false }
-            return true
-        }
-        guard live.count > 1, live.contains(where: { finished.contains($0.id) }) else { return }
+        let live = watchedAgents.filter { $0.git?.mainRoot == repo }
+        let workspaces = live.map(\.spec.workPath)
+        let focus = Set(live.filter { finished.contains($0.id) }.map(\.spec.workPath))
+        guard Set(workspaces).count > 1, !focus.isEmpty else { return }
         overlapWatch.running.insert(repo)
-        let workspaces = live.map { (id: $0.id, path: $0.spec.workPath) }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let pairs = Overlaps.scan(workspaces, focus: finished)
+            let pairs = Overlaps.scan(workspaces, focus: focus)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -96,17 +103,36 @@ extension SessionStore {
         }
     }
 
-    private func applyOverlaps(_ pairs: [Overlaps.Pair], finished: Set<UUID>) {
+    /// Agents the conflict watch compares: live, and not the organizer.
+    private var watchedAgents: [TerminalSession] {
+        sessions.filter { session in
+            guard session.kind.isAgent, !session.isOrganizer else { return false }
+            if case .exited = session.state { return false }
+            return true
+        }
+    }
+
+    /// Marks every agent in each conflicting workspace, and sends one note per workspace pair:
+    /// from the workspace whose agents just finished, to one agent in the other, preferring one
+    /// at rest, then the most recently active.
+    func applyOverlaps(_ pairs: [Overlaps.Pair], finished: Set<UUID>) {
+        let agents = watchedAgents
         for pair in pairs {
-            guard let a = sessions.first(where: { $0.id == pair.a }), let b = sessions.first(where: { $0.id == pair.b }) else { continue }
+            let left = agents.filter { $0.spec.workPath == pair.a }, right = agents.filter { $0.spec.workPath == pair.b }
+            guard !left.isEmpty, !right.isEmpty else { continue }
             let files = pair.files.isEmpty ? nil : pair.files
-            if a.overlaps[b.id] != files { a.overlaps[b.id] = files }
-            if b.overlaps[a.id] != files { b.overlaps[a.id] = files }
-            guard !pair.files.isEmpty, overlapWatch.notes.shouldTell(a.id, b.id, files: pair.files) else { continue }
-            // The agent that just finished tells the other one.
-            let (author, reader) = finished.contains(a.id) ? (a, b) : (b, a)
+            for a in left {
+                for b in right {
+                    if a.overlaps[b.id] != files { a.overlaps[b.id] = files }
+                    if b.overlaps[a.id] != files { b.overlaps[a.id] = files }
+                }
+            }
+            guard !pair.files.isEmpty, overlapWatch.notes.shouldTell(pair.a, pair.b, files: pair.files) else { continue }
+            let (authors, readers) = left.contains { finished.contains($0.id) } ? (left, right) : (right, left)
+            guard let reader = readers.max(by: { ($0.atRest ? 1 : 0, $0.stateChangedAt) < ($1.atRest ? 1 : 0, $1.stateChangedAt) }) else { continue }
+            let named = authors.filter { finished.contains($0.id) }.map { "@" + $0.label }.joined(separator: ", ")
             let shown = pair.files.prefix(5).joined(separator: ", ") + (pair.files.count > 5 ? " and \(pair.files.count - 5) more" : "")
-            _ = reader.send("@\(author.label) just finished changes to \(shown) that overlap yours; check before continuing.", now: false)
+            _ = reader.send("\(named) just finished changes to \(shown) that overlap yours; check before continuing.", now: false)
         }
     }
 }

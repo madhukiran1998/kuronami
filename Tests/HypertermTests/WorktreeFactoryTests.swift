@@ -89,24 +89,65 @@ final class WorktreeFactoryTests: XCTestCase {
         try write(alpha, "shared.txt", "one\nALPHA\nthree\n")
         try write(bravo, "shared.txt", "one\nBRAVO\nthree\n")
         try write(charlie, "other.txt", "new\n")
-        let (a, b, c) = (UUID(), UUID(), UUID())
-        let pairs = Overlaps.scan([(a, alpha), (b, bravo), (c, charlie)], focus: [a])
-        XCTAssertEqual(pairs.first { $0.a == a && $0.b == b }?.files, ["shared.txt"])
-        XCTAssertEqual(pairs.first { $0.a == a && $0.b == c }?.files, [])
-        XCTAssertNil(pairs.first { $0.a == b && $0.b == c }, "pairs without a finished agent aren't scanned")
+        let pairs = Overlaps.scan([alpha, bravo, charlie], focus: [alpha])
+        XCTAssertEqual(pairs.first { $0.a == alpha && $0.b == bravo }?.files, ["shared.txt"])
+        XCTAssertEqual(pairs.first { $0.a == alpha && $0.b == charlie }?.files, [])
+        XCTAssertNil(pairs.first { $0.a == bravo && $0.b == charlie }, "pairs without a finished agent aren't scanned")
         // Nothing was written to the worktrees, their indexes or refs.
         XCTAssertEqual(Git.run(["status", "--porcelain"], at: alpha), "M shared.txt")
         XCTAssertEqual(Git.run(["for-each-ref", "--format=%(refname)"], at: repo)?.contains("kuronami"), false)
     }
 
+    func testGeneratedFilesNeverConflict() throws {
+        let alpha = addWorktree("alpha")
+        let bravo = addWorktree("bravo")
+        // Not in .gitignore, yet still left out.
+        try write(alpha, "__pycache__/app.cpython-313.pyc", "alpha")
+        try write(bravo, "__pycache__/app.cpython-313.pyc", "bravo")
+        try write(alpha, "lib/dist/out.js", "alpha")
+        try write(bravo, "lib/dist/out.js", "bravo")
+        XCTAssertEqual(Overlaps.scan([alpha, bravo], focus: [alpha]), [Overlaps.Pair(a: alpha, b: bravo, files: [])])
+    }
+
+    @MainActor
+    func testAgentsSharingAFolderAreOneWorkspace() throws {
+        let alpha = addWorktree("alpha")
+        try write(repo, "shared.txt", "one\nMAIN\nthree\n")
+        try write(alpha, "shared.txt", "one\nALPHA\nthree\n")
+        func agent(_ label: String, _ cwd: String, _ state: AgentState) -> TerminalSession {
+            let session = TerminalSession(spec: LaunchSpec(label: label, kind: .claude, cwd: cwd), resume: false)
+            session.apply(.processStarted, source: "test", force: state)
+            return session
+        }
+        // Both mid-turn, so the note queues; `two` was active more recently.
+        let one = agent("one", repo, .working), two = agent("two", repo, .working), worker = agent("worker", alpha, .working)
+        let store = SessionStore(previewSessions: [one, two, worker])
+        for session in store.sessions { session.store = store }
+
+        let pairs = Overlaps.scan([repo, repo, alpha], focus: [alpha])
+        XCTAssertEqual(pairs, [Overlaps.Pair(a: repo, b: alpha, files: ["shared.txt"])], "same-folder agents are compared once")
+        store.applyOverlaps(pairs, finished: [worker.id])
+        store.applyOverlaps(pairs, finished: [worker.id])
+
+        XCTAssertEqual(worker.overlapBadge?.title, "Conflicts with @one, @two")
+        XCTAssertEqual(one.overlapBadge?.title, "Conflicts with @worker")
+        XCTAssertEqual(two.overlapBadge?.title, "Conflicts with @worker")
+        XCTAssertNil(one.overlaps[two.id])
+        // One note for the workspace pair, naming the agent that finished; not repeated.
+        XCTAssertTrue(one.pendingMessages.isEmpty)
+        XCTAssertEqual(two.pendingMessages.count, 1)
+        XCTAssertTrue(two.pendingMessages.first?.hasPrefix("@worker just finished changes to shared.txt") == true, two.pendingMessages.first ?? "")
+        XCTAssertTrue(worker.pendingMessages.isEmpty)
+    }
+
     func testNotesGoOutOnlyForNewFiles() {
         var notes = OverlapNotes()
-        let (a, b) = (UUID(), UUID())
+        let (a, b) = ("/a", "/b")
         XCTAssertTrue(notes.shouldTell(a, b, files: ["x.swift"]))
         XCTAssertFalse(notes.shouldTell(a, b, files: ["x.swift"]))
         XCTAssertFalse(notes.shouldTell(b, a, files: ["x.swift"]), "either direction is the same pair")
         XCTAssertTrue(notes.shouldTell(a, b, files: ["x.swift", "y.swift"]))
         XCTAssertFalse(notes.shouldTell(a, b, files: ["y.swift"]))
-        XCTAssertTrue(notes.shouldTell(a, UUID(), files: ["x.swift"]))
+        XCTAssertTrue(notes.shouldTell(a, "/c", files: ["x.swift"]))
     }
 }

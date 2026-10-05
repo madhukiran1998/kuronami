@@ -5,27 +5,38 @@ import Foundation
 /// object store, then `git merge-tree` merges the snapshots against their merge base without
 /// touching any worktree, index or ref. Calls block; run them off the main thread.
 enum Overlaps {
+    /// Two workspaces, by path, and the files they'd conflict on.
     struct Pair: Equatable {
-        let a: UUID
-        let b: UUID
+        let a: String
+        let b: String
         let files: [String]
     }
 
-    /// Every pair of distinct workspaces that includes one in `focus`, with its conflicting files
-    /// (empty when the two merge cleanly). All workspaces must belong to one repository.
-    static func scan(_ workspaces: [(id: UUID, path: String)], focus: Set<UUID>) -> [Pair] {
+    /// Generated files that never count, ignored or not: excluded from each snapshot so the
+    /// merge doesn't see them at all.
+    static let generated: [String] = {
+        let folders = ["__pycache__", "node_modules", ".build", "build", "dist", "target", ".next", ".venv"]
+        let paths = folders.flatMap { [$0, "*/\($0)/*"] } + ["*.pyc", "*.log", ".DS_Store", "*/.DS_Store", ".claude/worktrees"]
+        return paths.map { ":(top,exclude)" + $0 }
+    }()
+
+    /// Every pair of distinct workspace paths that includes one in `focus`, with its conflicting
+    /// files (empty when the two merge cleanly). All workspaces must belong to one repository.
+    static func scan(_ workspaces: [String], focus: Set<String>) -> [Pair] {
+        var seen: Set<String> = []
+        let workspaces = workspaces.filter { seen.insert($0).inserted }
         guard let first = workspaces.first else { return [] }
-        return Checkpoints.withScratchObjects(at: first.path) { environment in
-            var snapshots: [UUID: String] = [:]
-            for workspace in workspaces {
-                snapshots[workspace.id] = Checkpoints.snapshot(at: workspace.path, message: "Kuronami: overlap", environment: environment)
+        return Checkpoints.withScratchObjects(at: first) { environment in
+            var snapshots: [String: String] = [:]
+            for path in workspaces {
+                snapshots[path] = Checkpoints.snapshot(at: path, message: "Kuronami: overlap", environment: environment, excluding: generated)
             }
             var pairs: [Pair] = []
             for (index, a) in workspaces.enumerated() {
-                for b in workspaces[(index + 1)...] where focus.contains(a.id) || focus.contains(b.id) {
-                    guard a.path != b.path, let left = snapshots[a.id], let right = snapshots[b.id],
-                          let files = conflicts(left, right, at: a.path, environment: environment) else { continue }
-                    pairs.append(Pair(a: a.id, b: b.id, files: files))
+                for b in workspaces[(index + 1)...] where focus.contains(a) || focus.contains(b) {
+                    guard let left = snapshots[a], let right = snapshots[b],
+                          let files = conflicts(left, right, at: a, environment: environment) else { continue }
+                    pairs.append(Pair(a: a, b: b, files: files))
                 }
             }
             return pairs
@@ -62,13 +73,13 @@ enum Overlaps {
     }
 }
 
-/// Which overlaps an agent has already been told about, so a note goes out only when a pair
-/// starts conflicting on a file it hadn't before.
+/// Which overlaps a pair of workspaces has already been told about, so a note goes out only
+/// when the pair starts conflicting on a file it hadn't before.
 struct OverlapNotes {
-    private var told: [Set<UUID>: Set<String>] = [:]
+    private var told: [Set<String>: Set<String>] = [:]
 
-    mutating func shouldTell(_ a: UUID, _ b: UUID, files: [String]) -> Bool {
-        let pair: Set<UUID> = [a, b]
+    mutating func shouldTell(_ a: String, _ b: String, files: [String]) -> Bool {
+        let pair: Set<String> = [a, b]
         let fresh = Set(files).subtracting(told[pair, default: []])
         guard !fresh.isEmpty else { return false }
         told[pair, default: []].formUnion(fresh)
