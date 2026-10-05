@@ -188,6 +188,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if pollCount % 4 == 0 { refreshDiffStats(all: pollCount % 24 == 0) }
         for session in store.sessions {
             correctStaleWorking(session)
+            // Before the queue, so a message is never typed into the trust prompt.
+            session.checkTrustPrompt()
             session.retryPendingMessages()
             if session.kind.isAgent { trackAgentProcess(session, snapshots[session.id.uuidString]) }
             guard let snapshot = snapshots[session.id.uuidString] else { continue }

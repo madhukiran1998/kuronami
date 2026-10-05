@@ -308,6 +308,32 @@ final class TerminalSession: ObservableObject, Identifiable {
         return PromptScreen.hasDialog(screen)
     }
 
+    /// Claude Code and Codex ask to trust a new folder before any hook fires, so only the screen
+    /// shows it. Polled; reads the screen only before the first hook (while starting, or in the
+    /// first two minutes) and while the prompt is up.
+    func checkTrustPrompt() {
+        guard kind.isAgent, !isAsleep else { return }
+        let mayShow = lastHookAt == .distantPast && (state == .starting || Date().timeIntervalSince(createdAt) < 120)
+        guard showingTrustPrompt || mayShow else { return }
+        trustPromptSeen(PromptScreen.hasTrustDialog(surface.readViewport()))
+    }
+
+    static let trustReason = "Trust this folder?"
+
+    func trustPromptSeen(_ onScreen: Bool) {
+        if onScreen, !showingTrustPrompt, !state.needsAttention {
+            apply(.processStarted, source: "trust prompt", force: .needsInput(Self.trustReason))
+        } else if !onScreen, showingTrustPrompt {
+            // SessionStart may have come while it showed (and kept "needs you"); otherwise the
+            // normal start flow takes it from here.
+            apply(.processStarted, source: "trust answered", force: lastHookAt == .distantPast ? .starting : .idle)
+        }
+    }
+
+    private var showingTrustPrompt: Bool {
+        stateSource == "trust prompt" && state == .needsInput(Self.trustReason)
+    }
+
     /// The user typed into this terminal since their last submit. Screen text can't separate a
     /// draft from Claude's dimmed prompt suggestion, so keystrokes decide.
     private(set) var userDraftInProgress = false
@@ -646,6 +672,17 @@ enum PromptScreen {
             || lower.contains("proceed?") || lower.contains("trust this folder") || lower.contains("enter to confirm")
         return asks && options(screen).count >= 2
     }
+
+    /// Claude Code's "Quick safety check" and Codex's trust prompt (old and new wording).
+    static func hasTrustDialog(_ screen: String) -> Bool {
+        let lower = screen.lowercased()
+        return trustMarkers.contains(where: lower.contains)
+    }
+
+    private static let trustMarkers = [
+        "yes, i trust this folder", "a project you created or one you trust", "do you trust the files in this folder",
+        "allow codex to work in this folder", "codex can read, edit, and run files here",
+    ]
 
     static func inputIsEmpty(_ screen: String, kind: SessionKind) -> Bool {
         let lines = screen.split(separator: "\n", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
