@@ -6,6 +6,14 @@ cd "$(dirname "$0")/.."
 xcodegen generate >/dev/null
 xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration Release \
   -derivedDataPath build/DerivedData build 2>&1 | grep -E "error:|BUILD (SUCCEEDED|FAILED)" | sort -u
+# macOS's App Management protection can stop this terminal from replacing an app in
+# /Applications. Check before quitting anything, so a refused copy never leaves you with no app.
+if [ -e /Applications/Kuronami.app ] && ! chmod u+w /Applications/Kuronami.app/Contents 2>/dev/null; then
+  echo "macOS won't let this terminal replace /Applications/Kuronami.app."
+  echo "Allow it in System Settings > Privacy & Security > App Management (turn on your terminal app),"
+  echo "then run scripts/install.sh again. Kuronami was left running."
+  exit 1
+fi
 # Also stops a copy installed under the old name (Hyperterm.app), which shares this app's data.
 PIDS=$(pgrep -f "/Contents/MacOS/(Kuronami|Hyperterm)$" || true)
 for PID in $PIDS; do kill "$PID"; done
@@ -18,6 +26,11 @@ for _ in $(seq 1 40); do
   sleep 0.25
 done
 rm -rf /Applications/Kuronami.app /Applications/Hyperterm.app
-cp -R build/DerivedData/Build/Products/Release/Kuronami.app /Applications/Kuronami.app
-open /Applications/Kuronami.app
-echo "Installed /Applications/Kuronami.app"
+if cp -R build/DerivedData/Build/Products/Release/Kuronami.app /Applications/Kuronami.app 2>/dev/null; then
+  open /Applications/Kuronami.app
+  echo "Installed /Applications/Kuronami.app"
+else
+  # The old app is already gone; run the new build from where it was built rather than nothing.
+  open build/DerivedData/Build/Products/Release/Kuronami.app
+  echo "Couldn't copy into /Applications; opened the new build from build/ instead."
+fi
