@@ -20,6 +20,7 @@ final class OrganizerDock {
     private weak var session: TerminalSession?
 
     static let buttonSize: CGFloat = 40
+    static let dotSize: CGFloat = 18
     private static let inset: CGFloat = Space.m
     private static let panelSize = NSSize(width: 620, height: 460)
     private static let headerHeight: CGFloat = 36
@@ -172,7 +173,8 @@ extension TerminalSession {
 
 // MARK: - Views
 
-/// The round button: the organizer's CLI letter, with a dot while it works or needs you.
+/// The round button: a vermilion dot like the icon's sun, with a status dot while it works or
+/// needs you.
 private struct OrganizerButton: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var dock: OrganizerDock.State
@@ -181,20 +183,16 @@ private struct OrganizerButton: View {
 
     var body: some View {
         Button(action: toggle) {
-            ZStack(alignment: .topTrailing) {
-                Circle()
-                    .fill(hovering || dock.isOpen ? Tone.raised : Tone.surface)
-                    .overlay(Circle().strokeBorder(Tone.hairline, lineWidth: Size.hairline))
-                    .overlay {
-                        Image(systemName: dock.isOpen ? "chevron.down" : "sparkles")
-                            .font(Typeface.buttonGlyph)
-                            .foregroundStyle(dock.isOpen ? Tone.text : SessionStore.organizerKind.tint)
+            Circle()
+                .fill(Palette.accent)
+                .brightness(hovering || dock.isOpen ? 0.08 : 0)
+                .frame(width: OrganizerDock.dotSize, height: OrganizerDock.dotSize)
+                .overlay(alignment: .topTrailing) {
+                    if let organizer = store.organizer {
+                        OrganizerDot(session: organizer).offset(x: Space.xs, y: -Space.xs)
                     }
-                if let organizer = store.organizer {
-                    OrganizerDot(session: organizer)
                 }
-            }
-            .frame(width: OrganizerDock.buttonSize, height: OrganizerDock.buttonSize)
+                .frame(width: OrganizerDock.buttonSize, height: OrganizerDock.buttonSize)
             .contentShape(Circle())
         }
         .buttonStyle(.plain)

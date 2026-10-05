@@ -28,8 +28,6 @@ enum Typeface {
     static let caption = Font.system(size: 11)
     /// Badges, key caps, counts.
     static let micro = Font.system(size: 10, weight: .medium)
-    /// A glyph alone on a round button (the organizer's).
-    static let buttonGlyph = Font.system(size: 15, weight: .semibold)
 
     /// Code, commands, paths, diffs.
     static let code = Font.system(size: 12, design: .monospaced)

@@ -164,6 +164,9 @@ struct ControlHandler {
         case .watch:
             guard callerOrganizer != nil else { return .failure("only the organizer watches terminals") }
             return watch(request)
+        case .history:
+            guard callerOrganizer != nil else { return .failure("only the organizer reopens past sessions") }
+            return history(request)
         case .rename:
             return rename(request)
         case .notify:
@@ -332,12 +335,62 @@ struct ControlHandler {
                 child.record(.note, "Started by the organizer")
                 started.append(child)
             }
-            // Several at once land side by side, like a project window opened for them.
-            if count > 1 { store.arrange(layout: .grid, focus: started.first, tiles: nil) }
+            // The user asked for them, so they show: one is selected, several land side by side
+            // like a project window opened for them.
+            if count > 1 { store.arrange(layout: .grid, focus: started.first, tiles: nil) } else { store.select(started.first) }
             let labels = started.map { "@" + $0.label }.joined(separator: ", ")
             var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))")
             response.session = started.first?.info()
             reply(response)
+        }
+    }
+
+    /// Closed agents: list them, or reopen some and show them, resuming each conversation.
+    private func history(_ request: ControlRequest) -> ControlResponse {
+        switch request.text {
+        case "list":
+            let closed = store.closedSessions(in: request.cwd)
+            guard !closed.isEmpty else {
+                let place = request.cwd.map { " in " + abbreviateHome(expandTilde($0)) } ?? ""
+                return .success(text: "No recently closed sessions\(place).")
+            }
+            let shown = Array(closed.prefix(max(request.lines ?? 15, 1)))
+            return .success(text: "Recently closed, newest first:\n" + SessionStore.describeHistory(shown))
+        case "reopen":
+            let names = request.targets ?? request.target.map { [$0] } ?? []
+            guard !names.isEmpty else { return .failure("say which session to reopen") }
+            // An unknown name reopens nothing, so a retry doesn't open the rest twice.
+            var specs: [LaunchSpec] = []
+            for name in names {
+                guard let spec = store.closedSession(named: name) else {
+                    let known = store.closedSessions().map { "@" + $0.label }.joined(separator: ", ")
+                    return .failure("no closed session named \(name). Closed: \(known.isEmpty ? "none" : known)")
+                }
+                if !specs.contains(where: { $0.id == spec.id }) { specs.append(spec) }
+            }
+            var reopened: [TerminalSession] = []
+            var lines: [String] = []
+            for spec in specs {
+                guard let session = store.reopen(spec) else {
+                    lines.append(store.lastError ?? "@\(spec.label) couldn't be reopened")
+                    continue
+                }
+                reopened.append(session)
+                let renamed = session.label == spec.label ? "" : " (was @\(spec.label))"
+                lines.append("@\(session.label)\(renamed) " + (spec.agentSessionId == nil ? "started fresh" : "resumed its conversation"))
+            }
+            if reopened.count == 1 {
+                store.select(reopened[0])
+            } else if reopened.count > 1 {
+                store.arrange(layout: .grid, focus: reopened.first, tiles: nil)
+            }
+            let text = lines.joined(separator: "\n")
+            guard !reopened.isEmpty else { return .failure(text) }
+            var response = ControlResponse.success(text: text)
+            response.session = reopened.first?.info()
+            return response
+        default:
+            return .failure("history takes list or reopen")
         }
     }
 

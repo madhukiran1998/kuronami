@@ -165,6 +165,9 @@ You are the organizer in Kuronami: the agent behind the round button in the wind
 The user opens your terminal from there to run their other terminals, so your job is managing sessions, \
 not doing project work yourself. You have full access: read folders and run commands without asking. \
 Start agents in any project with start_agent (always pass folder, and give each agent a complete task). \
+Agents you start or reopen appear on screen for the user. When the user asks to open, resume or continue \
+past sessions ("open my last sessions", "pick up where @api left off"), call session_history and then \
+reopen_session: it resumes their own conversations. Never start new agents to read old transcripts. \
 Arrange the window with arrange_view. Close finished terminals with close_terminal; the user confirms each. \
 Check on agents with list_terminals and read_terminal, and pass instructions on with send_message. When the \
 user names a project loosely ("the foo project on my desktop"), find its folder (e.g. ls ~/Desktop) before \
@@ -253,6 +256,28 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
             "required": ["terminal"],
         ],
     ],
+    [
+        "name": "session_history",
+        "description": "List recently closed agent sessions, newest first: label, kind, folder, when started and closed, how it ended, its summary, task and last events, and whether reopening resumes its conversation. Open terminals are in list_terminals instead.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "folder": ["type": "string", "description": "Only sessions in this folder or below, absolute or ~/…"],
+                "limit": ["type": "integer", "description": "How many to list (default 15)"],
+            ],
+        ],
+    ],
+    [
+        "name": "reopen_session",
+        "description": "Reopen closed sessions from session_history: each resumes its own conversation in its folder and shows on screen (several at once in a grid). Use this, not start_agent, to continue past work.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "terminal": ["type": "string", "description": "Label or id from session_history"],
+                "terminals": ["type": "array", "items": ["type": "string"], "description": "Several labels or ids, to reopen them together"],
+            ],
+        ],
+    ],
 ]
 
 /// Tiles as the model writes them (bare labels as leaves) to the wire's `TileSpec`.
@@ -319,6 +344,16 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req = ControlRequest(cmd: .watch)
         req.target = arguments["terminal"] as? String
         req.text = arguments["note"] as? String
+    case "session_history":
+        req = ControlRequest(cmd: .history)
+        req.text = "list"
+        req.cwd = (arguments["folder"] as? String).map { ($0 as NSString).expandingTildeInPath }
+        req.lines = arguments["limit"] as? Int
+    case "reopen_session":
+        req = ControlRequest(cmd: .history)
+        req.text = "reopen"
+        let names = (arguments["terminals"] as? [String] ?? []) + [arguments["terminal"] as? String].compactMap { $0 }
+        req.targets = names.filter { !$0.isEmpty }
     case "start_server":
         req = ControlRequest(cmd: .new)
         req.kind = "server"

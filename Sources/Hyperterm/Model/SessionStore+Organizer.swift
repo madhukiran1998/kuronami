@@ -9,22 +9,14 @@ extension SessionStore {
     /// Its own Kuronami tools run without a permission prompt; the app still checks each call,
     /// and closing a terminal still asks.
     static let organizerTools = ["list_terminals", "read_terminal", "send_message", "start_agent", "arrange_view",
-                                 "close_terminal", "save_layout", "restore_layout", "watch_terminal"]
+                                 "close_terminal", "save_layout", "restore_layout", "watch_terminal",
+                                 "session_history", "reopen_session"]
         .map { "mcp__hyperterm__" + $0 }
 
     /// Which CLI runs the organizer, picked in its panel's header.
     static var organizerKind: SessionKind {
         get { UserDefaults.standard.string(forKey: "organizerKind").flatMap(SessionKind.init(rawValue:)) ?? .claude }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "organizerKind") }
-    }
-
-    /// Sends `text` to the organizer, starting it in `cwd` the first time.
-    func askOrganizer(_ text: String, cwd: String) {
-        if let organizer, !organizer.isExitedProcess {
-            _ = organizer.deliver(text, from: nil)
-            return
-        }
-        startOrganizer(cwd: cwd, task: text)
     }
 
     /// Starts the organizer in `cwd`, replacing one that has exited. It runs with full access:
@@ -142,6 +134,52 @@ extension SessionStore {
             return LayoutNode.split(axis, zip(sizes, children).compactMap { size, child in build(child).map { (size, $0) } })
         }
         return build(spec)
+    }
+
+    // MARK: - History
+
+    /// Closed agents it can reopen, newest first, in `folder` or below. Its own past runs are
+    /// left out: reopening one would start a second organizer.
+    func closedSessions(in folder: String? = nil) -> [LaunchSpec] {
+        let root = folder.map { (expandTilde($0) as NSString).standardizingPath }
+        return recentlyClosed.filter { spec in
+            guard spec.organizer != true else { return false }
+            guard let root else { return true }
+            let path = (expandTilde(spec.cwd) as NSString).standardizingPath
+            return path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+        }
+    }
+
+    /// The closed session `name` means: its label (or an earlier one) or its id. Newest wins.
+    func closedSession(named name: String) -> LaunchSpec? {
+        let id = UUID(uuidString: name.trimmingCharacters(in: .whitespaces))
+        let label = normalizeLabel(name)
+        return closedSessions().first { $0.id == id || $0.label == label || $0.previousLabels?.contains(label) == true }
+    }
+
+    /// session_history's reply: enough about each closed session to tell them apart and pick.
+    static func describeHistory(_ specs: [LaunchSpec], now: Date = Date()) -> String {
+        let relative = RelativeDateTimeFormatter()
+        relative.locale = Locale(identifier: "en_US_POSIX")
+        func ago(_ date: Date) -> String { relative.localizedString(for: date, relativeTo: now) }
+        func oneLine(_ text: String, _ limit: Int) -> String {
+            let line = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+            return line.count > limit ? String(line.prefix(limit - 1)) + "…" : line
+        }
+        return specs.map { spec in
+            let memory = spec.memory
+            var head = "@\(spec.label) [\(spec.kind.rawValue)] \(abbreviateHome(expandTilde(spec.cwd)))"
+            if let branch = spec.worktreeBranch { head += " (branch \(branch))" }
+            head += " · started " + ago(spec.createdAt)
+            if let closed = memory?.closedAt { head += ", closed " + ago(closed) }
+            head += spec.agentSessionId == nil ? " · starts fresh" : " · resumes its conversation"
+            var lines = [head]
+            if let state = memory?.finalState { lines.append("    ended: " + oneLine(state, 160)) }
+            if let summary = spec.summary { lines.append("    summary: " + oneLine(summary, 200)) }
+            if let task = memory?.task { lines.append("    task: " + oneLine(task, 200)) }
+            for event in memory?.events ?? [] { lines.append("    - " + oneLine(event, 160)) }
+            return lines.joined(separator: "\n")
+        }.joined(separator: "\n")
     }
 
     // MARK: - Watching

@@ -24,6 +24,7 @@ enum ControlCommand: String, Codable {
     case arrange       // the organizer arranges the view: text = layout, target = focus, tiles
     case layouts       // the organizer's named layouts: text = save | restore | list, label = name
     case watch         // the organizer hears when target finishes; text = its note for then
+    case history       // the organizer's closed sessions: text = list | reopen, targets for reopen
 }
 
 struct ControlRequest: Codable {
@@ -56,6 +57,8 @@ struct ControlRequest: Codable {
     var tiles: TileSpec?
     /// For `new` from the organizer: how many agents take the same task.
     var count: Int?
+    /// For `history` reopen: labels or ids of closed sessions.
+    var targets: [String]?
 }
 
 /// The most agents one start_agent call may start on the same task.

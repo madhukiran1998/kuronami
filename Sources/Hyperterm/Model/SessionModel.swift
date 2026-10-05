@@ -94,6 +94,19 @@ enum LabelSource: String, Codable {
     case user, auto, agent
 }
 
+/// What a session was for and how it ended, kept so it can be found and reopened later.
+struct SessionMemory: Codable, Equatable {
+    /// The task it was started with (the first one).
+    var task: String?
+    /// Last state change while it was open.
+    var lastActiveAt: Date?
+    var closedAt: Date?
+    /// `AgentState` phrase at close, with its detail: "Idle", "Needs you: …".
+    var finalState: String?
+    /// The last few timeline entries (at most 8), oldest first, one line each.
+    var events: [String]?
+}
+
 /// Everything needed to (re)create a session. Persisted across app restarts.
 struct LaunchSpec: Codable, Identifiable, Equatable {
     var id: UUID
@@ -137,6 +150,8 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     var race: UUID?
     /// The agent behind the sidebar's box: it starts, arranges and closes the other sessions.
     var organizer: Bool?
+    /// What it was for and how it ended. Nil in specs saved before sessions remembered.
+    var memory: SessionMemory?
 
     /// Where the agent's files actually live.
     var workPath: String {
@@ -146,6 +161,9 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     var createdAt: Date
 
     var agentMayRename: Bool { (labelSource ?? .user) != .user }
+
+    /// Agents without a conversation id reopen as a fresh agent in the same folder.
+    var canResume: Bool { agentSessionId != nil }
 
     init(label: String, kind: SessionKind, cwd: String, command: String? = nil) {
         self.id = UUID()

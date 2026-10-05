@@ -69,6 +69,47 @@ final class OrganizerTests: XCTestCase {
         XCTAssertEqual(spec.children?.last?.children?.map(\.terminal), ["web", "fix"])
     }
 
+    func testHistoryDescribesEachClosedSessionOnItsOwnLines() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        var api = LaunchSpec(label: "api", kind: .claude, cwd: "/workspace/atlas")
+        api.createdAt = now.addingTimeInterval(-3 * 3600)
+        api.agentSessionId = "abc"
+        api.worktreeBranch = "kuronami/api"
+        api.summary = "Added /orders.\nTests pass."
+        api.memory = SessionMemory(task: "Add an orders endpoint", closedAt: now.addingTimeInterval(-600),
+                                   finalState: "Idle", events: ["Ran tests", "Committed"])
+        var web = LaunchSpec(label: "web", kind: .codex, cwd: "/workspace/shop")
+        web.createdAt = now.addingTimeInterval(-60)
+
+        let lines = SessionStore.describeHistory([api, web], now: now).components(separatedBy: "\n")
+
+        XCTAssertEqual(lines, [
+            "@api [claude] /workspace/atlas (branch kuronami/api) · started 3 hours ago, closed 10 minutes ago · resumes its conversation",
+            "    ended: Idle",
+            "    summary: Added /orders. Tests pass.",
+            "    task: Add an orders endpoint",
+            "    - Ran tests",
+            "    - Committed",
+            "@web [codex] /workspace/shop · started 1 minute ago · starts fresh",
+        ])
+    }
+
+    func testHistoryFiltersByFolderAndLeavesOutPastOrganizers() {
+        let store = SessionStore(previewSessions: [], previewLayout: .grid)
+        var organizer = LaunchSpec(label: "organizer", kind: .claude, cwd: "/workspace/atlas")
+        organizer.organizer = true
+        var renamed = LaunchSpec(label: "api", kind: .claude, cwd: "/workspace/atlas/server")
+        renamed.previousLabels = ["bravo"]
+        let other = LaunchSpec(label: "web", kind: .claude, cwd: "/workspace/atlas-web")
+        store.recentlyClosed = [organizer, renamed, other]
+
+        XCTAssertEqual(store.closedSessions().map(\.label), ["api", "web"])
+        XCTAssertEqual(store.closedSessions(in: "/workspace/atlas/").map(\.label), ["api"])
+        XCTAssertEqual(store.closedSession(named: "@Bravo")?.id, renamed.id)
+        XCTAssertEqual(store.closedSession(named: other.id.uuidString)?.id, other.id)
+        XCTAssertNil(store.closedSession(named: "organizer"))
+    }
+
     private func agent(_ label: String, organizer: Bool = false, state: AgentState = .idle) -> TerminalSession {
         var spec = LaunchSpec(label: label, kind: .claude, cwd: "/workspace/atlas")
         if organizer { spec.organizer = true }

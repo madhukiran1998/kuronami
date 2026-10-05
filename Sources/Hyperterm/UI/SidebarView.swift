@@ -11,11 +11,6 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Composer(store: store)
-                .padding(.horizontal, Space.m)
-                .padding(.top, Space.s)
-                .padding(.bottom, Space.m)
-            Hairline()
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: Space.xxs) {
@@ -85,7 +80,8 @@ struct SidebarView: View {
             .padding(.top, Space.l)
             .padding(.bottom, Space.xs)
             if showsClosed {
-                ForEach(store.recentlyClosed) { spec in
+                // The sidebar shows the latest few; the organizer can reach the rest.
+                ForEach(store.recentlyClosed.prefix(15)) { spec in
                     ClosedRow(spec: spec) { store.reopen(spec) }
                 }
                 Button("Clear List") { store.forgetClosed() }
@@ -95,114 +91,6 @@ struct SidebarView: View {
                     .padding(.horizontal, Space.s)
                     .padding(.top, Space.xs)
             }
-        }
-    }
-}
-
-// MARK: - Composer
-
-/// The organizer's box: say what you want done with your sessions (start agents in a project,
-/// rearrange the window, close what's finished) and the organizer does it. Its latest answer
-/// shows underneath; click it to open the organizer's terminal.
-private struct Composer: View {
-    @ObservedObject var store: SessionStore
-    @State private var text = ""
-    @FocusState private var focused: Bool
-
-    /// Where the organizer starts the first time: a folder you already work in.
-    private var startFolder: String {
-        store.selected.map { $0.git?.mainRoot ?? $0.spec.cwd } ?? NSHomeDirectory()
-    }
-
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Space.s) {
-            TextField("Ask the organizer…", text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(Typeface.body)
-                .lineLimit(1...6)
-                .focused($focused)
-                .onSubmit(submit)
-                .accessibilityLabel("Message for the organizer")
-            HStack(spacing: Space.xs) {
-                if let organizer = store.organizer {
-                    OrganizerStatus(session: organizer, store: store)
-                } else {
-                    Text("Start agents, arrange the view, close sessions")
-                        .foregroundStyle(Tone.faint)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                if store.launchingCount > 0 { ProgressView().controlSize(.mini) }
-                Button(action: submit) {
-                    Image(systemName: "arrow.up")
-                        .font(Typeface.caption.weight(.bold))
-                        .foregroundStyle(canSend ? Tone.floor : Tone.faint)
-                        .frame(width: Size.iconButton, height: Size.iconButton)
-                        .background(canSend ? Palette.accent : Tone.raised, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .help("Send (Return)")
-                .accessibilityLabel("Send to the organizer")
-            }
-            .font(Typeface.caption.weight(.medium))
-        }
-        .padding(Space.m)
-        .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.pane, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous)
-            .strokeBorder(focused ? Tone.focus : Color.clear))
-        .acceptsAttachments($text)
-        .help("Drop files or images to attach them")
-    }
-
-    private func submit() {
-        let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty else { return }
-        store.askOrganizer(message, cwd: startFolder)
-        text = ""
-    }
-}
-
-/// What the organizer is doing or last said. Clicking opens its terminal, e.g. to answer it.
-private struct OrganizerStatus: View {
-    @ObservedObject var session: TerminalSession
-    let store: SessionStore
-
-    var body: some View {
-        // It has no tile: in split or grid it opens zoomed, like a tile's zoom button.
-        Button { store.layout == .focus ? store.select(session) : store.toggleZoom(session.id) } label: {
-            HStack(spacing: Space.xs) {
-                Circle().fill(dot).frame(width: 6, height: 6)
-                Text(line)
-                    .foregroundStyle(session.state.needsAttention ? Tone.text : Tone.muted)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .multilineTextAlignment(.leading)
-            }
-        }
-        .buttonStyle(.plain)
-        .help("Open the organizer's terminal")
-    }
-
-    private var line: String {
-        switch session.state {
-        case .needsInput(let reason): return "Needs you: \(reason)"
-        case .starting: return "Starting…"
-        case .working: return session.activity ?? "Working…"
-        case .failed(let reason): return reason
-        case .exited: return "Stopped · your next message restarts it"
-        default: return session.summary ?? "Ready"
-        }
-    }
-
-    private var dot: Color {
-        switch session.state {
-        case .needsInput: return Palette.accent
-        case .failed: return Palette.failed
-        case .working, .starting: return Palette.running
-        default: return Tone.faint
         }
     }
 }
@@ -500,7 +388,7 @@ private struct ClosedRow: View {
             AgentAvatar(kind: spec.kind, dimmed: true)
             VStack(alignment: .leading, spacing: 0) {
                 Text(spec.label).font(Typeface.body).foregroundStyle(Tone.muted).lineLimit(1)
-                if let summary = spec.summary {
+                if let summary = spec.summary ?? spec.memory?.task {
                     Text(summary).font(Typeface.caption).foregroundStyle(Tone.faint).lineLimit(1)
                 }
             }
@@ -508,7 +396,8 @@ private struct ClosedRow: View {
             Text("Reopen").font(Typeface.caption.weight(.medium)).foregroundStyle(Palette.accent)
         }
         .modifier(RowChrome(selected: false, action: reopen))
-        .help("Reopen @\(spec.label) and resume its conversation")
+        .help(spec.canResume ? "Reopen @\(spec.label) and resume its conversation"
+                             : "Reopen @\(spec.label) as a new conversation in its folder")
     }
 }
 

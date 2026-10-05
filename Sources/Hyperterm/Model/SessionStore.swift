@@ -333,6 +333,11 @@ final class SessionStore: ObservableObject {
         if spec.kind.isAgent, spec.port == nil, let config = prepared.config {
             spec.port = Ports.allocate(config: config, taken: Set(sessions.compactMap(\.spec.port)))
         }
+        // The first task is what the session was for; a resumed one keeps it.
+        if let task, !task.isEmpty, spec.memory?.task == nil {
+            spec.memory = spec.memory ?? SessionMemory()
+            spec.memory?.task = sanitizeMessage(task)
+        }
         let session = TerminalSession(spec: spec, resume: resume, task: task.map(sanitizeMessage))
         if let task, !task.isEmpty { session.record(.prompt, task) }
         session.store = self
