@@ -26,6 +26,7 @@ enum ControlCommand: String, Codable {
     case watch         // the organizer hears when target finishes; text = its note for then
     case history       // the organizer's closed sessions: text = list | reopen, targets for reopen
     case heavy         // heavy-job slot: text = acquire (replies when granted) | release, pid = holder
+    case machine       // the organizer and the steward: text = status | policy (count = agent cap, targets = pinned)
 }
 
 struct ControlRequest: Codable {

@@ -173,7 +173,10 @@ reopen_session: it resumes their own conversations. Never start new agents to re
 Arrange the window with arrange_view. Close finished terminals with close_terminal; the user confirms each. \
 Check on agents with list_terminals and read_terminal, and pass instructions on with send_message. When you \
 relay an agent's result, quote its own words from read_terminal instead of paraphrasing. Kuronami's steward \
-may put idle agents to sleep; they wake when messaged. When the \
+keeps the Mac responsive: it lowers hidden idle agents, may put them to sleep (they wake when messaged), and \
+queues new agents when memory is short. machine_status shows what it sees. A message may carry its warnings (an \
+agent using too much memory, or burning CPU while idle): check the agent and tell the user, and restart or close it \
+only with their go-ahead. Change its policy with set_policy only when the user asks. When the \
 user names a project loosely ("the foo project on my desktop"), find its folder (e.g. ls ~/Desktop) before \
 starting agents there. Save arrangements the user likes with save_layout and bring them back with \
 restore_layout. To chain work ("when @api is done, have @web use its new endpoint"), call watch_terminal on \
@@ -286,6 +289,22 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
             ],
         ],
     ],
+    [
+        "name": "machine_status",
+        "description": "What Kuronami's steward sees: memory pressure, heat, free memory, the launch queue and heavy-job slots, and each terminal's memory, CPU and band (focused, working, waiting, idle), plus open warnings such as an agent over 3 GB.",
+        "inputSchema": ["type": "object", "properties": [String: Any]()],
+    ],
+    [
+        "name": "set_policy",
+        "description": "Change the steward's policy when the user asks: cap how many agents work at once, or pin terminals so they are never lowered or put to sleep. Omitted fields stay as they are.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "max_agents": ["type": "integer", "description": "Most agents working at once; 0 removes the cap"],
+                "pinned": ["type": "array", "items": ["type": "string"], "description": "Labels to keep at full speed; replaces the pinned list"],
+            ],
+        ],
+    ],
 ]
 
 /// Tiles as the model writes them (bare labels as leaves) to the wire's `TileSpec`.
@@ -362,6 +381,14 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req.text = "reopen"
         let names = (arguments["terminals"] as? [String] ?? []) + [arguments["terminal"] as? String].compactMap { $0 }
         req.targets = names.filter { !$0.isEmpty }
+    case "machine_status":
+        req = ControlRequest(cmd: .machine)
+        req.text = "status"
+    case "set_policy":
+        req = ControlRequest(cmd: .machine)
+        req.text = "policy"
+        req.count = arguments["max_agents"] as? Int
+        req.targets = arguments["pinned"] as? [String]
     case "start_server":
         req = ControlRequest(cmd: .new)
         req.kind = "server"
@@ -393,6 +420,9 @@ private func describe(_ sessions: [SessionInfo], selfID: String?) -> String {
         if !info.ports.isEmpty { line += " ports " + info.ports.map { ":\($0)" }.joined(separator: " ") }
         line += " · " + info.cwd
         if let summary = info.summary { line += "\n    " + summary }
+        for (other, files) in (info.conflicts ?? [:]).sorted(by: { $0.key < $1.key }) {
+            line += "\n    conflicts with @\(other): " + files.joined(separator: ", ")
+        }
         return line
     }.joined(separator: "\n")
 }

@@ -167,6 +167,9 @@ struct ControlHandler {
         case .history:
             guard callerOrganizer != nil else { return .failure("only the organizer reopens past sessions") }
             return history(request)
+        case .machine:
+            guard callerOrganizer != nil else { return .failure("only the organizer reads the steward") }
+            return machine(request)
         case .rename:
             return rename(request)
         case .notify:
@@ -324,7 +327,12 @@ struct ControlHandler {
         let base = normalizeLabel(request.label ?? "")
         let isolate = request.worktree ?? true
         let store = self.store
-        Task { @MainActor in
+        // When memory is short the steward holds the launch; the organizer hears so right away.
+        let queued = !Steward.shared.canLaunchAgent()
+        if queued {
+            reply(.success(text: "queued: memory is short, so the steward starts \(count == 1 ? "it" : "them") when there's room"))
+        }
+        Steward.shared.enqueueLaunch { Task { @MainActor in
             var started: [TerminalSession] = []
             for index in 1...count {
                 var spec = LaunchSpec(label: base.isEmpty || count == 1 ? base : "\(base)-\(index)",
@@ -339,10 +347,11 @@ struct ControlHandler {
             // like a project window opened for them.
             if count > 1 { store.arrange(layout: .grid, focus: started.first, tiles: nil) } else { store.select(started.first) }
             let labels = started.map { "@" + $0.label }.joined(separator: ", ")
+            guard !queued else { return }
             var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))")
             response.session = started.first?.info()
             reply(response)
-        }
+        } }
     }
 
     /// Closed agents: list them, or reopen some and show them, resuming each conversation.
@@ -392,6 +401,38 @@ struct ControlHandler {
         default:
             return .failure("history takes list or reopen")
         }
+    }
+
+    /// The steward's view of the machine, or a change to its policy.
+    private func machine(_ request: ControlRequest) -> ControlResponse {
+        let steward = Steward.shared
+        if request.text == "policy" {
+            var policy = steward.policy
+            if let cap = request.count { policy.maxActiveAgents = cap > 0 ? cap : nil }
+            if let pinned = request.targets { policy.pinned = Set(pinned.map(normalizeLabel).filter { !$0.isEmpty }) }
+            steward.policy = policy
+            let cap = policy.maxActiveAgents.map { "at most \($0) agents at once" } ?? "no agent cap"
+            let pinned = policy.pinned.isEmpty ? "nothing pinned" : "pinned " + policy.pinned.sorted().map { "@" + $0 }.joined(separator: ", ")
+            return .success(text: "Policy: \(cap), \(pinned).")
+        }
+        return .success(text: Self.describe(steward.status()))
+    }
+
+    static func describe(_ status: MachineStatus) -> String {
+        func gb(_ bytes: UInt64) -> String { String(format: "%.1f GB", Double(bytes) / 1_073_741_824) }
+        let power = status.lowPower ? ", Low Power Mode" : ""
+        var lines = ["Memory pressure \(status.pressure.rawValue), heat \(status.thermal.rawValue)\(power); \(gb(status.freeBytes)) free of \(gb(status.totalBytes))."]
+        let queued = status.queuedLaunches > 0 ? ", \(status.queuedLaunches) queued" : ""
+        let waiting = status.heavyWaiting > 0 ? ", \(status.heavyWaiting) waiting" : ""
+        lines.append("New agents \(status.admissionOK ? "can start now" : "wait for memory")\(queued). Heavy jobs: \(status.heavySlotsUsed)/\(status.heavySlotsTotal) slots\(waiting).")
+        for session in status.sessions.sorted(by: { $0.footprintBytes > $1.footprintBytes }) {
+            var line = "@\(session.label) \(session.band.rawValue) · \(gb(session.footprintBytes))"
+            if let cpu = session.cpuPercent { line += String(format: " · %.0f%% CPU", cpu) }
+            if session.lowered { line += " · lowered" }
+            if let warning = session.escalation { line += " · warning: " + warning.message }
+            lines.append(line)
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Named layouts: save the window as it is, put one back, or list them.

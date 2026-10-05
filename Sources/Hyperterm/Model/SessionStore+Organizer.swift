@@ -10,7 +10,7 @@ extension SessionStore {
     /// and closing a terminal still asks.
     static let organizerTools = ["list_terminals", "read_terminal", "send_message", "start_agent", "arrange_view",
                                  "close_terminal", "save_layout", "restore_layout", "watch_terminal",
-                                 "session_history", "reopen_session"]
+                                 "session_history", "reopen_session", "machine_status", "set_policy"]
         .map { "mcp__hyperterm__" + $0 }
 
     /// Which CLI runs the organizer, picked in its panel's header.
@@ -193,6 +193,16 @@ extension SessionStore {
         guard let organizer else { return }
         if organizer.id == session.id { flushOrganizerDigest(); return }
         guard let event = organizerEvent(session, from: previous) else { return }
+        addToOrganizerDigest(event)
+    }
+
+    /// The steward saw something it won't act on alone; the organizer checks and tells the user.
+    func reportToOrganizer(_ escalation: Escalation) {
+        guard organizer != nil else { return }
+        addToOrganizerDigest(OrganizerEvent(label: escalation.label, kind: .steward(escalation.message)))
+    }
+
+    private func addToOrganizerDigest(_ event: OrganizerEvent) {
         if organizerDigest.isEmpty {
             DispatchQueue.main.asyncAfter(deadline: .now() + OrganizerDigest.window) { [weak self] in
                 self?.flushOrganizerDigest()
@@ -248,7 +258,7 @@ extension SessionStore {
 /// Something the organizer should hear about.
 struct OrganizerEvent: Equatable {
     enum Kind: Equatable {
-        case finished(String), failed(String), exited
+        case finished(String), failed(String), exited, steward(String)
     }
 
     var label: String
@@ -262,6 +272,7 @@ struct OrganizerEvent: Equatable {
         case .finished(let summary): line += "finished: " + summary
         case .failed(let reason): line += "failed: " + reason
         case .exited: line += "exited"
+        case .steward(let warning): line += "steward warning: " + warning
         }
         if let note { line += " (your note: \(note))" }
         return line
