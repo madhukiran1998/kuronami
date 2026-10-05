@@ -17,6 +17,20 @@ final class OrganizerTests: XCTestCase {
         XCTAssertNil(api.info().organizer)
     }
 
+    func testChoosingTheOrganizerOpensItsPanelInsteadOfATile() {
+        let api = agent("api"), organizer = agent("organizer", organizer: true)
+        let store = SessionStore(previewSessions: [api, organizer], previewLayout: .focus)
+        store.select(api)
+        var opened = 0
+        store.onShowOrganizer = { opened += 1 }
+
+        store.select(organizer)
+
+        XCTAssertEqual(opened, 1)
+        XCTAssertEqual(store.selectedID, api.id)
+        XCTAssertEqual(store.visibleIDs, [api.id])
+    }
+
     func testWatchedAgentFinishingTellsTheOrganizerOnce() {
         let api = agent("api", state: .idle), organizer = agent("organizer", organizer: true, state: .needsInput("busy"))
         let store = SessionStore(previewSessions: [api, organizer], previewLayout: .grid)

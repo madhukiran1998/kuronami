@@ -58,8 +58,7 @@ struct ControlRequest: Codable {
     var count: Int?
 }
 
-/// Agents the organizer may start per message from the user before Kuronami asks the user. A
-/// loose orchestrator can otherwise fan out into a swarm.
+/// The most agents one start_agent call may start on the same task.
 let organizerStartCap = 5
 
 /// A tile arrangement as an agent describes it: a leaf names a terminal, a split lays its

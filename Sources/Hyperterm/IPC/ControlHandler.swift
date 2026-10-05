@@ -321,38 +321,23 @@ struct ControlHandler {
         let base = normalizeLabel(request.label ?? "")
         let isolate = request.worktree ?? true
         let store = self.store
-        let start = {
-            store.organizerStarts += count
-            Task { @MainActor in
-                var started: [TerminalSession] = []
-                for index in 1...count {
-                    var spec = LaunchSpec(label: base.isEmpty || count == 1 ? base : "\(base)-\(index)",
-                                          kind: kind, cwd: expandTilde(folder))
-                    if spec.labelSource == .user { spec.labelSource = .agent }
-                    spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
-                    let child = await store.launch(spec, select: false, isolateIfPossible: isolate, task: task)
-                    child.record(.note, "Started by the organizer")
-                    started.append(child)
-                }
-                // Several at once land side by side, like a project window opened for them.
-                if count > 1 { store.arrange(layout: .grid, focus: started.first, tiles: nil) }
-                let labels = started.map { "@" + $0.label }.joined(separator: ", ")
-                var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))")
-                response.session = started.first?.info()
-                reply(response)
+        Task { @MainActor in
+            var started: [TerminalSession] = []
+            for index in 1...count {
+                var spec = LaunchSpec(label: base.isEmpty || count == 1 ? base : "\(base)-\(index)",
+                                      kind: kind, cwd: expandTilde(folder))
+                if spec.labelSource == .user { spec.labelSource = .agent }
+                spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
+                let child = await store.launch(spec, select: false, isolateIfPossible: isolate, task: task)
+                child.record(.note, "Started by the organizer")
+                started.append(child)
             }
-        }
-        let already = store.organizerStarts
-        guard already + count > organizerStartCap else { start(); return }
-        store.confirm(
-            "The organizer wants to start \(count) more agent\(count == 1 ? "" : "s")",
-            "It has started \(already) since your last message.\n\n\(abbreviateHome(expandTilde(folder)))\n\n\(task)"
-        ) { approved in
-            guard approved else {
-                reply(.failure("the user declined: you've started \(already) agents for this request; ask them before starting more"))
-                return
-            }
-            start()
+            // Several at once land side by side, like a project window opened for them.
+            if count > 1 { store.arrange(layout: .grid, focus: started.first, tiles: nil) }
+            let labels = started.map { "@" + $0.label }.joined(separator: ", ")
+            var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))")
+            response.session = started.first?.info()
+            reply(response)
         }
     }
 

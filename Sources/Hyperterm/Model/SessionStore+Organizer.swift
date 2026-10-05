@@ -1,8 +1,8 @@
 import Foundation
 
-/// The organizer: one Claude agent behind the sidebar's box that runs the user's other sessions.
-/// It starts agents in any project, arranges the tiles, and closes what's done. It takes no tile
-/// and no card; it answers under the box.
+/// The organizer: one agent (Claude or Codex) behind the round button in the window's corner that
+/// runs the user's other sessions. It starts agents in any project, arranges the tiles, and closes
+/// what's done. It takes no tile and no card; its terminal opens in a floating panel.
 extension SessionStore {
     var organizer: TerminalSession? { sessions.first(where: \.isOrganizer) }
 
@@ -12,21 +12,46 @@ extension SessionStore {
                                  "close_terminal", "save_layout", "restore_layout", "watch_terminal"]
         .map { "mcp__hyperterm__" + $0 }
 
+    /// Which CLI runs the organizer, picked in its panel's header.
+    static var organizerKind: SessionKind {
+        get { UserDefaults.standard.string(forKey: "organizerKind").flatMap(SessionKind.init(rawValue:)) ?? .claude }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "organizerKind") }
+    }
+
     /// Sends `text` to the organizer, starting it in `cwd` the first time.
     func askOrganizer(_ text: String, cwd: String) {
-        organizerStarts = 0
-        if let organizer {
-            if case .exited = organizer.state {
-                close(organizer)
-            } else {
-                _ = organizer.deliver(text, from: nil)
-                return
-            }
+        if let organizer, !organizer.isExitedProcess {
+            _ = organizer.deliver(text, from: nil)
+            return
         }
-        var spec = LaunchSpec(label: "organizer", kind: .claude, cwd: cwd)
+        startOrganizer(cwd: cwd, task: text)
+    }
+
+    /// Starts the organizer in `cwd`, replacing one that has exited. It runs with full access:
+    /// its work spans every project, so it never stops to ask before reading or running something.
+    func startOrganizer(cwd: String, task: String? = nil) {
+        guard !organizerStarting else { return }
+        if let organizer {
+            guard organizer.isExitedProcess else { return }
+            close(organizer)
+        }
+        var spec = LaunchSpec(label: "organizer", kind: Self.organizerKind, cwd: cwd)
         spec.organizer = true
-        spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
-        Task { @MainActor [spec] in await self.launch(spec, select: false, task: text) }
+        spec.options = AgentOptions(mode: .fullAccess)
+        organizerStarting = true
+        Task { @MainActor [spec] in
+            await self.launch(spec, select: false, task: task)
+            self.organizerStarting = false
+        }
+    }
+
+    /// Runs the organizer on another CLI: the current one closes and a new one starts where it was.
+    func switchOrganizer(to kind: SessionKind) {
+        guard kind != Self.organizerKind || organizer == nil else { return }
+        Self.organizerKind = kind
+        let cwd = organizer?.spec.cwd ?? selected.map { $0.git?.mainRoot ?? $0.spec.cwd } ?? NSHomeDirectory()
+        if let organizer { close(organizer) }
+        startOrganizer(cwd: cwd)
     }
 
     // MARK: - Arranging

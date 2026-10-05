@@ -15,8 +15,10 @@ final class SessionStore: ObservableObject {
     var onArrangementChange: (() -> Void)?
     /// The organizer set the grid's tiles; the canvas adopts the shape as if the user had.
     var onArrangeTiles: ((LayoutNode) -> Void)?
-    /// Agents the organizer started since the user last wrote to it; past a cap it asks first.
-    var organizerStarts = 0
+    /// The organizer is between being asked for and its session existing; one start at a time.
+    var organizerStarting = false
+    /// Something asked for the organizer (e.g. the switcher); the window opens its panel.
+    var onShowOrganizer: (() -> Void)?
     /// Terminals the organizer waits on, each with the note it left for when that one finishes.
     var organizerWatches: [UUID: String] = [:]
     /// Called when a session's status changes. It can change which tiles show (grid hides exited
@@ -381,12 +383,14 @@ final class SessionStore: ObservableObject {
         childCancellables[session.id] = nil
         recent.removeAll { $0 == session.id }
         onRemove?(session)
-        if selectedID == session.id { select(sessions.last) }
+        if selectedID == session.id { select(sessions.last { !$0.isOrganizer }) }
         persist()
         notifier.updateBadge(count: attentionCount)
     }
 
     func select(_ session: TerminalSession?) {
+        // The organizer has no tile; choosing it opens its panel.
+        if let session, session.isOrganizer { onShowOrganizer?(); return }
         if let previous = selected { previous.lastViewedAt = Date() }
         // Choosing a minimized session is asking for it back.
         if let session, session.isMinimized {
