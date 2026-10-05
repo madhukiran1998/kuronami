@@ -40,13 +40,12 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSMenuDelegate {
     private func configureLayoutControl() {
         layoutControl.segmentCount = LayoutMode.allCases.count
         layoutControl.trackingMode = .selectOne
-        layoutControl.segmentStyle = .separated
-        layoutControl.controlSize = .regular
+        // Small, like the compact toolbar's own buttons, so the switcher lines up with them.
+        layoutControl.segmentStyle = .automatic
+        layoutControl.controlSize = .small
         layoutControl.setAccessibilityLabel("Terminal layout")
         for (index, mode) in LayoutMode.allCases.enumerated() {
             layoutControl.setImage(NSImage(systemSymbolName: mode.symbol, accessibilityDescription: mode.title), forSegment: index)
-            layoutControl.setLabel(mode.title, forSegment: index)
-            layoutControl.setWidth(Space.xxl + Space.s, forSegment: index)
             layoutControl.setToolTip("\(mode.title) (⌘⌥\(index + 1))", forSegment: index)
         }
         layoutControl.target = self

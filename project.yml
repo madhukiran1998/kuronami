@@ -68,6 +68,9 @@ targets:
         LSEnvironment:
           MallocNanoZone: "0"
         NSSupportsAutomaticGraphicsSwitching: true
+        # Keep the pre-Liquid Glass window chrome (flush sidebar, plain toolbar items) when
+        # built with the macOS 26+ SDK, so every build looks the same.
+        UIDesignRequiresCompatibility: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.hyperterm.app

@@ -64,6 +64,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func activate() {
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.windows.first { $0.isVisible && !($0 is NSPanel) }?.makeKeyAndOrderFront(nil)
+        // The main window, even when its close button hid it.
+        NSApp.windows.first { $0.delegate is MainWindowController }?.makeKeyAndOrderFront(nil)
     }
 }
