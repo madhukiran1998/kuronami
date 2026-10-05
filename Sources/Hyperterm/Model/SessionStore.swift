@@ -13,6 +13,12 @@ final class SessionStore: ObservableObject {
     var onSurfaceChange: ((TerminalSession) -> Void)?
     /// Called whenever the visible set, layout, or focused session changes.
     var onArrangementChange: (() -> Void)?
+    /// The organizer set the grid's tiles; the canvas adopts the shape as if the user had.
+    var onArrangeTiles: ((LayoutNode) -> Void)?
+    /// Agents the organizer started since the user last wrote to it; past a cap it asks first.
+    var organizerStarts = 0
+    /// Terminals the organizer waits on, each with the note it left for when that one finishes.
+    var organizerWatches: [UUID: String] = [:]
     /// Called when a session's status changes. It can change which tiles show (grid hides exited
     /// sessions) and their chrome, but must not pull keyboard focus away from where the user is.
     var onStatusChange: (() -> Void)?
@@ -132,16 +138,16 @@ final class SessionStore: ObservableObject {
         case .focus:
             return selectedID.map { [$0] } ?? []
         case .split:
-            let minimized = Set(sessions.filter(\.isMinimized).map(\.id))
-            let pair = Set(recent.filter { !minimized.contains($0) }.prefix(2))
+            let hidden = Set(sessions.filter { $0.isMinimized || $0.isOrganizer }.map(\.id))
+            let pair = Set(recent.filter { !hidden.contains($0) }.prefix(2))
             return arranged(sessions.filter { pair.contains($0.id) }).map(\.id)
         case .grid:
             // Servers live in the strip below the canvas unless pinned or selected; minimized
-            // sessions wait on the shelf.
+            // sessions wait on the shelf. The organizer answers in the sidebar's box instead.
             return arranged(sessions.filter { session in
                 (session.kind != .server || session.pinnedToGrid || session.id == selectedID)
                     && (!isExited(session) || session.id == selectedID)
-                    && !session.isMinimized
+                    && !session.isMinimized && !session.isOrganizer
             }).map(\.id)
         }
     }
@@ -231,7 +237,7 @@ final class SessionStore: ObservableObject {
     var projects: [(name: String, agents: [TerminalSession])] {
         var order: [String] = []
         var groups: [String: [TerminalSession]] = [:]
-        for session in sessions where session.kind.isAgent {
+        for session in sessions where session.kind.isAgent && !session.isOrganizer {
             let name = session.git?.project ?? "Scratch"
             if groups[name] == nil { order.append(name) }
             groups[name, default: []].append(session)
@@ -476,6 +482,7 @@ final class SessionStore: ObservableObject {
     func sessionStateChanged(_ session: TerminalSession, from previous: AgentState) {
         notifier.updateBadge(count: attentionCount)
         onStatusChange?()
+        reportToOrganizer(session, from: previous)
         let isVisible = visibleIDs.contains(session.id) && NSApp.isActive
         switch session.state {
         case .needsInput(let reason):

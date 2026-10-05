@@ -21,6 +21,9 @@ enum ControlCommand: String, Codable {
     case statusline    // Claude statusLine JSON (cost, context, rate limits)
     case subscribe     // channel long-poll from an agent's MCP server: returns queued messages
     case browser       // start the embedded browser if needed; text = its DevTools endpoint
+    case arrange       // the organizer arranges the view: text = layout, target = focus, tiles
+    case layouts       // the organizer's named layouts: text = save | restore | list, label = name
+    case watch         // the organizer hears when target finishes; text = its note for then
 }
 
 struct ControlRequest: Codable {
@@ -49,6 +52,23 @@ struct ControlRequest: Codable {
     var account: String?
     /// For `hook`: when the hook process started (continuous clock, ns), to order events.
     var sentAt: UInt64?
+    /// For `arrange`: the grid's tiles, as a tree of splits whose leaves are labels.
+    var tiles: TileSpec?
+    /// For `new` from the organizer: how many agents take the same task.
+    var count: Int?
+}
+
+/// Agents the organizer may start per message from the user before Kuronami asks the user. A
+/// loose orchestrator can otherwise fan out into a swarm.
+let organizerStartCap = 5
+
+/// A tile arrangement as an agent describes it: a leaf names a terminal, a split lays its
+/// children side by side (`row`) or stacked (`column`), sized by `sizes` (even when omitted).
+struct TileSpec: Codable, Equatable {
+    var terminal: String?
+    var split: String?
+    var sizes: [Double]?
+    var children: [TileSpec]?
 }
 
 struct SessionInfo: Codable, Equatable {
@@ -69,6 +89,8 @@ struct SessionInfo: Codable, Equatable {
     var activity: String?
     var project: String?
     var branch: String?
+    /// The agent behind the sidebar's box, which runs the user's other sessions.
+    var organizer: Bool?
 }
 
 struct ControlResponse: Codable {

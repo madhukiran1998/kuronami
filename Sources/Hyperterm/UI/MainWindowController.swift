@@ -53,7 +53,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             restart: { [weak self] in self?.confirmRestart($0) },
             close: { [weak self] in self?.confirmClose($0) },
             review: { [weak self] in self?.showInspector(for: $0) },
-            dispatch: { [weak self] task, kinds, cwd, options in self?.store.dispatch(task, kinds: kinds, cwd: cwd, options: options) },
             showPlan: { [weak self] in self?.showInspector(for: $0, tab: .plan) },
             pickWinner: { [weak self] in self?.confirmPickWinner($0) })
     }
@@ -153,6 +152,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         store.onSurfaceChange = { [weak self] session in self?.terminalArea.mount(session) }
         store.onRemove = { [weak self] session in self?.terminalArea.unmount(session) }
         store.onArrangementChange = { [weak self] in self?.arrange(takeFocus: true) }
+        store.onArrangeTiles = { [weak self] root in self?.terminalArea.setTree(root, for: .grid) }
         store.onStatusChange = { [weak self] in self?.arrange(takeFocus: false) }
         store.confirmHandler = { [weak self] title, message, completion in
             guard let window = self?.window else { completion(false); return }

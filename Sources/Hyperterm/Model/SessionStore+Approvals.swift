@@ -7,6 +7,11 @@ extension SessionStore {
     func registerApproval(for session: TerminalSession, source: String, payload: String, reply: @escaping ControlServer.Reply) {
         let json = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any] ?? [:]
         let tool = json["tool_name"] as? String ?? "tool"
+        if session.isOrganizer, Self.organizerTools.contains(tool) {
+            let approval = PendingApproval(source: source, toolName: tool, summary: tool, suggestions: nil, reply: reply)
+            reply(ControlResponse.success(text: decisionJSON(approval, .approve, reason: nil)))
+            return
+        }
         let summary = AgentText.describeTool(name: tool, input: json["tool_input"] as? [String: Any] ?? [:], cwd: json["cwd"] as? String)
         dropApproval(for: session)
         let approval = PendingApproval(source: source, toolName: tool, summary: summary,

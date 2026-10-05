@@ -11,7 +11,7 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Composer(store: store, actions: actions)
+            Composer(store: store)
                 .padding(.horizontal, Space.m)
                 .padding(.top, Space.s)
                 .padding(.bottom, Space.m)
@@ -101,96 +101,38 @@ struct SidebarView: View {
 
 // MARK: - Composer
 
-/// Type a task, press Return: a new agent starts on it in its own worktree. Pick several agents
-/// to have them race on the same task.
+/// The organizer's box: say what you want done with your sessions (start agents in a project,
+/// rearrange the window, close what's finished) and the organizer does it. Its latest answer
+/// shows underneath; click it to open the organizer's terminal.
 private struct Composer: View {
     @ObservedObject var store: SessionStore
-    let actions: SessionActions
     @State private var text = ""
-    @State private var claude = 1
-    @State private var codex = 0
-    @State private var mode: PermissionMode? = AppSettings.defaultMode
-    @State private var folder: String?
     @FocusState private var focused: Bool
 
-    private var targetFolder: String {
-        folder ?? store.selected.map { $0.git?.mainRoot ?? $0.spec.cwd } ?? NSHomeDirectory()
+    /// Where the organizer starts the first time: a folder you already work in.
+    private var startFolder: String {
+        store.selected.map { $0.git?.mainRoot ?? $0.spec.cwd } ?? NSHomeDirectory()
     }
 
-    private var folders: [String] {
-        let roots = store.sessions.map { $0.git?.mainRoot ?? $0.spec.cwd }
-        return Array(NSOrderedSet(array: roots).array as? [String] ?? [])
-    }
-
-    private var kinds: [SessionKind] {
-        Array(repeating: SessionKind.claude, count: claude) + Array(repeating: SessionKind.codex, count: codex)
-    }
-
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !kinds.isEmpty }
-
-    private var agentTitle: String {
-        switch (claude, codex) {
-        case (1, 0): return "Claude"
-        case (0, 1): return "Codex"
-        case (_, 0): return "\(claude) × Claude"
-        case (0, _): return "\(codex) × Codex"
-        default: return "Claude + Codex"
-        }
-    }
+    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
-            TextField(store.launchingCount > 0 ? "Starting…" : "Ask a new agent…", text: $text, axis: .vertical)
+            TextField("Ask the organizer…", text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(Typeface.body)
                 .lineLimit(1...6)
                 .focused($focused)
                 .onSubmit(submit)
-                .accessibilityLabel("Task for a new agent")
+                .accessibilityLabel("Message for the organizer")
             HStack(spacing: Space.xs) {
-                Menu {
-                    Button("Claude Code") { claude = 1; codex = 0 }
-                    Button("Codex") { claude = 0; codex = 1 }
-                    Button("Claude and Codex, Side by Side") { claude = 1; codex = 1 }
-                    Divider()
-                    Picker("Claude Agents", selection: $claude) {
-                        ForEach(0...4, id: \.self) { Text($0 == 0 ? "None" : "\($0)").tag($0) }
-                    }
-                    Picker("Codex Agents", selection: $codex) {
-                        ForEach(0...4, id: \.self) { Text($0 == 0 ? "None" : "\($0)").tag($0) }
-                    }
-                } label: {
-                    Text(agentTitle).foregroundStyle(kinds.count == 1 ? kinds[0].tint : Tone.text)
-                }
-                .tint(kinds.count == 1 ? kinds[0].tint : Tone.text)
-                .fixedSize()
-                .help("Which agents take the task. Several agents each get their own worktree.")
-                Menu {
-                    Picker("Permissions", selection: $mode) {
-                        Text("As Configured").tag(PermissionMode?.none)
-                        ForEach(PermissionMode.allCases) { Label($0.title, systemImage: $0.symbol).tag(PermissionMode?.some($0)) }
-                    }
-                    .pickerStyle(.inline)
-                } label: {
-                    Image(systemName: mode?.symbol ?? "hand.raised")
-                        .foregroundStyle(mode == nil ? Tone.faint : Tone.text)
-                }
-                .tint(mode == nil ? Tone.faint : Tone.text)
-                .fixedSize()
-                .help(mode.map { "\($0.title): \($0.detail)" } ?? "Permissions: as configured in the agent")
-                Menu {
-                    ForEach(folders, id: \.self) { dir in Button(abbreviateHome(dir)) { folder = dir } }
-                    if !folders.isEmpty { Divider() }
-                    Button("Choose Folder…") { chooseFolder() }
-                } label: {
-                    Text(URL(fileURLWithPath: targetFolder).lastPathComponent)
-                        .foregroundStyle(Tone.muted)
+                if let organizer = store.organizer {
+                    OrganizerStatus(session: organizer, store: store)
+                } else {
+                    Text("Start agents, arrange the view, close sessions")
+                        .foregroundStyle(Tone.faint)
                         .lineLimit(1)
-                        .truncationMode(.middle)
                 }
-                .tint(Tone.muted)
-                .fixedSize()
-                .help("Project: " + abbreviateHome(targetFolder))
                 Spacer(minLength: 0)
                 if store.launchingCount > 0 { ProgressView().controlSize(.mini) }
                 Button(action: submit) {
@@ -202,11 +144,9 @@ private struct Composer: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)
-                .help("Start (Return)")
-                .accessibilityLabel("Start agent")
+                .help("Send (Return)")
+                .accessibilityLabel("Send to the organizer")
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
             .font(Typeface.caption.weight(.medium))
         }
         .padding(Space.m)
@@ -218,18 +158,52 @@ private struct Composer: View {
     }
 
     private func submit() {
-        let task = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !task.isEmpty, !kinds.isEmpty else { return }
-        actions.dispatch(task, kinds, targetFolder, mode.map { AgentOptions(mode: $0) })
+        let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return }
+        store.askOrganizer(message, cwd: startFolder)
         text = ""
     }
+}
 
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.directoryURL = URL(fileURLWithPath: expandTilde(targetFolder))
-        if panel.runModal() == .OK, let url = panel.url { folder = url.path }
+/// What the organizer is doing or last said. Clicking opens its terminal, e.g. to answer it.
+private struct OrganizerStatus: View {
+    @ObservedObject var session: TerminalSession
+    let store: SessionStore
+
+    var body: some View {
+        // It has no tile: in split or grid it opens zoomed, like a tile's zoom button.
+        Button { store.layout == .focus ? store.select(session) : store.toggleZoom(session.id) } label: {
+            HStack(spacing: Space.xs) {
+                Circle().fill(dot).frame(width: 6, height: 6)
+                Text(line)
+                    .foregroundStyle(session.state.needsAttention ? Tone.text : Tone.muted)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .buttonStyle(.plain)
+        .help("Open the organizer's terminal")
+    }
+
+    private var line: String {
+        switch session.state {
+        case .needsInput(let reason): return "Needs you: \(reason)"
+        case .starting: return "Starting…"
+        case .working: return session.activity ?? "Working…"
+        case .failed(let reason): return reason
+        case .exited: return "Stopped · your next message restarts it"
+        default: return session.summary ?? "Ready"
+        }
+    }
+
+    private var dot: Color {
+        switch session.state {
+        case .needsInput: return Palette.accent
+        case .failed: return Palette.failed
+        case .working, .starting: return Palette.running
+        default: return Tone.faint
+        }
     }
 }
 
@@ -718,8 +692,6 @@ struct SessionActions {
     var restart: (TerminalSession) -> Void
     var close: (TerminalSession) -> Void
     var review: (TerminalSession) -> Void
-    /// Task, agents (one per entry), folder, launch options.
-    var dispatch: (String, [SessionKind], String, AgentOptions?) -> Void
     /// Opens the inspector on the agent's pending plan.
     var showPlan: (TerminalSession) -> Void = { _ in }
     /// Keeps one racing agent's work and closes the others, after confirming.

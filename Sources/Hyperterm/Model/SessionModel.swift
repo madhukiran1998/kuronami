@@ -135,6 +135,8 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     var forkOf: String?
     /// Agents started together on one task share a race id, so the best result can be picked.
     var race: UUID?
+    /// The agent behind the sidebar's box: it starts, arranges and closes the other sessions.
+    var organizer: Bool?
 
     /// Where the agent's files actually live.
     var workPath: String {
