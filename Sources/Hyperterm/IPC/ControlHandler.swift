@@ -572,9 +572,23 @@ struct ControlHandler {
         let lines = min(request.lines ?? 60, 2000)
         // Asleep, the terminal holds a bare shell; the agent's last screen is what was asked for.
         if let kept = target.asleepScreen {
-            return .success(text: kept.split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).joined(separator: "\n"))
+            let screen = kept.split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).joined(separator: "\n")
+            return .success(text: withConversation(of: target, screen: screen, lines: lines))
         }
-        return .success(text: target.surface.readText(lastLines: lines))
+        return .success(text: withConversation(of: target, screen: target.surface.readText(lastLines: lines), lines: lines))
+    }
+
+    /// Fullscreen agents hold one screenful; a read asking for more gets the conversation's
+    /// tail from the transcript above the screen.
+    private func withConversation(of target: TerminalSession, screen: String, lines: Int) -> String {
+        let shown = screen.split(separator: "\n", omittingEmptySubsequences: false).count
+        guard lines > shown + 1, target.kind == .claude || target.kind == .codex,
+              let id = target.spec.agentSessionId else { return screen }
+        let root = (AccountStore.shared.account(target.spec.account, kind: target.kind)
+            ?? AgentAccount(id: AgentAccount.defaultID, kind: target.kind, name: "Default")).homeDirectory
+        let conversation = AgentTranscript.conversation(
+            kind: target.kind, id: id, cwds: [target.spec.workPath, expandTilde(target.spec.cwd)], root: root)
+        return AgentTranscript.compose(conversation: conversation, screen: screen, lines: lines)
     }
 
     /// Agents rename only themselves, never over a name the user chose, and never onto a label
