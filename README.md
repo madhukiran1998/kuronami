@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://nikshepsvn.github.io/kuronami/">Website</a> ·
+  <a href="https://nikshepsvn.com/kuronami/">Website</a> ·
   <a href="#install">Install</a> ·
   <a href="#why-kuronami">Why</a> ·
   <a href="#how-it-compares">Compare</a> ·
