@@ -94,7 +94,7 @@ private let toolDefinitions: [[String: Any]] = [
     ],
     [
         "name": "read_terminal",
-        "description": "Read the most recent output of an agent or server terminal by label: dev server logs, test output, or another agent's screen. Shells are private to the user.",
+        "description": "Read the most recent output of an agent or server terminal by label: dev server logs, test output, or another agent's screen. For a Claude or Codex agent, lines beyond its screen come from its conversation, above a `── screen ──` line. Shells are private to the user.",
         "inputSchema": [
             "type": "object",
             "properties": [
