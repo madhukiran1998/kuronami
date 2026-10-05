@@ -25,6 +25,7 @@ enum ControlCommand: String, Codable {
     case layouts       // the organizer's named layouts: text = save | restore | list, label = name
     case watch         // the organizer hears when target finishes; text = its note for then
     case history       // the organizer's closed sessions: text = list | reopen, targets for reopen
+    case heavy         // heavy-job slot: text = acquire (replies when granted) | release, pid = holder
 }
 
 struct ControlRequest: Codable {
@@ -59,6 +60,8 @@ struct ControlRequest: Codable {
     var count: Int?
     /// For `history` reopen: labels or ids of closed sessions.
     var targets: [String]?
+    /// For `heavy`: the process holding the slot; it is released when that process exits.
+    var pid: Int32?
 }
 
 /// The most agents one start_agent call may start on the same task.
