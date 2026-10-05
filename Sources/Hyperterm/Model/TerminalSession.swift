@@ -424,10 +424,12 @@ final class TerminalSession: ObservableObject, Identifiable {
             pendingMessages.append(text)
             return "queued: @\(label) is busy at a prompt; it gets the message as soon as that clears"
         }
-        // Typed into a CLI that hasn't drawn its prompt yet, a message is lost.
-        if kind.isAgent, submit, state == .starting {
+        // Typed into a CLI that hasn't drawn its prompt yet, a message is lost; typed before the
+        // previous one's Return, two messages merge into one.
+        if kind.isAgent, submit, state == .starting || submitInFlight {
             pendingMessages.append(text)
-            return "queued: @\(label) is starting; it gets the message once it's ready"
+            return state == .starting ? "queued: @\(label) is starting; it gets the message once it's ready"
+                : "queued: @\(label) just got another message; it gets this one after that turn"
         }
         type(text, submit: submit)
         if let sender { record(.message, "Message from @\(sender)") }
@@ -479,6 +481,9 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// The last prompt Kuronami typed, used to title Codex checkpoints.
     private var lastPrompt: String?
 
+    /// Between a message's paste and its Return.
+    private var submitInFlight = false
+
     private func type(_ text: String, submit: Bool, countsAsWork: Bool = true) {
         if submit, countsAsWork { lastPrompt = summarize(text) ?? text }
         // A message ending in "@name" leaves Claude Code's mention picker open, and the picker
@@ -486,8 +491,10 @@ final class TerminalSession: ObservableObject, Identifiable {
         let text = submit && kind.isAgent && text.range(of: #"@[^\s@]+$"#, options: .regularExpression) != nil ? text + " " : text
         surface.sendText(text)
         guard submit else { return }
+        submitInFlight = true
         // Let the paste land before Return so TUIs don't treat it as part of the paste.
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(120)) { [weak self] in
+            self?.submitInFlight = false
             self?.surface.sendReturn()
             if countsAsWork, self?.kind.isAgent == true { self?.apply(.userSubmitted, source: "message") }
         }
