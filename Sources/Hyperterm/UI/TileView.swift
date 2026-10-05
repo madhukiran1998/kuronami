@@ -174,11 +174,11 @@ final class TileView: NSView {
         border.cornerRadius = Self.radius
         // One ring at a time, strongest meaning wins: drop target, then focus, then rest.
         if chrome.dropTarget {
-            border.borderColor = Ink.accent.cgColor
+            border.borderColor = Ink.focus.withAlphaComponent(0.8).cgColor
             border.borderWidth = 2
         } else if isFocusedTile && showsHeader {
-            border.borderColor = Ink.accent.withAlphaComponent(0.85).cgColor
-            border.borderWidth = 1.5
+            border.borderColor = Ink.focus.cgColor
+            border.borderWidth = 1
         } else {
             border.borderColor = Ink.hairline.cgColor
             border.borderWidth = 1

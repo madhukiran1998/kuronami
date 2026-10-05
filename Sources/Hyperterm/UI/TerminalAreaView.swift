@@ -321,7 +321,7 @@ final class DividerHandle: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        line.backgroundColor = Ink.accent.cgColor
+        line.backgroundColor = Ink.focus.cgColor
         line.cornerRadius = 1
         line.opacity = 0
         layer?.addSublayer(line)

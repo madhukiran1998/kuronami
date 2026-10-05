@@ -9,7 +9,7 @@ import SwiftUI
 // - Six text styles. Hierarchy comes from weight and color before size.
 // - A 4-point grid. Three corner radii: controls, rows, panes.
 // - Sumi ink and bone, like the icon's woodblock print. Color only ever means something, and
-//   comes from traditional pigments: vermilion for focus and action, indigo for work in
+//   comes from traditional pigments: vermilion for the primary action, indigo for work in
 //   progress, gold for "needs you", matcha for running, crimson for failure.
 // - One motion curve, and none at all with Reduce Motion.
 
@@ -84,8 +84,11 @@ enum Ink {
     static let text = NSColor(srgbRed: 0.929, green: 0.910, blue: 0.867, alpha: 1)
     static let muted = NSColor(srgbRed: 0.620, green: 0.600, blue: 0.565, alpha: 1)
     static let faint = NSColor(srgbRed: 0.420, green: 0.404, blue: 0.384, alpha: 1)
-    /// Shu (vermilion), the icon's sun: focus, selection, and the one primary action in view.
+    /// Shu (vermilion), the icon's sun: the one primary action in view, and the brand. Never
+    /// focus or selection: red around a terminal reads as an error.
     static let accent = NSColor(srgbRed: 0.851, green: 0.290, blue: 0.200, alpha: 1)
+    /// Where focus is: the focused tile, drop targets, a split being dragged. Bone, half strength.
+    static let focus = NSColor(srgbRed: 0.929, green: 0.910, blue: 0.867, alpha: 0.5)
 }
 
 /// The same layers for SwiftUI.
@@ -98,6 +101,7 @@ enum Tone {
     static let text = Color(nsColor: Ink.text)
     static let muted = Color(nsColor: Ink.muted)
     static let faint = Color(nsColor: Ink.faint)
+    static let focus = Color(nsColor: Ink.focus)
 }
 
 /// Meaning. These are the only saturated colors in the app.

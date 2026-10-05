@@ -212,7 +212,7 @@ private struct Composer: View {
         .padding(Space.m)
         .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.pane, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous)
-            .strokeBorder(focused ? Palette.accent.opacity(0.6) : Color.clear))
+            .strokeBorder(focused ? Tone.focus : Color.clear))
         .acceptsAttachments($text)
         .help("Drop files or images to attach them")
     }
