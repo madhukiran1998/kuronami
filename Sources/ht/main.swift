@@ -23,6 +23,7 @@ usage: ht <command>
   mcp                              run the MCP server (used by agents)
   browser                          open the embedded browser; prints its DevTools endpoint
   browser-mcp [port]               run the browser MCP server (used by agents)
+  mcp-lazy --name n -- <command…>  run a stdio MCP server, started on first use (used by agents)
   hook <source> [payload]          forward an agent hook event (used by agents)
   heavy -- <command…>              wait for a heavy-job slot (builds, tests), then run the command
 """
@@ -213,6 +214,12 @@ case "mcp":
 case "browser-mcp":
     let port = args.first.flatMap(Int.init) ?? 9339
     runBrowserMCP(port: port)
+
+case "mcp-lazy":
+    runLazyMCP(args)
+
+case "mcp-lazy-config":
+    runLazyMCPConfig(args)
 
 case "heavy":
     runHeavy(args)

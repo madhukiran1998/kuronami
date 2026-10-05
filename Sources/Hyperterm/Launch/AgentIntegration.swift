@@ -71,7 +71,9 @@ enum AgentIntegration {
     ]
 
     /// Strips our bin dir from PATH so `claude` resolves to the real binary, then adds Kuronami's
-    /// hooks and MCP server. User hooks still run: `--settings` merges with user settings.
+    /// hooks and MCP server. User hooks still run: `--settings` merges with user settings. The
+    /// second --mcp-config replaces the user's stdio servers by name; plugin, claude.ai, http and
+    /// .mcp.json servers load as usual.
     private static func claudeWrapper() -> String {
         """
         #!/bin/sh
@@ -81,9 +83,11 @@ enum AgentIntegration {
         export PATH
         CHANNEL=""
         [ "$HT_CHANNELS" = "1" ] && CHANNEL="--dangerously-load-development-channels server:hyperterm"
+        # The user's own stdio MCP servers, same names, started on first use (ht mcp-lazy).
+        LAZY=$("$HT_DIR/bin/ht" mcp-lazy-config claude 2>/dev/null)
         # --no-chrome: agents here browse in Kuronami's own browser (the "browser" MCP server),
         # not the user's everyday Chrome through Claude in Chrome.
-        exec claude --settings "$HT_DIR/claude-settings.json" --mcp-config "$HT_DIR/mcp.json" \(AgentBrowser.agentsMayUseOutsideChrome ? "" : "--no-chrome ")$CHANNEL "$@"
+        exec claude --settings "$HT_DIR/claude-settings.json" --mcp-config "$HT_DIR/mcp.json" ${LAZY:+"$LAZY"} \(AgentBrowser.agentsMayUseOutsideChrome ? "" : "--no-chrome ")$CHANNEL "$@"
         """
     }
 
@@ -98,6 +102,9 @@ enum AgentIntegration {
         HT_DIR="${HT_HOME:-$HOME/.hyperterm}"
         PATH=$(printf '%s' "$PATH" | tr ':' '\\n' | grep -vx "$HT_DIR/bin" | paste -sd: -)
         export PATH
+        # The user's own stdio MCP servers start on first use (ht mcp-lazy).
+        LAZY=$("$HT_DIR/bin/ht" mcp-lazy-config codex 2>/dev/null)
+        eval "set -- $LAZY \\"\\$@\\""
         exec codex \\
           -c "notify=[\\"$HT_DIR/bin/ht\\",\\"hook\\",\\"codex-notify\\"]" \\
           -c 'tui.notification_method="osc9"' \\
@@ -147,6 +154,10 @@ enum AgentIntegration {
             "HT_SOCKET": ControlPaths.socketPath,
         ]
         if spec.kind == .claude && SessionStore.channelsEnabled { environment["HT_CHANNELS"] = "1" }
+        // MCP servers the user wants started with the agent rather than on first use.
+        if let eager = UserDefaults.standard.stringArray(forKey: "mcpEager"), !eager.isEmpty {
+            environment["HT_MCP_EAGER"] = eager.joined(separator: ",")
+        }
         if let port = spec.port {
             environment["PORT"] = String(port)
             environment["HT_PORT"] = String(port)
