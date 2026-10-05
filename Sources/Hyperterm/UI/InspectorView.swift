@@ -1008,6 +1008,7 @@ private struct InfoView: View {
                     section("Usage") {
                         if let model = session.usage.model { row("Model", model) }
                         if let cost = session.usage.costUSD { row("Cost", String(format: "$%.2f", cost)) }
+                        ResourceRow(steward: .shared, sessionID: session.id)
                         if let context = session.usage.contextPercent {
                             HStack(spacing: Space.s) {
                                 Text("Context").foregroundStyle(Tone.muted).frame(width: 72, alignment: .leading)

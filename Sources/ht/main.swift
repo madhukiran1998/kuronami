@@ -24,6 +24,7 @@ usage: ht <command>
   browser                          open the embedded browser; prints its DevTools endpoint
   browser-mcp [port]               run the browser MCP server (used by agents)
   hook <source> [payload]          forward an agent hook event (used by agents)
+  heavy -- <command…>              wait for a heavy-job slot (builds, tests), then run the command
 """
 
 func fail(_ message: String, code: Int32 = 1) -> Never {
@@ -212,6 +213,9 @@ case "mcp":
 case "browser-mcp":
     let port = args.first.flatMap(Int.init) ?? 9339
     runBrowserMCP(port: port)
+
+case "heavy":
+    runHeavy(args)
 
 case "browser":
     print(requireOK(request(.browser) { $0.from = callerSession }).text ?? "")

@@ -8,6 +8,8 @@ struct ProcessSnapshot: Equatable {
     var programs: Set<String> = []
     var claudeStatus: String?
     var claudeSessionId: String?
+    /// Every process in the session's tree, for the steward's resource sampling.
+    var pids: Set<pid_t> = []
 }
 
 /// Who is on the other end of a control-socket connection, decided from kernel facts only.
@@ -132,6 +134,7 @@ final class ProcessInspector: @unchecked Sendable {
                 if let program = arguments(of: entry)?.first { snapshot.programs.insert(program.lowercased()) }
             }
             snapshot.ports = ports.sorted()
+            snapshot.pids = pids
             snapshot.foreground = foregroundCommand(tree)
             if let entry = registry.first(where: { pids.contains($0.pid) }) {
                 snapshot.claudeStatus = entry.status

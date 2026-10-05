@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusBar = StatusBarController(store: store)
         startControlServer()
+        Steward.shared.start(store: store)
         startInspector()
         store.notifier.onActivate = { [weak self] id in
             guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
@@ -126,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let store = self.store
         let inspector = self.inspector
         let server = ControlServer(path: ControlPaths.socketPath, identify: { inspector.identify(pid: $0) }) { request, caller, reply in
+            if request.cmd == .heavy { Steward.shared.handleHeavy(request, reply: reply); return }
             ControlHandler(store: store, caller: caller).handle(request, reply: reply)
         }
         do {
@@ -159,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func apply(_ snapshots: [String: ProcessSnapshot]) {
         pollCount += 1
+        Steward.shared.update(snapshots)
         refreshGit()
         // Working agents and the one on screen every ~10s; everything else once a minute (idle
         // agents also refresh on their Stop hook).
