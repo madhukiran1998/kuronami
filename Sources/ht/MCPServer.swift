@@ -62,7 +62,8 @@ private func instructions(selfLabel: String?, me: SessionInfo?) -> String {
     }
     return """
     \(intro) \(naming) The user runs several labeled terminals side by side: Claude Code and Codex agents, shells, and \
-    dev servers. Refer to them by @label. Use list_terminals to see who is doing what, read_terminal to check another \
+    dev servers. Refer to them by @label; the user may also write a label without the @, or just its first letter \
+    for the default names (b means @bravo). Use list_terminals to see who is doing what, read_terminal to check another \
     terminal's output (for example a dev server's logs), set_status to post a one-line progress note on your card at \
     milestones, send_message to tell another agent something it needs (a changed \
     API, a finished migration, a question), restart_server / start_server for dev servers, and start_agent to hand an independent subtask to a new agent in its own worktree. Messages you receive from \

@@ -16,6 +16,8 @@ struct NewSessionDraft {
 struct NewSessionView: View {
     @State var draft: NewSessionDraft
     let recentDirectories: [String]
+    /// What an unnamed agent or shell will be called (alpha, bravo…).
+    let defaultName: String
     let onCreate: (NewSessionDraft) -> Void
     let onCancel: () -> Void
     @FocusState private var focus: Field?
@@ -164,7 +166,10 @@ struct NewSessionView: View {
 
     private var labelPlaceholder: String {
         let folder = URL(fileURLWithPath: expandTilde(draft.cwd)).lastPathComponent.lowercased()
-        return draft.kind == .server ? "\(folder)-server" : folder
+        switch draft.kind {
+        case .server: return "\(folder)-server"
+        default: return defaultName
+        }
     }
 
     private var commandTitle: String {

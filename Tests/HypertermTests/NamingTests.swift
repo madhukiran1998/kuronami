@@ -26,6 +26,17 @@ final class NamingTests: XCTestCase {
         XCTAssertFalse(spec.agentMayRename)
     }
 
+    @MainActor
+    func testFirstDefaultNameIsAlpha() {
+        XCTAssertEqual(SessionStore().nextPhoneticLabel(), "alpha")
+    }
+
+    func testEachLetterNamesOneDefault() {
+        // "b" finds @bravo only if every default starts with a different letter.
+        XCTAssertEqual(phoneticLabels.map(\.first), Array("abcdefghijklmnopqrstuvwxyz").map(Optional.some))
+        XCTAssertEqual(phoneticLabels.map(normalizeLabel), phoneticLabels)
+    }
+
     func testLaunchReservationsProtectAddressesBeforeSessionsExist() {
         var reservations = SessionLabelReservations()
         let first = UUID(), second = UUID(), third = UUID()

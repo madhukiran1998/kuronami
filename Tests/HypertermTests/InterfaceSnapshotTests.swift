@@ -63,7 +63,7 @@ final class InterfaceSnapshotTests: XCTestCase {
         draft.label = "feature-lab"
         draft.cwd = "/workspace/atlas"
         draft.worktree = true
-        try capture(NewSessionView(draft: draft, recentDirectories: ["/workspace/atlas", "/workspace/api"],
+        try capture(NewSessionView(draft: draft, recentDirectories: ["/workspace/atlas", "/workspace/api"], defaultName: "alpha",
                                    onCreate: { _ in }, onCancel: {}),
                     size: NSSize(width: 584, height: 710), name: "new-session", output: output)
         try capture(EmptyStateView(), size: NSSize(width: 420, height: 760),

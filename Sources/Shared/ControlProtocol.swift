@@ -109,6 +109,12 @@ enum ControlPaths {
     }
 }
 
+/// Default names for new agents and shells, used in order: short to say, and each one's first
+/// letter also finds it ("b" is @bravo).
+let phoneticLabels = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
+                      "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo",
+                      "sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu"]
+
 /// Normalizes "@api", "api", " API " to "api".
 func normalizeLabel(_ raw: String) -> String {
     var label = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
