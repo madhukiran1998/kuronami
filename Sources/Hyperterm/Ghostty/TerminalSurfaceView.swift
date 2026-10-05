@@ -219,31 +219,36 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     /// The visible rows only: cheap enough to poll for previews.
     func readViewport() -> String {
-        guard let surface else { return "" }
-        var text = ghostty_text_s()
-        let selection = ghostty_selection_s(
-            top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
-            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
-            rectangle: false)
-        guard ghostty_surface_read_text(surface, selection, &text) else { return "" }
-        defer { ghostty_surface_free_text(surface, &text) }
-        return String(cString: text.text)
+        read(GHOSTTY_POINT_VIEWPORT) ?? ""
     }
 
     /// Returns the last `lines` lines of the screen including scrollback.
     func readText(lastLines lines: Int) -> String {
-        guard let surface else { return "" }
+        let count = max(1, lines)
+        // The active area is the bottom screenful, so most reads never copy the scrollback. Its
+        // first line may be the tail of a row wrapped from above, so it answers only when it
+        // holds more than `count` lines.
+        let active = Self.lines(read(GHOSTTY_POINT_ACTIVE) ?? "")
+        if active.count > count { return active.suffix(count).joined(separator: "\n") }
+        return Self.lines(read(GHOSTTY_POINT_SCREEN) ?? "").suffix(count).joined(separator: "\n")
+    }
+
+    /// Lines without the blank ones at the bottom.
+    private static func lines(_ text: String) -> [Substring] {
+        Array(text.split(separator: "\n", omittingEmptySubsequences: false)
+            .reversed().drop(while: { $0.trimmingCharacters(in: .whitespaces).isEmpty }).reversed())
+    }
+
+    private func read(_ tag: ghostty_point_tag_e) -> String? {
+        guard let surface else { return nil }
         var text = ghostty_text_s()
         let selection = ghostty_selection_s(
-            top_left: ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
-            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+            top_left: ghostty_point_s(tag: tag, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+            bottom_right: ghostty_point_s(tag: tag, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
             rectangle: false)
-        guard ghostty_surface_read_text(surface, selection, &text) else { return "" }
+        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
         defer { ghostty_surface_free_text(surface, &text) }
-        let all = String(cString: text.text)
-        let trimmed = all.split(separator: "\n", omittingEmptySubsequences: false)
-            .reversed().drop(while: { $0.trimmingCharacters(in: .whitespaces).isEmpty }).reversed()
-        return trimmed.suffix(max(1, lines)).joined(separator: "\n")
+        return String(cString: text.text)
     }
 
     func performBinding(_ action: String) {

@@ -162,7 +162,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         wakeDraft = ""
         shellAtPrompt = false
         surface.events = nil
-        surface.destroy()
+        destroySurface()
         surface.removeFromSuperview()
         surface = TerminalSessionFactory.makeSurface(spec: spec)
         surface.events = self
@@ -179,7 +179,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     func terminate() {
         inputGeneration += 1
         surface.events = nil
-        surface.destroy()
+        destroySurface()
         surface.removeFromSuperview()
     }
 
@@ -250,6 +250,14 @@ final class TerminalSession: ObservableObject, Identifiable {
             }
         }
         return true
+    }
+
+    /// Closing the terminal hangs up its shell; this also stops what it started that wouldn't
+    /// hang up with it (nohup, setsid, daemons).
+    private func destroySurface() {
+        let started = kind == .browser ? [] : ProcessInspector.shared.takeProcesses(ofSession: id.uuidString)
+        surface.destroy()
+        SessionReaper.stop(started)
     }
 
     // MARK: - Status
