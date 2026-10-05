@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import GhosttyKit
 import SwiftUI
 
 @MainActor
@@ -20,10 +21,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered, defer: false)
         window.title = "Kuronami"
         window.toolbarStyle = .unifiedCompact
-        // Graphite: one opaque surface that terminals float on as rounded panes. Always dark,
-        // and no live blur behind every tile.
-        window.isOpaque = true
-        window.backgroundColor = Ink.floor
+        // Graphite: one surface that terminals float on as rounded panes. Always dark. Opaque
+        // unless the user's Ghostty config asks for `background-opacity` below 1; then it's
+        // see-through with their `background-blur`, the same as Ghostty.
+        if Theme.isTranslucent {
+            window.isOpaque = false
+            // Nearly clear rather than clear, so the window server still applies the blur.
+            window.backgroundColor = .white.withAlphaComponent(0.001)
+        } else {
+            window.isOpaque = true
+            window.backgroundColor = Ink.floor
+        }
         window.appearance = NSAppearance(named: .darkAqua)
         window.titlebarAppearsTransparent = true
         // The sidebar and inspector already say what's selected; the toolbar stays uncluttered.
@@ -40,6 +48,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             window.center()
         }
         window.setFrameAutosaveName("HypertermMain")
+        if Theme.isTranslucent, let app = GhosttyRuntime.shared.app {
+            ghostty_set_window_background_blur(app, Unmanaged.passUnretained(window).toOpaque())
+        }
         bindStore()
     }
 
@@ -110,7 +121,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let wrapper = NSViewController()
         let effect = NSView()
         effect.wantsLayer = true
-        effect.layer?.backgroundColor = color.cgColor
+        effect.layer?.backgroundColor = color.withAlphaComponent(Theme.backgroundOpacity).cgColor
         wrapper.addChild(child)
         child.view.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(child.view)
