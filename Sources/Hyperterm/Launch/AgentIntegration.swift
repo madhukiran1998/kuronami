@@ -141,6 +141,7 @@ enum AgentIntegration {
             environment["PORT"] = String(port)
             environment["HT_PORT"] = String(port)
         }
+        environment.merge(PortSlots.environment(for: spec)) { current, _ in current }
         // The account's config root (CLAUDE_CONFIG_DIR / CODEX_HOME). A sign-in terminal for an
         // account is a shell carrying the same variables.
         if let id = spec.account {

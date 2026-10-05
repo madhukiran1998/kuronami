@@ -50,7 +50,7 @@ enum Ports {
 enum Workspaces {
     /// Claude gets its native `--worktree` (Claude Code then blocks writes back into the main
     /// checkout and copies `.worktreeinclude` files itself). Codex gets a git worktree under
-    /// ~/.hyperterm/worktrees with the same `.worktreeinclude` files copied in.
+    /// ~/.hyperterm/worktrees; the store clones the same `.worktreeinclude` files in after launch.
     static func prepare(spec: LaunchSpec) -> Result<LaunchSpec, WorktreeError> {
         guard let info = GitInspector.query(expandTilde(spec.cwd)) else { return .failure(.notARepo(spec.cwd)) }
         var spec = spec
@@ -65,7 +65,6 @@ enum Workspaces {
         default:
             switch createGitWorktree(info: info, label: spec.label) {
             case .success(let created):
-                copyIncludedFiles(from: info.root, to: created.path)
                 spec.cwd = created.path
                 spec.worktreeBranch = created.branch
                 return .success(spec)
@@ -103,19 +102,6 @@ enum Workspaces {
 
     private static func branchExists(_ root: String, _ branch: String) -> Bool {
         runGit(["-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/\(branch)"]) != nil
-    }
-
-    /// Gitignored files listed in `.worktreeinclude` (e.g. `.env`), same convention as Claude.
-    private static func copyIncludedFiles(from root: String, to worktree: String) {
-        let include = (root as NSString).appendingPathComponent(".worktreeinclude")
-        guard FileManager.default.fileExists(atPath: include),
-              let listing = runGit(["-C", root, "ls-files", "--others", "--ignored", "--exclude-from=\(include)"]) else { return }
-        for relative in listing.split(separator: "\n").map(String.init) where !relative.contains("..") {
-            let source = (root as NSString).appendingPathComponent(relative)
-            let target = (worktree as NSString).appendingPathComponent(relative)
-            try? FileManager.default.createDirectory(atPath: (target as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-            try? FileManager.default.copyItem(atPath: source, toPath: target)
-        }
     }
 
     /// Keeps worktree folders out of the main checkout's `git status` without touching tracked

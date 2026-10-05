@@ -296,8 +296,10 @@ struct TileHeaderSnapshot: Equatable {
     let statusWord: String
     let ports: [Int]
     let summary: String?
+    let overlap: OverlapBadge?
 
     @MainActor init(session: TerminalSession) {
+        overlap = session.overlapBadge
         label = session.label
         kind = session.kind
         state = session.state
@@ -354,6 +356,9 @@ struct TileHeader: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: Space.xs)
+            if let overlap = snapshot.overlap, !compact {
+                Tag(text: overlap.title, tint: Palette.attention).help(overlap.detail)
+            }
             if !snapshot.ports.isEmpty, !compact { PortChips(ports: snapshot.ports, compact: true) }
             if snapshot.kind == .browser {
                 BrowserDriverBadge(label: snapshot.label)

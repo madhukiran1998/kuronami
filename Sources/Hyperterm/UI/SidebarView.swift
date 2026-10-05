@@ -195,8 +195,12 @@ struct AgentRow: View {
         let stat: DiffStat? = session.diffStat
         let review: DiffStat? = session.readyForReview && (stat?.files ?? 0) > 0 ? stat : nil
         let racing = store.raceSiblings(of: session).count
-        if review != nil || queued > 0 || racing > 0 {
+        let overlap = session.overlapBadge
+        if review != nil || queued > 0 || racing > 0 || overlap != nil {
             HStack(spacing: Space.xs) {
+                if let overlap {
+                    Tag(text: overlap.title, tint: Palette.attention).help(overlap.detail)
+                }
                 if racing > 0 {
                     Tag(text: "Racing \(racing + 1)", tint: Palette.accent)
                         .help("Started with \(racing) other agent\(racing == 1 ? "" : "s") on the same task. Right-click → Pick This One to keep its work.")

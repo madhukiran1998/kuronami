@@ -132,6 +132,8 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     var baseBranch: String?
     /// Port reserved for this workspace's dev server ($PORT).
     var port: Int?
+    /// Worktree agents: the ten-port range it owns (`PortSlots`), kept across restarts.
+    var portSlot: Int?
     /// Browser: the page it shows, kept current so it reopens there.
     var url: String?
     /// Browser: the agent it belongs to. Its tools act on this browser by default.
