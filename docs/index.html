@@ -7,7 +7,7 @@
 <meta name="description" content="A native macOS terminal for running Claude Code and Codex in parallel: live status, approvals, agent-to-agent messaging, a browser per agent, and review.">
 <meta property="og:title" content="Kuronami">
 <meta property="og:description" content="A native macOS terminal for running Claude Code and Codex in parallel.">
-<meta property="og:image" content="https://nikshepsvn.com/kuronami/screenshot.png">
+<meta property="og:image" content="https://nikshepsvn.com/kuronami/images/workspace.png">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="color-scheme" content="dark">
@@ -63,9 +63,18 @@
 
   .shot img {
     display: block; width: 100%; height: auto; aspect-ratio: 1440 / 900;
-    border-radius: 12px; border: 1px solid var(--line);
-    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+    border-radius: 12px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
   }
+  .tour { display: grid; gap: 96px; margin-top: 56px; }
+  .tour-row { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 56px; align-items: center; }
+  .tour-row.flip { grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); }
+  .tour-row.flip .tour-media { order: 2; }
+  .tour-row.wide { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+  .tour-media img { display: block; width: 100%; height: auto; border-radius: 12px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5); }
+  .tour-text h3 { font-size: 21px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 10px; }
+  .tour-text p { color: var(--muted); margin: 0; font-size: 16px; }
+  .tour-row.wide .tour-text { max-width: 680px; }
+  .keys { font-family: var(--mono); font-size: 13px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
   .caption { margin-top: 14px; font-size: 13px; color: var(--faint); }
 
   section { padding-top: 120px; }
@@ -125,7 +134,9 @@
   footer a:hover { color: var(--text); }
 
   @media (max-width: 820px) {
-    .features, .split { grid-template-columns: minmax(0, 1fr); }
+    .features, .split, .tour-row, .tour-row.flip { grid-template-columns: minmax(0, 1fr); }
+    .tour-row.flip .tour-media { order: 0; }
+    .tour { gap: 64px; }
     .split { gap: 36px; }
   }
   @media (max-width: 560px) {
@@ -144,6 +155,7 @@
     <a class="brand" href="./"><img src="icon.png" alt="">Kuronami</a>
     <nav>
       <a href="#features">Features</a>
+      <a href="#tour">Tour</a>
       <a href="#compare">Compare</a>
       <a href="#install">Install</a>
       <a href="https://github.com/nikshepsvn/kuronami">GitHub</a>
@@ -161,7 +173,7 @@
   </div>
 
   <figure class="shot" style="margin:0">
-    <img src="screenshot.png" width="1440" height="900" alt="Kuronami with three agents in a grid. One is waiting on an approval, with Allow and Deny on its card; another has finished and shows its diff size; a dev server sits on the shelf; the inspector is open.">
+    <img src="images/workspace.png" width="1440" height="900" alt="Kuronami with three agents in a grid. One is waiting on an approval, with Allow and Deny on its card; another has finished and shows its diff size; a dev server sits on the shelf; the inspector is open.">
     <figcaption class="caption">Three agents in a grid. <code>api-contracts</code> is waiting for approval to run a command; <code>navigation</code> is done and ready for review.</figcaption>
   </figure>
 
@@ -201,6 +213,48 @@
       <div class="feature">
         <h3>Fast and native</h3>
         <p>Swift and AppKit, with terminals rendered by libghostty, Ghostty's Metal engine. Your Ghostty config applies as-is. No Electron, no account, no telemetry.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="tour">
+    <p class="label">Tour</p>
+    <h2>A closer look.</h2>
+    <div class="tour">
+      <div class="tour-row wide">
+        <div class="tour-media"><img src="images/panels.png" width="1096" height="740" loading="lazy" alt="Three panels: the sidebar with each agent's state and an inline approval; the inspector's Activity tab with a recap and timeline; and its Info tab with tasks, usage and actions."></div>
+        <div class="tour-text">
+          <h3>Every agent, and everything about it</h3>
+          <p>The sidebar lists each agent with its state in words, and approvals answer in place. The inspector recaps what happened while you were away, lets you steer with a message, and shows tasks, context and actions for the session.</p>
+        </div>
+      </div>
+      <div class="tour-row">
+        <div class="tour-media"><img src="images/diff-split.png" width="720" height="260" loading="lazy" alt="A side-by-side diff of one file."></div>
+        <div class="tour-text">
+          <h3>Review what changed</h3>
+          <p>Diffs by branch, by uncommitted work, or by a single turn. Comment on a line and the comments go back to the agent as one message. Then commit, open a PR, or merge.</p>
+        </div>
+      </div>
+      <div class="tour-row flip">
+        <div class="tour-media"><img src="images/command-palette.png" width="600" height="440" loading="lazy" alt="The command palette with sessions, actions and ways to create a session."></div>
+        <div class="tour-text">
+          <h3>Go anywhere from the keyboard</h3>
+          <p><span class="keys">⌘P</span> jumps to a session, runs an action, or sends a message with <code>@name</code>. <span class="keys">⌘J</span> goes to whichever agent has waited longest.</p>
+        </div>
+      </div>
+      <div class="tour-row">
+        <div class="tour-media"><img src="images/new-session.png" width="520" height="408" loading="lazy" alt="The New Session sheet with agent kind, folder, permissions, model and worktree."></div>
+        <div class="tour-text">
+          <h3>Start agents the way you want</h3>
+          <p>Pick Claude Code or Codex, the folder, permissions, model and effort, and whether it gets its own worktree. Or skip the sheet: type a task in the sidebar and press Return.</p>
+        </div>
+      </div>
+      <div class="tour-row flip">
+        <div class="tour-media"><img src="images/quick-ask.png" width="640" height="130" loading="lazy" alt="Quick Ask: a floating field to start an agent."></div>
+        <div class="tour-text">
+          <h3>Ask from any app</h3>
+          <p><span class="keys">⌃⌥Space</span> opens Quick Ask over whatever you're doing. Type the task, press Return, and an agent starts on it without you leaving your editor.</p>
+        </div>
       </div>
     </div>
   </section>

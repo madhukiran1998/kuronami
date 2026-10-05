@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="Kuronami: three agents in a grid, one waiting on an approval with Allow and Deny on its card, a finished agent ready for review, a dev server on the shelf, and the inspector open" width="100%">
+  <img src="docs/images/workspace.png" alt="Kuronami: three agents in a grid, one waiting on an approval with Allow and Deny on its card, a finished agent ready for review, a dev server on the shelf, and the inspector open" width="100%">
 </p>
 
 > **黒波 (kuronami)**: *black wave*. Many agents moving at once, on one dark surface.
@@ -86,6 +86,36 @@ Embedded **Chromium**, right next to the terminal. Each agent gets its own (`@ap
 </table>
 
 **And it's fast.** Pure Swift and AppKit, with terminals rendered by **libghostty**, Ghostty's own Metal engine. Your `~/.config/ghostty/config` (fonts, theme, keybinds) just works. There's no Electron, no account, no server, and no telemetry. Chromium starts only when you first open a browser.
+
+## A closer look
+
+<p align="center">
+  <img src="docs/images/panels.png" alt="Three panels: the sidebar with each agent's state and an inline approval; the inspector's Activity tab with a recap and timeline; and its Info tab with tasks, usage and actions" width="100%">
+</p>
+<p align="center"><sub><b>Left:</b> every agent with its live state, and an approval answered in place. <b>Middle:</b> what happened while you were away, and a message box to steer. <b>Right:</b> tasks, context, and everything you can do with the session.</sub></p>
+
+<p align="center">
+  <img src="docs/images/diff-split.png" alt="A side-by-side diff of one file, removed lines on the left and added lines on the right" width="100%">
+</p>
+<p align="center"><sub>Review by branch, by uncommitted work, or by a single turn. Comment on any line and send the comments back to the agent.</sub></p>
+
+<table>
+<tr>
+<td width="50%" valign="top" align="center">
+<img src="docs/images/command-palette.png" alt="The command palette listing sessions with their state, actions, and ways to create a new session" width="100%"><br>
+<sub><b>⌘P</b>: jump to a session, run an action, or <code>@name</code> a message.</sub>
+</td>
+<td width="50%" valign="top" align="center">
+<img src="docs/images/new-session.png" alt="The New Session sheet: kind, name, folder, permissions, model, effort and worktree" width="100%"><br>
+<sub><b>⌘N</b>: pick the agent, folder, permissions, model, and its own worktree.</sub>
+</td>
+</tr>
+</table>
+
+<p align="center">
+  <img src="docs/images/quick-ask.png" alt="Quick Ask: a floating field to start an agent, with Claude Code or Codex and a project folder" width="80%">
+</p>
+<p align="center"><sub><b>⌃⌥Space</b> from any app: type a task, press Return, and an agent starts on it in its own worktree.</sub></p>
 
 ## How it compares
 

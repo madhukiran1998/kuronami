@@ -309,7 +309,13 @@ final class InterfaceSnapshotTests: XCTestCase {
     private func write(_ view: NSView, name: String, output: URL) throws {
         XCTAssertGreaterThan(view.bounds.width, 0, "\(name) has no width")
         XCTAssertGreaterThan(view.bounds.height, 0, "\(name) has no height")
-        let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds), "\(name) has no bitmap")
+        // Always 2x, whatever display the test runs on, so captures are sharp in the README.
+        let image = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * 2),
+                                                   pixelsHigh: Int(view.bounds.height * 2), bitsPerSample: 8,
+                                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+                                  "\(name) has no bitmap")
+        image.size = view.bounds.size
         view.cacheDisplay(in: view.bounds, to: image)
         XCTAssertGreaterThanOrEqual(image.pixelsWide, Int(view.bounds.width))
         XCTAssertGreaterThanOrEqual(image.pixelsHigh, Int(view.bounds.height))
