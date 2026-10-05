@@ -143,10 +143,18 @@ struct EscalationTracker {
     }
 }
 
-/// Idle, hidden sessions whose processes have been quiet long enough to put to sleep.
+extension StewardRules {
+    /// The agent CLI, its shells and Kuronami's own helpers: always there, never the agent's work.
+    static func isAgentMachinery(_ name: String?) -> Bool {
+        guard let name else { return true }
+        return ["claude", "codex", "ht", "caffeinate", "login", "zsh", "bash", "sh", "fish"].contains(name)
+    }
+}
+
+/// Idle, hidden sessions whose work (not the CLI itself) has been quiet long enough to put to sleep.
 struct SleepTracker {
     var after: TimeInterval = 600
-    var quietCPU = 1.0
+    var quietCPU = 3.0
     private var quietSince: [String: Date] = [:]
     private var reported: Set<String> = []
 

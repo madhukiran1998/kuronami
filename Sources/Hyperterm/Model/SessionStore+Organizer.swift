@@ -13,6 +13,14 @@ extension SessionStore {
                                  "session_history", "reopen_session", "machine_status", "set_policy"]
         .map { "mcp__hyperterm__" + $0 }
 
+    /// Where the organizer runs. Its own folder, trusted once: Claude Code asks to trust the home
+    /// folder again on every launch, and the organizer reaches every project with absolute paths.
+    static var organizerFolder: String {
+        let folder = ControlPaths.supportDirectory.appendingPathComponent("organizer")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.path
+    }
+
     /// Which CLI runs the organizer, picked in its panel's header.
     static var organizerKind: SessionKind {
         get { UserDefaults.standard.string(forKey: "organizerKind").flatMap(SessionKind.init(rawValue:)) ?? .claude }
@@ -21,13 +29,13 @@ extension SessionStore {
 
     /// Starts the organizer in `cwd`, replacing one that has exited. It runs with full access:
     /// its work spans every project, so it never stops to ask before reading or running something.
-    func startOrganizer(cwd: String, task: String? = nil) {
+    func startOrganizer(task: String? = nil) {
         guard !organizerStarting else { return }
         if let organizer {
             guard organizer.isExitedProcess else { return }
             close(organizer)
         }
-        var spec = LaunchSpec(label: "organizer", kind: Self.organizerKind, cwd: cwd)
+        var spec = LaunchSpec(label: "organizer", kind: Self.organizerKind, cwd: Self.organizerFolder)
         spec.organizer = true
         spec.options = AgentOptions(mode: .fullAccess)
         organizerStarting = true
@@ -41,9 +49,8 @@ extension SessionStore {
     func switchOrganizer(to kind: SessionKind) {
         guard kind != Self.organizerKind || organizer == nil else { return }
         Self.organizerKind = kind
-        let cwd = organizer?.spec.cwd ?? selected.map { $0.git?.mainRoot ?? $0.spec.cwd } ?? NSHomeDirectory()
         if let organizer { close(organizer) }
-        startOrganizer(cwd: cwd)
+        startOrganizer()
     }
 
     // MARK: - Arranging

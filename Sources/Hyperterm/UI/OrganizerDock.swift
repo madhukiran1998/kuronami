@@ -142,7 +142,7 @@ final class OrganizerDock {
     }
 
     private func startIfNeeded() {
-        store.startOrganizer(cwd: store.selected.map { $0.git?.mainRoot ?? $0.spec.cwd } ?? NSHomeDirectory())
+        store.startOrganizer()
     }
 }
 

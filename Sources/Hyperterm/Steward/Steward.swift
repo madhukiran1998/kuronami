@@ -76,6 +76,9 @@ final class Steward: ObservableObject {
     private weak var store: SessionStore?
     private var trees: [UUID: Set<pid_t>] = [:]
     private var meters: [UUID: CPUMeter] = [:]
+    /// CPU of what an agent started (builds, servers, tests), leaving out the CLI itself, its
+    /// shells and Kuronami's helpers: an idle Claude still redraws its screen at a few percent.
+    private var workMeters: [UUID: CPUMeter] = [:]
     private var lowered: [UUID: Set<pid_t>] = [:]
     private var escalationTracker = EscalationTracker()
     private var sleepTracker = SleepTracker()
@@ -122,12 +125,15 @@ final class Steward: ObservableObject {
             trees[session.id] = tree
             var footprint: UInt64 = 0
             var times: [pid_t: UInt64] = [:]
+            var work: [pid_t: UInt64] = [:]
             for pid in tree {
                 guard let usage = ProcessUsage.read(pid) else { continue }
                 footprint += usage.footprint
                 times[pid] = usage.cpuNanoseconds
+                if !StewardRules.isAgentMachinery(ProcessUsage.name(pid)) { work[pid] = usage.cpuNanoseconds }
             }
             let cpu = meters[session.id, default: CPUMeter()].update(times, at: clock)
+            let workCPU = workMeters[session.id, default: CPUMeter()].update(work, at: clock)
             let band = band(of: session, focused: focused)
             let isLowered = prioritize(session.id, lower: StewardRules.shouldLower(band, thermal: thermal))
             next[session.id] = Sample(footprint: footprint, cpuPercent: cpu, band: band, lowered: isLowered)
@@ -137,7 +143,7 @@ final class Steward: ObservableObject {
                                                        cpu: cpu, agentIdle: agentIdle, now: now) {
                 onEscalation?(escalation)
             }
-            if session.kind.isAgent, sleepTracker.update(sessionID: key, band: band, cpu: cpu, now: now) {
+            if session.kind.isAgent, sleepTracker.update(sessionID: key, band: band, cpu: workCPU, now: now) {
                 onSleepCandidate?(session)
             }
         }
@@ -150,6 +156,7 @@ final class Steward: ObservableObject {
     private func forget(_ id: UUID) {
         trees[id] = nil
         meters[id] = nil
+        workMeters[id] = nil
         lowered[id] = nil
         escalationTracker.forget(id.uuidString)
         sleepTracker.forget(id.uuidString)

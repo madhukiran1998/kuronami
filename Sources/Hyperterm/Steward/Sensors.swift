@@ -84,6 +84,13 @@ struct ProcessUsage {
         let ticks = info.ri_user_time + info.ri_system_time
         return ProcessUsage(footprint: info.ri_phys_footprint, cpuNanoseconds: ticks * timebase.numer / timebase.denom)
     }
+
+    /// The process's short name (its executable's), e.g. "claude" or "node".
+    static func name(_ pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 64)
+        guard proc_name(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(cString: buffer)
+    }
 }
 
 /// A session tree's CPU, from per-process time deltas between two samples. Processes that

@@ -590,6 +590,12 @@ final class SessionStore: ObservableObject {
         specs.map { spec -> LaunchSpec in
             var spec = spec
             if spec.summary == spec.label { spec.summary = nil }
+            // An organizer from before it had its own folder starts fresh there; its notes file
+            // carries what it knew.
+            if spec.organizer == true, spec.cwd != Self.organizerFolder {
+                spec.cwd = Self.organizerFolder
+                spec.agentSessionId = nil
+            }
             return spec
         }.forEach { create($0, resume: true, select: false) }
         select(sessions.first)
