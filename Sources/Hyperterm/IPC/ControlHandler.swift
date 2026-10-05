@@ -512,7 +512,7 @@ struct ControlHandler {
             guard target.kind.isAgent else {
                 return .failure("@\(target.label) is a \(target.kind.displayName.lowercased()); agents can read it or restart it, not type into it")
             }
-            let framed = "Message from @\(sender.label) (\(sender.kind.displayName), via Kuronami): \(singleLine(text))"
+            let framed = agentMessagePrefix + "\(sender.label) (\(sender.kind.displayName), via Kuronami): \(singleLine(text))"
             return .success(text: target.deliver(framed, from: sender.label))
         }
         guard isUser else { return .failure("not allowed from a detached process") }
@@ -591,4 +591,11 @@ func sanitizeMessage(_ text: String) -> String {
         return !bidi.contains(value) && !isolates.contains(value)
     }
     return String(String.UnicodeScalarView(scalars)).prefix(8000).description
+}
+
+/// How Kuronami starts a message it types into an agent on another agent's behalf.
+let agentMessagePrefix = "Message from @"
+
+func isAgentMessage(_ prompt: String) -> Bool {
+    prompt.hasPrefix(agentMessagePrefix)
 }

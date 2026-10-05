@@ -8,13 +8,15 @@ enum AgentIntegration {
     static var root: URL { ControlPaths.supportDirectory }
     static var binDirectory: URL { root.appendingPathComponent("bin") }
     static var htPath: String { binDirectory.appendingPathComponent("ht").path }
+    /// The hook listener's port this launch; nil sends every Claude hook through `ht hook`.
+    nonisolated(unsafe) static var hookPort: UInt16?
 
     /// Idempotent; run at every launch because the app bundle (and its `ht`) can move.
     static func install() {
         let fm = FileManager.default
         try? fm.createDirectory(at: binDirectory, withIntermediateDirectories: true)
         linkBundledCLI()
-        write(claudeSettings(), to: root.appendingPathComponent("claude-settings.json"))
+        write(claudeSettings(hookPort: hookPort), to: root.appendingPathComponent("claude-settings.json"))
         write(mcpConfig(), to: root.appendingPathComponent("mcp.json"))
         writeExecutable(claudeWrapper(), to: binDirectory.appendingPathComponent("claude"))
         writeExecutable(codexWrapper(), to: binDirectory.appendingPathComponent("codex"))
@@ -29,11 +31,18 @@ enum AgentIntegration {
 
     // MARK: - Claude
 
-    private static func claudeSettings() -> String {
+    /// Hooks POST to Kuronami's listener (HookServer); SessionStart only runs command hooks.
+    static func claudeSettings(hookPort: UInt16?) -> String {
         let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification",
                       "Stop", "StopFailure", "SessionEnd", "TaskCreated", "TaskCompleted", "SubagentStart"]
-        let hook: [String: Any] = ["type": "command", "command": "\(htPath) hook claude", "timeout": 5]
-        var hooks: [String: Any] = Dictionary(uniqueKeysWithValues: events.map { ($0, [["hooks": [hook]]]) })
+        let command: [String: Any] = ["type": "command", "command": "\(htPath) hook claude", "timeout": 5]
+        func hook(_ event: String) -> [String: Any] {
+            guard let hookPort, event != "SessionStart" else { return command }
+            return ["type": "http", "url": "http://127.0.0.1:\(hookPort)\(HookServer.path)", "timeout": 5,
+                    "headers": ["X-HT-Session": "$HT_SESSION_ID", "Authorization": "Bearer $HT_HOOK_TOKEN"],
+                    "allowedEnvVars": ["HT_SESSION_ID", "HT_HOOK_TOKEN"]]
+        }
+        var hooks: [String: Any] = Dictionary(uniqueKeysWithValues: events.map { ($0, [["hooks": [hook($0)]]]) })
         // Held open until the user decides in Kuronami (or answers in the terminal).
         let permission: [String: Any] = ["type": "command", "command": "\(htPath) permission claude", "timeout": 600]
         hooks["PermissionRequest"] = [["matcher": "*", "hooks": [permission]]]
@@ -133,6 +142,7 @@ enum AgentIntegration {
     static func surfaceLaunch(for spec: LaunchSpec) -> SurfaceLaunch {
         var environment = [
             "HT_SESSION_ID": spec.id.uuidString,
+            "HT_HOOK_TOKEN": HookServer.token(for: spec.id.uuidString),
             "HT_LABEL": spec.label,
             "HT_SOCKET": ControlPaths.socketPath,
         ]

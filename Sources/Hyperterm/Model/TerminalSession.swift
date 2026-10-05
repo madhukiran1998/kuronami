@@ -58,6 +58,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// Hook ordering: events stamped earlier than the newest applied one are stale.
     var lastHookSentAt: UInt64 = 0
     var lastHookAt = Date.distantPast
+    /// The current turn was started by another agent's message, not the user.
+    var turnIsMessage = false
 
     private(set) var surface: any SessionSurface
     /// Messages for an agent that is blocked on a prompt or mid-turn; delivered when it is free

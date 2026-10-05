@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SessionStore()
     private var windowController: MainWindowController?
     private var controlServer: ControlServer?
+    private var hookServer: HookServer?
     private let inspector = ProcessInspector()
     private let gitInspector = GitInspector()
     private var statusBar: StatusBarController?
@@ -33,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Theme.load(from: GhosttyRuntime.shared.config)
         TerminalSessionFactory.store = store
+        startHookServer()
         AgentIntegration.install()
         NSApp.mainMenu = MainMenu.build(target: self)
 
@@ -102,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard windowController != nil else { return }
         store.persist()
         controlServer?.stop()
+        hookServer?.stop()
         // Give the debounced persist a moment to land.
         Thread.sleep(forTimeInterval: 0.4)
     }
@@ -133,6 +136,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controlServer = server
         } catch {
             NSLog("hyperterm: control socket failed: %@", String(describing: error))
+        }
+    }
+
+    private func startHookServer() {
+        let store = self.store
+        let server = HookServer { source, sessionID, body, sentAt in
+            store.receiveHook(source: source, sessionID: sessionID, payload: body, sentAt: sentAt)
+        }
+        do {
+            try server.start()
+            hookServer = server
+            AgentIntegration.hookPort = server.port
+        } catch {
+            NSLog("hyperterm: hook listener failed: %@", String(describing: error))
         }
     }
 

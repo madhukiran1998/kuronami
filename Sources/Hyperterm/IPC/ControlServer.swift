@@ -81,7 +81,15 @@ final class ControlServer: @unchecked Sendable {
             return
         }
         let handler = self.handler
-        let reply: Reply = { [weak self] response in self?.respond(client, response) }
+        // Hook and statusline replies carry nothing: answer now so the agent never waits on main.
+        let immediate = request.cmd == .hook || request.cmd == .statusline
+        let reply: Reply
+        if immediate {
+            respond(client, .success())
+            reply = { _ in }
+        } else {
+            reply = { [weak self] response in self?.respond(client, response) }
+        }
         DispatchQueue.main.async {
             MainActor.assumeIsolated { handler(request, caller, reply) }
         }

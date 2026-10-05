@@ -15,15 +15,55 @@ extension SessionStore {
         }
     }
 
+    /// A hook event from `ht hook` (traced to its session by the kernel).
     func handleHook(source: String, session: TerminalSession, payload: String, sentAt: UInt64?) {
-        HookLog.append(source: source, sessionID: session.id.uuidString, payload: payload)
-        parseOffMain(payload) { [weak self, weak session] json in
-            guard let self, let session, self.sessions.contains(where: { $0 === session }) else { return }
-            self.applyHook(source: source, session: session, json: json, sentAt: sentAt)
+        let id = session.id.uuidString
+        Self.parseQueue.async {
+            nonisolated(unsafe) let json = Self.parseHook(source: source, sessionID: id, payload: Data(payload.utf8))
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { [weak self, weak session] in
+                    guard let self, let session, self.sessions.contains(where: { $0 === session }) else { return }
+                    self.applyHook(source: source, session: session, json: json, sentAt: sentAt)
+                }
+            }
         }
     }
 
-    private func applyHook(source: String, session: TerminalSession, json: [String: Any], sentAt: UInt64?) {
+    /// A hook event from the HTTP listener (authorized for `sessionID`); only the store update
+    /// runs on main.
+    nonisolated func receiveHook(source: String, sessionID: String, payload: Data, sentAt: UInt64) {
+        Self.parseQueue.async {
+            nonisolated(unsafe) let json = Self.parseHook(source: source, sessionID: sessionID, payload: payload)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { [weak self] in
+                    guard let self, let session = self.session(forEnvironmentID: sessionID) else { return }
+                    self.applyHook(source: source, session: session, json: json, sentAt: sentAt)
+                }
+            }
+        }
+    }
+
+    /// Parses and logs a hook payload, minus tool output Kuronami doesn't use. Runs on `parseQueue`.
+    nonisolated private static func parseHook(source: String, sessionID: String, payload: Data) -> [String: Any] {
+        guard var json = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any] else {
+            HookLog.append(source: source, sessionID: sessionID, payload: String(decoding: payload, as: UTF8.self))
+            return [:]
+        }
+        let logged = dropUnusedToolOutput(&json) ? (try? JSONSerialization.data(withJSONObject: json)) ?? payload : payload
+        HookLog.append(source: source, sessionID: sessionID, payload: String(decoding: logged, as: UTF8.self))
+        return json
+    }
+
+    /// PostToolUse carries the tool's whole output; only Bash's is read (test evidence).
+    /// Returns whether anything was dropped.
+    nonisolated static func dropUnusedToolOutput(_ json: inout [String: Any]) -> Bool {
+        guard ["PostToolUse", "PostToolUseFailure"].contains(json["hook_event_name"] as? String ?? ""),
+              json["tool_name"] as? String != "Bash", json["tool_response"] != nil else { return false }
+        json["tool_response"] = nil
+        return true
+    }
+
+    func applyHook(source: String, session: TerminalSession, json: [String: Any], sentAt: UInt64?) {
         // Hook processes race each other to the socket; an event stamped before the newest one
         // already applied is stale and must not roll state back.
         if let sentAt {
@@ -63,9 +103,12 @@ extension SessionStore {
 
         switch event {
         case "UserPromptSubmit":
-            checkpoint(session, phase: .start, prompt: json["prompt"] as? String ?? "Turn")
-            if let prompt = json["prompt"] as? String {
-                if prompt.hasPrefix("Message from @") {
+            let prompt = json["prompt"] as? String
+            // Another agent's message isn't the user's turn: no checkpoint for it.
+            session.turnIsMessage = prompt.map(isAgentMessage) ?? false
+            if !session.turnIsMessage { checkpoint(session, phase: .start, prompt: prompt ?? "Turn") }
+            if let prompt {
+                if session.turnIsMessage {
                     session.record(.message, summarize(prompt) ?? prompt)
                 } else {
                     session.summary = summarize(prompt).map { "› " + $0 }
@@ -87,7 +130,7 @@ extension SessionStore {
             recordTestEvidence(session, json, failed: event == "PostToolUseFailure")
         case "Stop":
             session.activity = nil
-            checkpoint(session, phase: .end, prompt: "")
+            if !session.turnIsMessage { checkpoint(session, phase: .end, prompt: "") }
             if let last = json["last_assistant_message"] as? String {
                 session.summary = summarize(last)
                 session.record(.done, summarize(last, limit: 200) ?? "Turn complete")

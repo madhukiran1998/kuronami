@@ -198,7 +198,7 @@ case "permission":
 case "statusline":
     // Claude statusLine: report telemetry to Kuronami, then print the user's own statusline.
     let input = FileHandle.standardInput.readDataToEndOfFile()
-    if callerSession != nil {
+    if let callerSession, statusLineDue(session: callerSession) {
         var req = ControlRequest(cmd: .statusline)
         req.payload = String(decoding: input, as: UTF8.self)
         _ = try? sendControlRequest(req, timeout: 1)
@@ -221,6 +221,18 @@ case "-h", "--help", "help":
 
 default:
     fail("ht: unknown command '\(command)'\n\n\(usage)")
+}
+
+/// Claude reruns the statusline up to a few times a second; Kuronami needs one report every 2 s.
+/// The last report's time is a file's mtime in a per-user temp dir.
+func statusLineDue(session: String) -> Bool {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ht-statusline")
+    let stamp = dir.appendingPathComponent(session.filter { $0.isHexDigit || $0 == "-" })
+    if let last = (try? FileManager.default.attributesOfItem(atPath: stamp.path))?[.modificationDate] as? Date,
+       Date().timeIntervalSince(last) < 2 { return false }
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    _ = FileManager.default.createFile(atPath: stamp.path, contents: nil)
+    return true
 }
 
 /// Runs the statusLine command from the user's own ~/.claude/settings.json with the same input.
