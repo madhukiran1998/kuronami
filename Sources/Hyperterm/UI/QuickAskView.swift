@@ -25,7 +25,7 @@ struct QuickAskView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.m) {
             HStack(spacing: Space.m) {
-                WaveMark().frame(width: 22, height: 18)
+                WaveMark().frame(width: 22, height: 22)
                 TextField("Ask a new agent…", text: $text, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(Typeface.title.weight(.regular))

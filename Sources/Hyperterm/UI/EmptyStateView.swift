@@ -7,7 +7,7 @@ struct EmptyStateView: View {
             ScrollView {
                 VStack(spacing: Space.xl) {
                     VStack(spacing: Space.m) {
-                        WaveMark().frame(width: 44, height: 36)
+                        WaveMark().frame(width: 76, height: 76)
                         Text("Start an agent").font(Typeface.title)
                         Text("Type a task in the sidebar, or pick what to open.")
                             .font(Typeface.body)
