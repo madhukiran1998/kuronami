@@ -267,7 +267,7 @@ struct StateLabel: View {
 
     var body: some View {
         // Only the clock ticks; the rest of the row re-renders when the session changes.
-        TimelineView(.periodic(from: .now, by: session.state == .working ? 15 : 60)) { context in
+        TimelineView(.periodic(from: .now, by: 15)) { context in
             // Two Texts joined, so the symbol stays a symbol (interpolating it into a String prints
             // the Image's description).
             ((session.isAsleep ? Text(Image(systemName: "moon.zzz")) + Text(" ") : Text(verbatim: "")) + Text(text(now: context.date)))
@@ -295,7 +295,7 @@ struct StateLabel: View {
         case .working, .starting: return Palette.working
         case .needsInput: return Palette.attention
         case .failed: return Palette.failed
-        case .idle where isDone && session.unread: return Palette.running
+        case .idle where isDone && (session.unread || session.finishedUnseen): return Palette.running
         default: return Tone.faint
         }
     }

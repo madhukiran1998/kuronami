@@ -640,10 +640,11 @@ final class SessionStore: ObservableObject {
     static let finishedMarkDuration: TimeInterval = 180
 
     /// An agent's work is done: its turn ended and no background subagent is still running. It
-    /// stays marked for a few minutes or until the user looks, unless they were already looking.
+    /// stays marked for a few minutes or until the user clicks into it, unless it is the only
+    /// terminal on screen and they were already looking at it.
     func markFinished(_ session: TerminalSession) {
         guard session.kind.isAgent, session.state == .idle, session.runningSubagents.isEmpty,
-              !(selectedID == session.id && NSApp.isActive) else { return }
+              !(selectedID == session.id && NSApp.isActive && visibleIDs.count <= 1) else { return }
         session.finishedUnseen = true
         let finishedAt = session.stateChangedAt
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.finishedMarkDuration) { [weak self, weak session] in

@@ -111,6 +111,31 @@ final class OrganizerTests: XCTestCase {
         XCTAssertFalse(web.finishedUnseen, "not done while a subagent still runs")
     }
 
+    func testASelectedAgentIsMarkedDoneWhenOtherTerminalsAreOnScreen() {
+        let api = agent("api", state: .idle), web = agent("web", state: .idle)
+        let store = SessionStore(previewSessions: [api, web], previewLayout: .grid)
+        store.select(web)
+
+        store.markFinished(web)
+
+        XCTAssertTrue(web.finishedUnseen, "two tiles are showing, so finishing is still worth marking")
+    }
+
+    func testMessagingAnAgentWatchesItForTheOrganizer() {
+        let api = agent("api"), organizer = agent("organizer", organizer: true)
+        let store = SessionStore(previewSessions: [api, organizer], previewLayout: .grid)
+        var request = ControlRequest(cmd: .send)
+        request.target = "api"
+        request.text = "check the orders endpoint"
+
+        ControlHandler(store: store, caller: .session(organizer.id.uuidString)).handle(request) { _ in }
+        XCTAssertEqual(store.organizerWatches[api.id], "", "the reply will be reported")
+
+        store.organizerWatches[api.id] = "then tell @web"
+        ControlHandler(store: store, caller: .session(organizer.id.uuidString)).handle(request) { _ in }
+        XCTAssertEqual(store.organizerWatches[api.id], "then tell @web", "an earlier note is kept")
+    }
+
     func testBackgroundSubagentsHoldTheFinishUntilTheLastOneStops() {
         let api = agent("api", state: .idle), organizer = agent("organizer", organizer: true, state: .needsInput("busy"))
         let store = SessionStore(previewSessions: [api, organizer], previewLayout: .grid)

@@ -778,7 +778,12 @@ struct ControlHandler {
                 return .failure("@\(target.label) is a \(target.kind.displayName.lowercased()); agents can read it or restart it, not type into it")
             }
             let framed = agentMessagePrefix + "\(sender.label) (\(sender.kind.displayName), via Tako): \(singleLine(text))"
-            return .success(text: target.deliver(framed, from: sender.label))
+            let result = target.deliver(framed, from: sender.label)
+            // The organizer hears the reply to what it sent, without having to ask for a watch.
+            if sender.isOrganizer, !target.isOrganizer, store.organizerWatches[target.id] == nil {
+                store.organizerWatches[target.id] = ""
+            }
+            return .success(text: result)
         }
         guard isUser else { return .failure("not allowed from a detached process") }
         return .success(text: target.deliver(text, submit: request.submit ?? true, from: nil))
