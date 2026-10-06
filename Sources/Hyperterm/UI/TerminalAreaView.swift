@@ -39,6 +39,7 @@ final class TerminalAreaView: NSView {
 
     var onSelectTile: ((UUID) -> Void)?
     var onMinimizeTile: ((UUID) -> Void)?
+    var onDetachTile: ((UUID) -> Void)?
     var onCloseTile: ((UUID) -> Void)?
     /// The user dragged tiles into a new order (the on-screen order).
     var onReorder: (([UUID]) -> Void)?
@@ -81,6 +82,7 @@ final class TerminalAreaView: NSView {
             select: { [weak self] in self?.onSelectTile?(id) },
             zoom: { [weak self] in self?.onZoomTile?(id) },
             minimize: { [weak self] in self?.onMinimizeTile?(id) },
+            detach: { [weak self] in self?.onDetachTile?(id) },
             close: { [weak self] in self?.onCloseTile?(id) },
             wake: { [weak session] in if let session { session.store?.wake(session) } },
             drag: { [weak self] translation in self?.dragTile(id, by: translation) },
@@ -88,6 +90,12 @@ final class TerminalAreaView: NSView {
         tile.isHidden = true
         tiles[id] = tile
         addSubview(tile, positioned: .below, relativeTo: handles.first)
+    }
+
+    /// Where a tile is on screen, if it is showing; a detached tile's window opens there.
+    func screenFrame(of id: UUID) -> NSRect? {
+        guard let tile = tiles[id], !tile.isHidden, let window else { return nil }
+        return window.convertToScreen(tile.convert(tile.bounds, to: nil))
     }
 
     func unmount(_ session: TerminalSession) {

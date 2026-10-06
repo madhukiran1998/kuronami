@@ -325,6 +325,8 @@ struct TileActions {
     var select: () -> Void
     var zoom: () -> Void
     var minimize: () -> Void
+    /// Pop the tile out into its own window.
+    var detach: () -> Void
     var close: () -> Void
     var wake: () -> Void
     /// Header drag in progress: translation from where it started (SwiftUI, y down).
@@ -397,6 +399,7 @@ struct TileHeader: View {
             Button("Focus", action: actions.select)
             Button("Zoom", action: actions.zoom)
             Button("Minimize to Shelf", action: actions.minimize)
+            Button("Detach", action: actions.detach)
             if snapshot.asleep { Button("Wake", action: actions.wake) }
             Divider()
             Button("Close", action: actions.close)
@@ -411,6 +414,7 @@ struct TileHeader: View {
             Menu {
                 Button("Zoom", action: actions.zoom)
                 Button("Minimize to Shelf", action: actions.minimize)
+                Button("Detach", action: actions.detach)
                 Divider()
                 Button("Close", action: actions.close)
             } label: {

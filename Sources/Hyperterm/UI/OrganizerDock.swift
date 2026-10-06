@@ -155,7 +155,7 @@ final class OrganizerDock {
         panel.orderOut(nil)
         guard let window else { return }
         window.makeKeyAndOrderFront(nil)
-        if let selected = store.selected { window.makeFirstResponder(selected.surface) }
+        if let selected = store.selected, selected.surface.window === window { window.makeFirstResponder(selected.surface) }
     }
 
     private func startIfNeeded() {

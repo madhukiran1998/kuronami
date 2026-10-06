@@ -19,6 +19,8 @@ final class SessionStore: ObservableObject {
     var organizerStarting = false
     /// Something asked for the organizer (e.g. the switcher); the window opens its panel.
     var onShowOrganizer: (() -> Void)?
+    /// A detached session was chosen; the window brings its own window forward.
+    var onShowDetached: ((TerminalSession) -> Void)?
     /// Terminals the organizer waits on, each with the note it left for when that one finishes.
     var organizerWatches: [UUID: String] = [:]
     var organizerDigest = OrganizerDigest()
@@ -148,16 +150,17 @@ final class SessionStore: ObservableObject {
         case .focus:
             return selectedID.map { [$0] } ?? []
         case .split:
-            let hidden = Set(sessions.filter { $0.isMinimized || $0.isOrganizer }.map(\.id))
+            let hidden = Set(sessions.filter { $0.isMinimized || $0.isOrganizer || $0.isDetached }.map(\.id))
             let pair = Set(recent.filter { !hidden.contains($0) }.prefix(2))
             return arranged(sessions.filter { pair.contains($0.id) }).map(\.id)
         case .grid:
             // Servers live in the strip below the canvas unless pinned or selected; minimized
-            // sessions wait on the shelf. The organizer answers in the sidebar's box instead.
+            // sessions wait on the shelf. The organizer answers in the sidebar's box instead, and
+            // detached sessions in their own windows.
             return arranged(sessions.filter { session in
                 (session.kind != .server || session.pinnedToGrid || session.id == selectedID)
                     && (!isExited(session) || session.id == selectedID)
-                    && !session.isMinimized && !session.isOrganizer
+                    && !session.isMinimized && !session.isOrganizer && !session.isDetached
             }).map(\.id)
         }
     }
@@ -411,6 +414,8 @@ final class SessionStore: ObservableObject {
     func select(_ session: TerminalSession?) {
         // The organizer has no tile; choosing it opens its panel.
         if let session, session.isOrganizer { onShowOrganizer?(); return }
+        // A detached session is chosen by bringing its window forward.
+        if let session, session.isDetached { onShowDetached?(session) }
         if let previous = selected { previous.lastViewedAt = Date() }
         // Choosing a minimized session is asking for it back.
         if let session, session.isMinimized {

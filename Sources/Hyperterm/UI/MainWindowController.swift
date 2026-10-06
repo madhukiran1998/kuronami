@@ -10,6 +10,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var sheetWindow: NSWindow?
     private lazy var toolbarController = ToolbarController(store: store, actions: actions)
     private lazy var organizerDock = OrganizerDock(store: store)
+    private let detachedTiles = DetachedTiles()
 
     private var inspectorItem: NSSplitViewItem?
     private var subscriptions: Set<AnyCancellable> = []
@@ -163,13 +164,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             .sink { [weak self] error in MainActor.assumeIsolated { self?.reportLaunchError(error) } }
             .store(in: &subscriptions)
         // The organizer's terminal lives in its floating panel; every other session gets a tile.
+        // Detached sessions live in their own windows.
         store.onSurfaceChange = { [weak self] session in
-            if session.isOrganizer { self?.organizerDock.attach(session) } else { self?.terminalArea.mount(session) }
+            if session.isOrganizer { self?.organizerDock.attach(session) }
+            else if session.isDetached { self?.detachedTiles.attachSurface(session) }
+            else { self?.terminalArea.mount(session) }
         }
         store.onRemove = { [weak self] session in
-            if session.isOrganizer { self?.organizerDock.detach(session) } else { self?.terminalArea.unmount(session) }
+            if session.isOrganizer { self?.organizerDock.detach(session) }
+            else if session.isDetached { self?.detachedTiles.close(session) }
+            else { self?.terminalArea.unmount(session) }
         }
         store.onShowOrganizer = { [weak self] in self?.organizerDock.open() }
+        store.onShowDetached = { [weak self] session in self?.detachedTiles.show(session) }
+        detachedTiles.onReturn = { [weak self] session in self?.reattach(session) }
+        detachedTiles.onFocus = { [weak self] session in
+            guard let self, self.store.selectedID != session.id else { return }
+            self.store.select(session)
+        }
         store.onArrangementChange = { [weak self] in self?.arrange(takeFocus: true) }
         store.onArrangeTiles = { [weak self] root in self?.terminalArea.setTree(root, for: .grid) }
         store.onStatusChange = { [weak self] in self?.arrange(takeFocus: false) }
@@ -192,6 +204,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
             self.store.setMinimized(session, true)
         }
+        terminalArea.onDetachTile = { [weak self] id in
+            guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
+            self.detach(session)
+        }
         terminalArea.onCloseTile = { [weak self] id in
             guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
             self.confirmClose(session)
@@ -199,9 +215,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         terminalArea.onReorder = { [weak self] order in self?.store.setTileOrder(order) }
         store.onMentionRequest = { [weak self] session in self?.showMentionPicker(for: session) }
         store.onSearchUpdate = { [weak self] session, total, selected, start in
-            if start { self?.terminalArea.showSearch(for: session.id) }
-            self?.terminalArea.searchResults(for: session.id, total: total, selected: selected)
+            guard let self else { return }
+            if let tile = self.detachedTiles.tile(for: session.id) {
+                if start { tile.showSearch() }
+                if let total { tile.search.total = total }
+                if let selected { tile.search.selected = selected }
+                return
+            }
+            if start { self.terminalArea.showSearch(for: session.id) }
+            self.terminalArea.searchResults(for: session.id, total: total, selected: selected)
         }
+    }
+
+    // MARK: - Detached tiles
+
+    /// Pops a tile out of the canvas into its own window, opening where the tile was.
+    func detach(_ session: TerminalSession) {
+        guard !session.isDetached, !session.isOrganizer else { return }
+        let frame = terminalArea.screenFrame(of: session.id)
+        session.isDetached = true
+        terminalArea.unmount(session)
+        detachedTiles.open(session, at: frame)
+        arrange(takeFocus: false)
+    }
+
+    /// Puts a detached tile back in the canvas, focused.
+    func reattach(_ session: TerminalSession) {
+        guard session.isDetached else { return }
+        detachedTiles.close(session)
+        session.isDetached = false
+        terminalArea.mount(session)
+        window?.makeKeyAndOrderFront(nil)
+        store.select(session)
     }
 
     private func arrange(takeFocus: Bool) {
@@ -221,10 +266,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // Setting these relayouts the titlebar even when unchanged.
         if window?.title != title { window?.title = title }
         if window?.subtitle != subtitle { window?.subtitle = subtitle }
+        detachedTiles.refresh()
         toolbarController.refresh()
     }
 
-    func showSearch() { terminalArea.showSearch(for: store.selectedID) }
+    func showSearch() {
+        if let id = store.selectedID, let tile = detachedTiles.tile(for: id) { tile.showSearch() }
+        else { terminalArea.showSearch(for: store.selectedID) }
+    }
 
     func presentWorktreeCleanup() {
         guard let window, sheetWindow == nil else { return }
@@ -279,9 +328,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         panel.level = .floating
         panel.appearance = NSAppearance(named: .darkAqua)
         let surface = session.surface
-        let close = { [weak panel, weak window] in
+        let close = { [weak panel] in
             panel?.close()
-            window?.makeFirstResponder(surface)
+            surface.window?.makeFirstResponder(surface)
         }
         let view = MentionPickerView(store: store, origin: session,
                                      pick: { picked in close(); surface.sendText(picked.label + " ") },
@@ -494,7 +543,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // Hiding the window drops its child windows; bring the organizer's button back with it.
         if let window { organizerDock.install(in: window) }
         guard let window, window.firstResponder == nil || window.firstResponder === window else { return }
-        if let session = store.selected { window.makeFirstResponder(session.surface) }
+        if let session = store.selected, session.surface.window === window { window.makeFirstResponder(session.surface) }
     }
 }
 

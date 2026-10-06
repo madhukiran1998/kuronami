@@ -41,6 +41,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var readyForReview = false
     /// Servers normally sit in the canvas's strip; pinned ones get a grid tile.
     @Published var pinnedToGrid = false
+    /// Popped out of the canvas into its own window (in memory only; it rejoins the grid on relaunch).
+    @Published var isDetached = false
     /// When the user last looked at this session; the recap covers events after it.
     @Published var lastViewedAt = Date()
     /// Checkpointed turns, oldest first (git workspaces only).
