@@ -17,6 +17,7 @@ final class DetachedLookingTests: XCTestCase {
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
                               styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false  // ARC owns it; the default double-releases
         defer { window.close() }
         window.contentView?.addSubview(session.surface)
         window.makeKeyAndOrderFront(nil)
