@@ -10,7 +10,7 @@ extension SessionStore {
     /// and closing a terminal still asks.
     static let organizerTools = ["list_terminals", "read_terminal", "send_message", "start_agent", "arrange_view",
                                  "close_terminal", "save_layout", "restore_layout", "watch_terminal",
-                                 "session_history", "reopen_session", "machine_status", "set_policy",
+                                 "session_history", "reopen_session", "machine_status", "set_policy", "detach_terminals",
                                  "handle_waiting", "stop_handling", "answer_prompt"]
         .map { "mcp__hyperterm__" + $0 }
 

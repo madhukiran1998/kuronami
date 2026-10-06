@@ -21,6 +21,9 @@ final class SessionStore: ObservableObject {
     var onShowOrganizer: (() -> Void)?
     /// A detached session was chosen; the window brings its own window forward.
     var onShowDetached: ((TerminalSession) -> Void)?
+    /// Pop a tile out into its own window, or put it back in the canvas (the organizer asks).
+    var onDetach: ((TerminalSession) -> Void)?
+    var onReattach: ((TerminalSession) -> Void)?
     /// Terminals the organizer waits on, each with the note it left for when that one finishes.
     var organizerWatches: [UUID: String] = [:]
     var organizerDigest = OrganizerDigest()

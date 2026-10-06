@@ -247,6 +247,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         store.onShowOrganizer = { [weak self] in self?.organizerDock.open() }
         store.onShowDetached = { [weak self] session in self?.detachedTiles.show(session) }
+        store.onDetach = { [weak self] session in self?.detach(session) }
+        store.onReattach = { [weak self] session in self?.reattach(session) }
         detachedTiles.onReturn = { [weak self] session in self?.reattach(session) }
         detachedTiles.onFocus = { [weak self] session in
             guard let self, self.store.selectedID != session.id else { return }

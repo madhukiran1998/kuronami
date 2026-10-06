@@ -173,6 +173,9 @@ struct ControlHandler {
         case .machine:
             guard callerOrganizer != nil else { return .failure("only the organizer reads the steward") }
             return machine(request)
+        case .detach:
+            guard callerOrganizer != nil || isUser else { return .failure("only the organizer moves tiles into windows") }
+            return detach(request)
         case .delegate:
             // Only the organizer takes sessions over (when the user asks it to); the user may also stop or list.
             guard callerOrganizer != nil || (isUser && request.text != "handle") else {
@@ -445,6 +448,29 @@ struct ControlHandler {
         var response = ControlResponse.success(text: "resumed @\(session.label) in \(abbreviateHome(folder))")
         response.session = session.info()
         return response
+    }
+
+    /// Pops terminals out of the canvas into their own windows, or puts them back.
+    private func detach(_ request: ControlRequest) -> ControlResponse {
+        let back = request.text == "back"
+        let names = request.targets ?? request.target.map { [$0] } ?? []
+        guard !names.isEmpty else { return .failure("say which terminals") }
+        var moved: [String] = []
+        for name in names {
+            guard let session = resolve(name) else { return notFound(name) }
+            guard !session.isOrganizer else { return .failure("the organizer has its own panel") }
+            if back {
+                guard session.isDetached else { continue }
+                store.onReattach?(session)
+            } else {
+                guard !session.isDetached else { continue }
+                store.wake(session)
+                store.onDetach?(session)
+            }
+            moved.append("@" + session.label)
+        }
+        guard !moved.isEmpty else { return .success(text: back ? "already in the canvas" : "already in their own windows") }
+        return .success(text: (back ? "put back in the canvas: " : "in their own windows: ") + moved.joined(separator: ", "))
     }
 
     /// The steward's view of the machine, or a change to its policy.

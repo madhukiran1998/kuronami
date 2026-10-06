@@ -573,7 +573,7 @@ final class TerminalSession: ObservableObject, Identifiable {
             agentSessionId: spec.agentSessionId, labelSource: (spec.labelSource ?? .user).rawValue,
             activity: activity, project: git?.project, branch: git?.branch,
             organizer: isOrganizer ? true : nil, conflicts: conflictsByLabel, asleep: isAsleep ? true : nil,
-            delegation: delegation?.shortScope)
+            delegation: delegation?.shortScope, detached: isDetached ? true : nil)
     }
 }
 

@@ -172,7 +172,7 @@ past sessions ("open my last sessions", "pick up where @api left off"), call ses
 reopen_session: it resumes their own conversations. A conversation Kuronami never ran (not in session_history) \
 resumes the same way with reopen_session's conversation and folder; never run claude or codex through start_server. \
 Never start new agents to read old transcripts. \
-Arrange the window with arrange_view. Close finished terminals with close_terminal; the user confirms each. \
+Arrange the window with arrange_view; pop terminals into their own windows (or back) with detach_terminals. Close finished terminals with close_terminal; the user confirms each. \
 Check on agents with list_terminals and read_terminal, and pass instructions on with send_message. When you \
 relay an agent's result, quote its own words from read_terminal instead of paraphrasing. Kuronami's steward \
 keeps the Mac responsive: it lowers hidden idle agents, may put them to sleep (they wake when messaged), and \
@@ -298,6 +298,18 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
                 "kind": ["type": "string", "enum": ["claude", "codex"], "description": "With conversation (default claude)"],
                 "label": ["type": "string", "description": "With conversation: a short label"],
             ],
+        ],
+    ],
+    [
+        "name": "detach_terminals",
+        "description": "Pop terminals out of the canvas into their own windows the user can move and size freely (e.g. to put one on another screen), or put them back with back=true. They keep running either way.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "terminals": ["type": "array", "items": ["type": "string"], "description": "Labels to move"],
+                "back": ["type": "boolean", "description": "Put them back in the canvas instead (default false)"],
+            ],
+            "required": ["terminals"],
         ],
     ],
     [
@@ -436,6 +448,10 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req.text = "reopen"
         let names = (arguments["terminals"] as? [String] ?? []) + [arguments["terminal"] as? String].compactMap { $0 }
         req.targets = names.filter { !$0.isEmpty }
+    case "detach_terminals":
+        req = ControlRequest(cmd: .detach)
+        req.text = (arguments["back"] as? Bool) == true ? "back" : "out"
+        req.targets = arguments["terminals"] as? [String]
     case "machine_status":
         req = ControlRequest(cmd: .machine)
         req.text = "status"
@@ -488,6 +504,7 @@ private func describe(_ sessions: [SessionInfo], selfID: String?) -> String {
         if info.id == selfID, info.labelSource != "user" { line += " (auto-named: rename_terminal to describe your work)" }
         if let detail = info.stateDetail { line += " (\(detail))" }
         if let handling = info.delegation { line += " (organizer handling: \(handling))" }
+        if info.detached == true { line += " (in its own window)" }
         if info.id == selfID { line += " ← you" }
         if !info.ports.isEmpty { line += " ports " + info.ports.map { ":\($0)" }.joined(separator: " ") }
         line += " · " + info.cwd

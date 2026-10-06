@@ -26,6 +26,7 @@ enum ControlCommand: String, Codable {
     case watch         // the organizer hears when target finishes; text = its note for then
     case history       // the organizer's closed sessions: text = list | reopen, targets for reopen
     case heavy         // heavy-job slot: text = acquire (replies when granted) | release, pid = holder
+    case detach        // the organizer pops tiles into their own windows: text = out | back, targets
     case machine       // the organizer and the steward: text = status | policy (count = agent cap, targets = pinned)
     case delegate      // the organizer handles target's waits: text = handle | stop | list (label = scope, count, note)
 }
@@ -106,6 +107,8 @@ struct SessionInfo: Codable, Equatable {
     var asleep: Bool?
     /// The organizer handles its waits: "turn", "2 left", "until 14:05".
     var delegation: String? = nil
+    /// Shown in its own window instead of the canvas.
+    var detached: Bool? = nil
 }
 
 struct ControlResponse: Codable {
