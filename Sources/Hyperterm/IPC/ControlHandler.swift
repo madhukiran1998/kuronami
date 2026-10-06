@@ -624,6 +624,24 @@ struct ControlHandler {
     private func closeForOrganizer(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
         guard let target = resolve(request.target) else { reply(notFound(request.target)); return }
         guard !target.isOrganizer else { reply(.failure("the organizer can't close itself")); return }
+        // Work that isn't merged or committed is never closed from here: the user decides on the agent itself.
+        let spec = target.spec
+        guard spec.isWorktree else { confirmClose(target, reply: reply); return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let risk = WorkAtRisk.evaluate(at: spec.workPath, base: spec.baseBranch)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if let risk, !risk.isEmpty {
+                        reply(.failure("@\(target.label) left open: \(risk.headline(base: spec.baseBranch)). Tell the user; they close it from the agent itself."))
+                    } else {
+                        self.confirmClose(target, reply: reply)
+                    }
+                }
+            }
+        }
+    }
+
+    private func confirmClose(_ target: TerminalSession, reply: @escaping ControlServer.Reply) {
         store.confirmUnlessPhoneMode("The organizer wants to close @\(target.label)", abbreviateHome(target.spec.workPath)) { [store] approved in
             guard approved else {
                 reply(.failure("the user kept @\(target.label) open"))

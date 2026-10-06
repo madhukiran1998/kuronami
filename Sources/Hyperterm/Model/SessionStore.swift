@@ -38,6 +38,8 @@ final class SessionStore: ObservableObject {
     var onRemove: ((TerminalSession) -> Void)?
     var onSearchUpdate: ((TerminalSession, Int?, Int?, Bool) -> Void)?
     var onMentionRequest: ((TerminalSession) -> Void)?
+    /// The inspector's "Archive Worktree": the window asks about anything at risk, then removes it.
+    var onArchiveRequest: ((TerminalSession) -> Void)?
 
     /// Most recently selected first; split view shows the top two.
     private var recent: [UUID] = []

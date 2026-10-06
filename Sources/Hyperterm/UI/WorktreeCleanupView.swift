@@ -44,6 +44,8 @@ struct WorktreeCleanupView: View {
     @State private var entries: [WorktreeEntry] = []
     @State private var loading = true
     @State private var message: String?
+    /// Rows holding work that asked "Archive anyway?" once already.
+    @State private var confirming: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -63,16 +65,22 @@ struct WorktreeCleanupView: View {
                             .foregroundStyle(entry.merged ? Palette.running : entry.inUse ? .secondary : Palette.attention)
                     }
                     TableColumn("") { entry in
-                        Button("Archive") { archive(entry) }.disabled(entry.inUse).controlSize(.small)
+                        let atRisk = !entry.merged || entry.dirty
+                        let sure = confirming.contains(entry.id)
+                        Button(atRisk && sure ? "Archive anyway" : "Archive") {
+                            if atRisk && !sure { confirming.insert(entry.id) } else { archive(entry) }
+                        }
+                        .disabled(entry.inUse).controlSize(.small)
+                        .help(atRisk ? "Its work is kept on the branch \(entry.branch)." : "Nothing in it is left to lose.")
                     }
-                    .width(70)
+                    .width(110)
                 }
                 .frame(minHeight: 200)
             }
             if let message { Text(message).font(Typeface.caption).foregroundStyle(.secondary) }
             HStack {
-                Button("Archive All Merged") { entries.filter { $0.merged && !$0.inUse }.forEach(archive) }
-                    .disabled(!entries.contains { $0.merged && !$0.inUse })
+                Button("Archive All Clean") { entries.filter { $0.merged && !$0.dirty && !$0.inUse }.forEach(archive) }
+                    .disabled(!entries.contains { $0.merged && !$0.dirty && !$0.inUse })
                 Spacer()
                 Button("Done", action: onDone).keyboardShortcut(.defaultAction)
             }

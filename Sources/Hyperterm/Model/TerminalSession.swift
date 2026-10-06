@@ -53,6 +53,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var runningSubagents: [String: Subagent] = [:]
     @Published var testEvidence: TestEvidence?
     @Published var diffStat: DiffStat?
+    /// Worktree agents: what closing would lose (uncommitted files, commits not in the base).
+    @Published var atRisk: WorkAtRisk?
     /// The running subagents as sidebar rows, oldest first.
     var helpers: [Helper] {
         runningSubagents.map { Helper(id: $0.key, type: $0.value.type, startedAt: $0.value.startedAt) }
