@@ -638,3 +638,10 @@ final class InkCanvas: NSView {
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 }
+
+// MARK: - Organizer
+
+extension Size {
+    /// The organizer CLI's badge in the corner of the Kuronami mark.
+    static let markBadge: CGFloat = 14
+}

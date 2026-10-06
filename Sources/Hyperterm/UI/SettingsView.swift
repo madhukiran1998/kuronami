@@ -68,6 +68,20 @@ private struct GeneralSettings: View {
     @State private var checkpoints = AppSettings.checkpointsEnabled
     @State private var mode = AppSettings.defaultMode
     @State private var editor = Editors.preferred?.id ?? ""
+    @AppStorage(SessionStore.organizerKindKey, store: SessionStore.organizerDefaults) private var organizerRaw: String?
+    @ObservedObject private var installed = InstalledAgents.shared
+
+    /// Shared with the organizer panel's header: a running organizer restarts on the new CLI.
+    private var organizerKind: Binding<SessionKind?> {
+        Binding(get: { SessionStore.chosenOrganizerKind ?? TerminalSessionFactory.store?.organizer?.kind }, set: { kind in
+            guard let kind else { return }
+            if let store = TerminalSessionFactory.store, store.organizer != nil {
+                store.switchOrganizer(to: kind)
+            } else {
+                SessionStore.organizerKind = kind
+            }
+        })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.l) {
@@ -89,6 +103,19 @@ private struct GeneralSettings: View {
                 .labelsHidden()
                 .fixedSize()
                 .onChange(of: editor) { UserDefaults.standard.set(editor, forKey: "preferredEditor") }
+            }
+            setting("Run the organizer with", detail: "Switching restarts it in its own folder. Its notes file carries over, so it keeps what it learned.") {
+                Picker("", selection: organizerKind) {
+                    if organizerKind.wrappedValue == nil { Text("Not Chosen").tag(SessionKind?.none) }
+                    ForEach(SessionStore.organizerChoices) { kind in
+                        Text(installed.isInstalled(kind) ? kind.displayName : kind.displayName + " (not installed)")
+                            .tag(SessionKind?.some(kind))
+                            .selectionDisabled(!installed.isInstalled(kind))
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .onAppear { installed.refresh() }
             }
             Hairline()
             setting("Quick Ask with ⌃⌥Space", detail: "Start an agent from any app without switching to Kuronami.") {

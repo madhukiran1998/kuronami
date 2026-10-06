@@ -22,10 +22,32 @@ extension SessionStore {
         return folder.path
     }
 
-    /// Which CLI runs the organizer, picked in its panel's header.
+    static let organizerKindKey = "organizerKind"
+    /// Where the choice is kept. A variable so tests can use their own suite.
+    static var organizerDefaults = UserDefaults.standard
+
+    /// The CLIs that can run the organizer: every agent kind.
+    static var organizerChoices: [SessionKind] { SessionKind.allCases.filter(\.isAgent) }
+
+    /// The CLI the user picked to run the organizer; nil until they first do.
+    static var chosenOrganizerKind: SessionKind? {
+        organizerDefaults.string(forKey: organizerKindKey).flatMap(SessionKind.init(rawValue:)).flatMap { $0.isAgent ? $0 : nil }
+    }
+
+    /// Which CLI runs the organizer: picked the first time its panel opens, then in its header or Settings.
     static var organizerKind: SessionKind {
-        get { UserDefaults.standard.string(forKey: "organizerKind").flatMap(SessionKind.init(rawValue:)) ?? .claude }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: "organizerKind") }
+        get { chosenOrganizerKind ?? .claude }
+        set { organizerDefaults.set(newValue.rawValue, forKey: organizerKindKey) }
+    }
+
+    /// The panel asks which CLI to use instead of starting one. One already running (from before
+    /// there was a choice) counts as chosen.
+    var organizerNeedsChoice: Bool { Self.chosenOrganizerKind == nil && organizer == nil }
+
+    /// The first-run choice: remembered, then the organizer starts on it.
+    func chooseOrganizer(_ kind: SessionKind) {
+        Self.organizerKind = kind
+        startOrganizer()
     }
 
     /// Starts the organizer in `cwd`, replacing one that has exited. It runs with full access:
@@ -48,7 +70,7 @@ extension SessionStore {
 
     /// Runs the organizer on another CLI: the current one closes and a new one starts where it was.
     func switchOrganizer(to kind: SessionKind) {
-        guard kind != Self.organizerKind || organizer == nil else { return }
+        guard kind != organizer?.kind || organizer == nil else { Self.organizerKind = kind; return }
         Self.organizerKind = kind
         if let organizer { close(organizer) }
         startOrganizer()
