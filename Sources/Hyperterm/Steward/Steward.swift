@@ -58,7 +58,28 @@ final class Steward: ObservableObject {
         var lowered: Bool
     }
 
-    @Published private(set) var samples: [UUID: Sample] = [:]
+    private(set) var samples: [UUID: Sample] = [:] {
+        didSet {
+            let next = samples.mapValues(Readout.init)
+            if readouts != next { readouts = next }
+        }
+    }
+    /// What the inspector shows for each session. CPU differs on every tick, so only a change to
+    /// the shown text redraws the row.
+    @Published private(set) var readouts: [UUID: Readout] = [:]
+
+    struct Readout: Equatable {
+        var text: String
+        var lowered: Bool
+
+        init(_ sample: Sample) {
+            var parts = [ByteCountFormatter.string(fromByteCount: Int64(sample.footprint), countStyle: .memory)]
+            if let cpu = sample.cpuPercent { parts.append("\(Int(cpu.rounded()))% CPU") }
+            if sample.lowered { parts.append("background") }
+            text = parts.joined(separator: " · ")
+            lowered = sample.lowered
+        }
+    }
     /// Open escalations, one per session and kind; each clears when its condition does.
     var escalations: [Escalation] { escalationTracker.active }
     /// Called once per new escalation. The steward never acts on it.

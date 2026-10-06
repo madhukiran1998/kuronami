@@ -73,8 +73,10 @@ private final class BrowserProxy: @unchecked Sendable {
     private func startServer() -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["npx", "-y", chromeDevtoolsMCP, "--browser-url", browserURL,
-                             "--no-usage-statistics", "--no-performance-crux"]
+        // npx stays running as the server's parent (~80MB), so run a cached copy with node directly.
+        let command = cachedServerScript().map { ["node", $0] } ?? ["npx", "-y", chromeDevtoolsMCP]
+        process.arguments = command + ["--browser-url", browserURL,
+                                       "--no-usage-statistics", "--no-performance-crux"]
         var environment = ProcessInfo.processInfo.environment
         environment["CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS"] = "1"
         process.environment = environment
@@ -83,7 +85,7 @@ private final class BrowserProxy: @unchecked Sendable {
         process.standardOutput = output
         process.standardError = FileHandle.standardError
         do { try process.run() } catch {
-            FileHandle.standardError.write(Data("ht: couldn't start chrome-devtools-mcp via npx: \(error)\n".utf8))
+            FileHandle.standardError.write(Data("ht: couldn't start chrome-devtools-mcp (\(command[0])): \(error)\n".utf8))
             return false
         }
         withState {
@@ -113,6 +115,24 @@ private final class BrowserProxy: @unchecked Sendable {
             }
         }
         return withState { self.child === process }
+    }
+
+    /// The pinned server's entry script in npx's cache, if an earlier npx run downloaded it.
+    private func cachedServerScript() -> String? {
+        let name = "chrome-devtools-mcp"
+        let version = chromeDevtoolsMCP.split(separator: "@").last.map(String.init)
+        let cache = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".npm/_npx")
+        let entries = (try? FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)) ?? []
+        for entry in entries {
+            let package = entry.appendingPathComponent("node_modules/\(name)")
+            guard let data = try? Data(contentsOf: package.appendingPathComponent("package.json")),
+                  let manifest = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  manifest["version"] as? String == version,
+                  let bin = (manifest["bin"] as? [String: String])?[name] else { continue }
+            let script = package.appendingPathComponent(bin).standardizedFileURL.path
+            if FileManager.default.isReadableFile(atPath: script) { return script }
+        }
+        return nil
     }
 
     private func stopServer(_ process: Process) {
