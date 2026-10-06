@@ -165,7 +165,14 @@ extension SessionStore {
             if let id = json["task_id"] as? String { session.tasks.completed.insert(id) }
             return
         case "SubagentStart":
+            if let id = json["agent_id"] as? String { session.runningSubagents.insert(id) }
             session.record(.note, "Started subagent \(json["agent_type"] as? String ?? "")")
+            return
+        case "SubagentStop":
+            guard let id = json["agent_id"] as? String, session.runningSubagents.remove(id) != nil else { return }
+            session.record(.note, "Subagent finished \(json["agent_type"] as? String ?? "")")
+            // The last background subagent finishing after the turn ended is when the work is done.
+            if session.runningSubagents.isEmpty, session.state == .idle { reportToOrganizer(session, from: .working) }
             return
         case "Notification":
             // With a PermissionRequest hook waiting, its request is the precise one.

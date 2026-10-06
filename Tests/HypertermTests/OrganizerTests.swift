@@ -87,6 +87,32 @@ final class OrganizerTests: XCTestCase {
         XCTAssertEqual(store.organizerWatches[api.id], "next")
     }
 
+    func testBackgroundSubagentsHoldTheFinishUntilTheLastOneStops() {
+        let api = agent("api", state: .idle), organizer = agent("organizer", organizer: true, state: .needsInput("busy"))
+        let store = SessionStore(previewSessions: [api, organizer], previewLayout: .grid)
+        store.organizerWatches[api.id] = "next"
+        func hook(_ event: String, _ id: String) {
+            store.applyHook(source: "claude", session: api, json: ["hook_event_name": event, "agent_id": id, "agent_type": "Explore"], sentAt: nil)
+        }
+        hook("SubagentStart", "a1")
+        hook("SubagentStart", "a2")
+
+        // The session's own turn ends while both still run.
+        store.reportToOrganizer(api, from: .working)
+        XCTAssertEqual(api.info().subagents, 2)
+        hook("SubagentStop", "a1")
+        hook("SubagentStop", "a1")
+        store.flushOrganizerDigest(now: Date().addingTimeInterval(OrganizerDigest.window))
+        XCTAssertTrue(organizer.pendingMessages.isEmpty)
+        XCTAssertEqual(store.organizerWatches[api.id], "next")
+
+        hook("SubagentStop", "a2")
+        store.flushOrganizerDigest(now: Date().addingTimeInterval(OrganizerDigest.window))
+        XCTAssertTrue((organizer.pendingMessages.first ?? "").contains("@api finished"), "\(organizer.pendingMessages)")
+        XCTAssertNil(store.organizerWatches[api.id])
+        XCTAssertNil(api.info().subagents)
+    }
+
     func testEventsWaitForTheWindowAndArriveAsOneDigest() {
         let api = agent("api", state: .idle), db = agent("db", state: .failed("API error"))
         let organizer = agent("organizer", organizer: true, state: .needsInput("busy"))

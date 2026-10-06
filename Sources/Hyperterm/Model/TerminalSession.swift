@@ -35,6 +35,9 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var timeline: [TimelineEvent] = []
     @Published var usage = UsageSnapshot()
     @Published var tasks = TaskProgress()
+    /// Claude subagents started and not yet stopped, by agent id. Background ones keep working
+    /// after the session's own turn ends, so it isn't done while any remain.
+    @Published var runningSubagents: Set<String> = []
     @Published var testEvidence: TestEvidence?
     @Published var diffStat: DiffStat?
     /// Finished a turn with changes that the user hasn't opened in review yet.
@@ -295,6 +298,9 @@ final class TerminalSession: ObservableObject, Identifiable {
         guard next != state else { return }
         if !next.needsAttention { pendingRequest = nil }
         if next == .idle || next == .exited(0) { activity = nil }
+        // A CLI that exited or relaunched took its subagents with it.
+        if next == .starting { runningSubagents = [] }
+        if case .exited = next { runningSubagents = [] }
         let previous = state
         state = next
         stateSource = source
@@ -573,7 +579,8 @@ final class TerminalSession: ObservableObject, Identifiable {
             agentSessionId: spec.agentSessionId, labelSource: (spec.labelSource ?? .user).rawValue,
             activity: activity, project: git?.project, branch: git?.branch,
             organizer: isOrganizer ? true : nil, conflicts: conflictsByLabel, asleep: isAsleep ? true : nil,
-            delegation: delegation?.shortScope, detached: isDetached ? true : nil)
+            delegation: delegation?.shortScope, detached: isDetached ? true : nil,
+            subagents: runningSubagents.isEmpty ? nil : runningSubagents.count)
     }
 }
 
