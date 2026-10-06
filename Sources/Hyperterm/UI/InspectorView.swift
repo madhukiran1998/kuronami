@@ -22,8 +22,8 @@ struct InspectorView: View {
             }
         }
         .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // The fill is the AppKit backing's (the theme's).
         .foregroundStyle(Tone.text)
-        .background(Tone.pane)
         .tint(Palette.accent)
     }
 }

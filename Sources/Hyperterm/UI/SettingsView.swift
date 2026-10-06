@@ -22,6 +22,12 @@ enum AppSettings {
         get { defaults.string(forKey: "defaultPermissionMode").flatMap(PermissionMode.init(rawValue:)) }
         set { defaults.set(newValue?.rawValue, forKey: "defaultPermissionMode") }
     }
+
+    /// View › Theme. Read once at launch through `Theme.window`, which is what changes it.
+    static var windowTheme: WindowTheme {
+        get { .load(from: defaults) }
+        set { newValue.save(to: defaults) }
+    }
 }
 
 extension Notification.Name {

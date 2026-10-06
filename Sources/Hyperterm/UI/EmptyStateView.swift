@@ -30,8 +30,8 @@ struct EmptyStateView: View {
             }
             .scrollIndicators(.never)
         }
+        // No fill of its own: it sits on the canvas, which carries the theme.
         .foregroundStyle(Tone.text)
-        .background(Tone.floor)
     }
 
     private func shortcut(_ keys: String, _ title: String) -> some View {
