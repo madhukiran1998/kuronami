@@ -57,6 +57,15 @@ struct ControlHandler {
         } else {
             target = store.looseBrowsers.first ?? store.openBrowser()
         }
+        var page: URL?
+        if let raw = request.url {
+            guard let url = resolveAddress(raw), BrowserTarget.isAllowed(url) else {
+                reply(.failure("can't open \(raw): give an http(s) address or a path to a local file"))
+                return
+            }
+            page = url
+            store.select(target)
+        }
         if let tool = request.text, tool != "mark", let agent = callerAgent {
             AgentBrowser.shared.noteActivity(agent: agent.label, browser: target.label, tool: tool)
         }
@@ -64,6 +73,7 @@ struct ControlHandler {
         let store = self.store
         AgentBrowser.waitUntilReady({ store.isBrowserReady(target) }) { ready in
             guard ready else { reply(.failure("browser unavailable: Chromium didn't come up")); return }
+            if let page, let surface = target.surface as? BrowserSurfaceView { surface.model.load(page) }
             store.markBrowsers()
             // Tags land asynchronously in each page's renderer.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {

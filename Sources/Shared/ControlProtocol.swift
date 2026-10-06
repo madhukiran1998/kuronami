@@ -70,6 +70,8 @@ struct ControlRequest: Codable {
     var note: String?
     /// For `approve` from the organizer in Phone Mode: the user said yes to this request on their phone.
     var userApproved: Bool?
+    /// For `browser`: a page to open in the caller's browser (a URL, an address, or a file URL).
+    var url: String?
 }
 
 /// The most agents one start_agent call may start on the same task.
