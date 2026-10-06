@@ -84,6 +84,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             review: { [weak self] in self?.showInspector(for: $0) },
             showPlan: { [weak self] in self?.showInspector(for: $0, tab: .plan) },
             pickWinner: { [weak self] in self?.confirmPickWinner($0) },
+            dispatch: { [weak self] task, kinds, cwd, options in self?.store.dispatch(task, kinds: kinds, cwd: cwd, options: options) },
             toggleSidebar: { [weak self] in self?.toggleSidebar() },
             toggleInspector: { [weak self] in self?.toggleInspector() },
             showProjectActions: { [weak self] in self?.projectActionsMenu.popUp() })

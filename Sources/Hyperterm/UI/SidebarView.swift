@@ -12,6 +12,10 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             SidebarTopBar(toggle: actions.toggleSidebar)
+            Composer(store: store, actions: actions)
+                .padding(.horizontal, Space.m)
+                .padding(.bottom, Space.m)
+            Hairline()
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: Space.xxs) {
@@ -436,6 +440,140 @@ private struct SidebarTopBar: View {
     }
 }
 
+// MARK: - Composer
+
+/// Types a task straight to new agents, no organizer in between. Several agents on one task race,
+/// each in its own worktree.
+private struct Composer: View {
+    @ObservedObject var store: SessionStore
+    let actions: SessionActions
+    @State private var text = ""
+    @State private var claude = 1
+    @State private var codex = 0
+    @State private var mode: PermissionMode? = AppSettings.defaultMode
+    @State private var folder: String?
+    @FocusState private var focused: Bool
+
+    private var targetFolder: String {
+        folder ?? store.selected.map { $0.git?.mainRoot ?? $0.spec.cwd } ?? NSHomeDirectory()
+    }
+
+    private var folders: [String] {
+        let roots = store.sessions.map { $0.git?.mainRoot ?? $0.spec.cwd }
+        return Array(NSOrderedSet(array: roots).array as? [String] ?? [])
+    }
+
+    private var kinds: [SessionKind] {
+        Array(repeating: SessionKind.claude, count: claude) + Array(repeating: SessionKind.codex, count: codex)
+    }
+
+    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !kinds.isEmpty }
+
+    private var agentTitle: String {
+        switch (claude, codex) {
+        case (1, 0): return "Claude"
+        case (0, 1): return "Codex"
+        case (_, 0): return "\(claude) × Claude"
+        case (0, _): return "\(codex) × Codex"
+        default: return "Claude + Codex"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            TextField(store.launchingCount > 0 ? "Starting…" : "Ask a new agent…", text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(Typeface.body)
+                .lineLimit(1...6)
+                .focused($focused)
+                .onSubmit(submit)
+                .accessibilityLabel("Task for a new agent")
+            HStack(spacing: Space.xs) {
+                Menu {
+                    Button("Claude Code") { claude = 1; codex = 0 }
+                    Button("Codex") { claude = 0; codex = 1 }
+                    Button("Claude and Codex, Side by Side") { claude = 1; codex = 1 }
+                    Divider()
+                    Picker("Claude Agents", selection: $claude) {
+                        ForEach(0...4, id: \.self) { Text($0 == 0 ? "None" : "\($0)").tag($0) }
+                    }
+                    Picker("Codex Agents", selection: $codex) {
+                        ForEach(0...4, id: \.self) { Text($0 == 0 ? "None" : "\($0)").tag($0) }
+                    }
+                } label: {
+                    Text(agentTitle).foregroundStyle(kinds.count == 1 ? kinds[0].tint : Tone.text)
+                }
+                .tint(kinds.count == 1 ? kinds[0].tint : Tone.text)
+                .fixedSize()
+                .help("Which agents take the task. Several agents each get their own worktree.")
+                Menu {
+                    Picker("Permissions", selection: $mode) {
+                        Text("As Configured").tag(PermissionMode?.none)
+                        ForEach(PermissionMode.allCases) { Label($0.title, systemImage: $0.symbol).tag(PermissionMode?.some($0)) }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Image(systemName: mode?.symbol ?? "hand.raised")
+                        .foregroundStyle(mode == nil ? Tone.faint : Tone.text)
+                }
+                .tint(mode == nil ? Tone.faint : Tone.text)
+                .fixedSize()
+                .help(mode.map { "\($0.title): \($0.detail)" } ?? "Permissions: as configured in the agent")
+                Menu {
+                    ForEach(folders, id: \.self) { dir in Button(abbreviateHome(dir)) { folder = dir } }
+                    if !folders.isEmpty { Divider() }
+                    Button("Choose Folder…") { chooseFolder() }
+                } label: {
+                    Text(URL(fileURLWithPath: targetFolder).lastPathComponent)
+                        .foregroundStyle(Tone.muted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .tint(Tone.muted)
+                .fixedSize()
+                .help("Project: " + abbreviateHome(targetFolder))
+                Spacer(minLength: 0)
+                if store.launchingCount > 0 { ProgressView().controlSize(.mini) }
+                Button(action: submit) {
+                    Image(systemName: "arrow.up")
+                        .font(Typeface.caption.weight(.bold))
+                        .foregroundStyle(canSend ? Tone.floor : Tone.faint)
+                        .frame(width: Size.iconButton, height: Size.iconButton)
+                        .background(canSend ? Palette.accent : Tone.raised, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+                .help("Start (Return)")
+                .accessibilityLabel("Start agent")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .font(Typeface.caption.weight(.medium))
+        }
+        .padding(Space.m)
+        .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.pane, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous)
+            .strokeBorder(focused ? Tone.focus : Color.clear))
+        .acceptsAttachments($text)
+        .help("Drop files or images to attach them")
+    }
+
+    private func submit() {
+        let task = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty, !kinds.isEmpty else { return }
+        actions.dispatch(task, kinds, targetFolder, mode.map { AgentOptions(mode: $0) })
+        text = ""
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.directoryURL = URL(fileURLWithPath: expandTilde(targetFolder))
+        if panel.runModal() == .OK, let url = panel.url { folder = url.path }
+    }
+}
+
 // MARK: - Footer
 
 private struct SidebarFooter: View {
@@ -722,6 +860,8 @@ struct SessionActions {
     var showPlan: (TerminalSession) -> Void = { _ in }
     /// Keeps one racing agent's work and closes the others, after confirming.
     var pickWinner: (TerminalSession) -> Void = { _ in }
+    /// Starts agents on a task from the sidebar composer: (task, kinds, folder, options).
+    var dispatch: (String, [SessionKind], String, AgentOptions?) -> Void = { _, _, _, _ in }
     /// The sidebar footer's and top bar's window controls.
     var toggleSidebar: () -> Void = {}
     var toggleInspector: () -> Void = {}
