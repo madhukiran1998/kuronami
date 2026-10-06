@@ -196,8 +196,12 @@ struct AgentRow: View {
         let review: DiffStat? = session.readyForReview && (stat?.files ?? 0) > 0 ? stat : nil
         let racing = store.raceSiblings(of: session).count
         let overlap = session.overlapBadge
-        if review != nil || queued > 0 || racing > 0 || overlap != nil {
+        let delegation = session.delegation
+        if review != nil || queued > 0 || racing > 0 || overlap != nil || delegation != nil {
             HStack(spacing: Space.xs) {
+                if let delegation {
+                    Tag(text: "Organizer", tint: Palette.accent).help(delegation.help)
+                }
                 if let overlap {
                     Tag(text: overlap.title, tint: Palette.attention).help(overlap.detail)
                 }

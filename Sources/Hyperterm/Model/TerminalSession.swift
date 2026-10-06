@@ -27,6 +27,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var agentStatus: String?
     /// The request an agent is blocked on ("Bash: pnpm prisma migrate dev"), when known.
     @Published var pendingRequest: String?
+    /// The user handed this session's waits to the organizer (in memory only).
+    @Published var delegation: Delegation?
     /// True while a PermissionRequest hook is held open, so approvals go through the CLI's API.
     @Published var hasHookApproval = false
     @Published var git: GitInfo?
@@ -549,7 +551,8 @@ final class TerminalSession: ObservableObject, Identifiable {
             cwd: abbreviateHome(spec.cwd), command: spec.command, ports: ports, unread: unread,
             agentSessionId: spec.agentSessionId, labelSource: (spec.labelSource ?? .user).rawValue,
             activity: activity, project: git?.project, branch: git?.branch,
-            organizer: isOrganizer ? true : nil, conflicts: conflictsByLabel, asleep: isAsleep ? true : nil)
+            organizer: isOrganizer ? true : nil, conflicts: conflictsByLabel, asleep: isAsleep ? true : nil,
+            delegation: delegation?.shortScope)
     }
 }
 

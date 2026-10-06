@@ -298,9 +298,12 @@ struct TileHeaderSnapshot: Equatable {
     let summary: String?
     let overlap: OverlapBadge?
     let asleep: Bool
+    /// The organizer handles its waits; the tag's tooltip.
+    let delegation: String?
 
     @MainActor init(session: TerminalSession) {
         overlap = session.overlapBadge
+        delegation = session.delegation?.help
         label = session.label
         kind = session.kind
         state = session.state
@@ -361,6 +364,9 @@ struct TileHeader: View {
             Spacer(minLength: Space.xs)
             if let overlap = snapshot.overlap, !compact {
                 Tag(text: overlap.title, tint: Palette.attention).help(overlap.detail)
+            }
+            if let delegation = snapshot.delegation, !compact {
+                Tag(text: "Organizer", tint: Palette.accent).help(delegation)
             }
             if !snapshot.ports.isEmpty, !compact { PortChips(ports: snapshot.ports, compact: true) }
             if snapshot.kind == .browser {

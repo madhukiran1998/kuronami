@@ -10,7 +10,8 @@ import AppKit
 /// Only the user may press keys, answer prompts, close terminals, or type raw text: those would
 /// let one agent answer another's permission prompts or run commands outside its own checks.
 /// The organizer (the agent behind the sidebar's box) also starts agents in any folder, arranges
-/// the view, and closes terminals once the user confirms.
+/// the view, and closes terminals once the user confirms. It answers permission prompts only
+/// for sessions the user handed it, never "always", and never past the risky-request guard.
 @MainActor
 struct ControlHandler {
     let store: SessionStore
@@ -128,6 +129,8 @@ struct ControlHandler {
             let text = sanitizeMessage(request.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             me.agentStatus = text.isEmpty ? nil : String(text.prefix(140))
             return .success(text: "status set on @\(me.label)")
+        case .approve where callerOrganizer != nil:
+            return answerForOrganizer(request)
         case .approve:
             guard isUser else { return .failure("only the user can answer prompts") }
             guard let target = resolve(request.target) else { return notFound(request.target) }
@@ -170,6 +173,12 @@ struct ControlHandler {
         case .machine:
             guard callerOrganizer != nil else { return .failure("only the organizer reads the steward") }
             return machine(request)
+        case .delegate:
+            // Only the organizer takes sessions over (when the user asks it to); the user may also stop or list.
+            guard callerOrganizer != nil || (isUser && request.text != "handle") else {
+                return .failure("only the organizer handles waiting sessions, when the user asks")
+            }
+            return delegate(request)
         case .rename:
             return rename(request)
         case .notify:
@@ -468,6 +477,59 @@ struct ControlHandler {
         let note = sanitizeMessage(request.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         store.organizerWatches[target.id] = String(note.prefix(1000))
         return .success(text: "you'll get a message when @\(target.label) finishes its turn")
+    }
+
+    /// The user handed a session's waits to the organizer: take them over, stop, or list.
+    private func delegate(_ request: ControlRequest) -> ControlResponse {
+        if request.text == "list" {
+            let handled = store.sessions.compactMap { session in
+                session.delegation.map { "@\(session.label): \($0.scopePhrase)" + ($0.note.map { " (note: \($0))" } ?? "") }
+            }
+            return .success(text: handled.isEmpty ? "No sessions are handed to the organizer." : handled.joined(separator: "\n"))
+        }
+        guard let target = resolve(request.target) else { return notFound(request.target) }
+        switch request.text {
+        case "handle":
+            guard target.kind.isAgent, !target.isOrganizer else { return .failure("only other agents' waits can be handed over") }
+            let scope: Delegation.Scope
+            switch request.label {
+            case "turn":
+                scope = .turn
+            case "count":
+                guard let count = request.count, (1...50).contains(count) else { return .failure("count must be 1–50") }
+                scope = .count(count)
+            case "minutes":
+                guard let minutes = request.count, (1...1440).contains(minutes) else { return .failure("minutes must be 1–1440") }
+                scope = .until(Date().addingTimeInterval(TimeInterval(minutes * 60)))
+            default:
+                return .failure("scope must be turn, count, or minutes")
+            }
+            let note = String(sanitizeMessage(request.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
+            let waiting = store.delegate(target, scope: scope, note: note.isEmpty ? nil : note)
+            var text = "handling @\(target.label)'s waits \(target.delegation?.scopePhrase ?? ""). Kuronami messages you when it waits; "
+                + "the user is notified if you don't answer within \(Int(Delegation.fallback)) s."
+            if let waiting { text += " It is waiting now: \(waiting). read_terminal it, then answer." }
+            return .success(text: text)
+        case "stop":
+            guard target.delegation != nil else { return .failure("@\(target.label) isn't handed to the organizer") }
+            store.stopDelegating(target, why: isUser ? "the user stopped it" : "the organizer stopped", tellOrganizer: isUser)
+            return .success(text: "stopped handling @\(target.label)")
+        default:
+            return .failure("delegate takes handle, stop, or list")
+        }
+    }
+
+    /// answer_prompt: approve or deny a permission request of a session handed to the organizer.
+    private func answerForOrganizer(_ request: ControlRequest) -> ControlResponse {
+        guard let target = resolve(request.target) else { return notFound(request.target) }
+        guard let answer = PromptAnswer(rawValue: request.text ?? ""), answer != .always else {
+            return .failure("answer must be approve or deny; never \"always\"")
+        }
+        let reason = request.label.map(sanitizeMessage).flatMap { $0.isEmpty ? nil : $0 }
+        switch store.answerForOrganizer(target, answer, reason: reason) {
+        case .success(let text): return .success(text: text)
+        case .failure(let error): return .failure(error.description)
+        }
     }
 
     /// Closing ends a process and whatever it hadn't saved, so the user confirms each one.

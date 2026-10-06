@@ -1,0 +1,266 @@
+import AppKit
+
+/// A session whose waits the user handed to the organizer, for as long as they said: its
+/// questions and permission prompts wake the organizer instead of the user. The user still hears
+/// about anything the organizer leaves, or doesn't answer within `fallback`.
+struct Delegation: Equatable {
+    enum Scope: Equatable {
+        /// Until the agent finishes its current task: its next working → idle with nothing pending.
+        case turn
+        /// The next n waits.
+        case count(Int)
+        case until(Date)
+    }
+
+    var scope: Scope
+    /// The user's instructions, e.g. "prefer pnpm".
+    var note: String?
+    /// Waits handled so far, answered or left for the user.
+    var handled = 0
+    /// When the organizer was told of the wait in progress.
+    var toldAt: Date?
+
+    /// How long the organizer has before the user is notified anyway.
+    static let fallback: TimeInterval = 90
+
+    func isUsedUp(at now: Date) -> Bool {
+        switch scope {
+        case .turn: return false
+        case .count(let limit): return handled >= limit
+        case .until(let end): return now >= end
+        }
+    }
+
+    func isOverdue(at now: Date) -> Bool {
+        toldAt.map { now.timeIntervalSince($0) >= Self.fallback } ?? false
+    }
+
+    /// "turn", "2 left", "until 14:05".
+    var shortScope: String {
+        switch scope {
+        case .turn: return "turn"
+        case .count(let limit): return "\(max(limit - handled, 0)) left"
+        case .until(let end): return "until " + Self.clock(end)
+        }
+    }
+
+    /// "until it finishes its task", "for its next 3 waits", "until 14:05".
+    var scopePhrase: String {
+        switch scope {
+        case .turn: return "until it finishes its task"
+        case .count(let limit): return limit == 1 ? "for its next wait" : "for its next \(limit) waits"
+        case .until(let end): return "until " + Self.clock(end)
+        }
+    }
+
+    /// The Organizer tag's tooltip.
+    var help: String {
+        "The organizer answers this session's questions \(scopePhrase)." + (note.map { " Your note: \($0)" } ?? "")
+    }
+
+    private static func clock(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+}
+
+/// Requests the organizer never approves on the user's behalf. The list lives here, in one
+/// place, and the app checks it: the organizer's instructions alone are not the guard.
+enum RiskyRequest {
+    /// Each pattern (case-insensitive, against the full request) with what it means.
+    static let patterns: [(pattern: String, why: String)] = [
+        (#"\brm\b[^|;&\n]*\s(-[a-z]*r|--recursive)"#, "a recursive delete"),
+        (#"\bsudo\b"#, "sudo"),
+        (#"\bgit\b[^|;&\n]*\bpush\b"#, "a git push"),
+        (#"\bgit\b[^|;&\n]*\breset\b[^|;&\n]*--hard\b"#, "git reset --hard"),
+        (#"\bgit\b[^|;&\n]*\bclean\b"#, "git clean"),
+        (#"\bchmod\b[^|;&\n]*\s(-[a-z]*r|--recursive)"#, "a recursive chmod"),
+        (#"\b(curl|wget)\b[^;&\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b"#, "piping a download into a shell"),
+        (#"\bdeploy"#, "a deploy"),
+        (#"\b(npm|pnpm|yarn|cargo)\s+publish\b"#, "publishing a package"),
+        (#"\bdrop\s+(table|database|schema)\b"#, "dropping a table or database"),
+        (#"(^|[^a-z0-9_])\.env\b|secret|credential|keychain|\.ssh/|\.aws/|\.netrc\b|\bid_(rsa|ed25519)\b"#, "secrets or credentials"),
+        (#"\bkill\s+(-9|-kill|-sigkill|-s\s+kill)\b|\bkillall\b|\bpkill\b"#, "force-killing processes"),
+    ]
+
+    static let fileWriteTools: Set<String> = ["Edit", "Write", "MultiEdit", "NotebookEdit"]
+
+    private static let compiled: [(NSRegularExpression, String)] = patterns.compactMap { entry in
+        (try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive])).map { ($0, entry.why) }
+    }
+
+    /// Why the organizer must leave this request for the user, or nil when it may approve it.
+    static func reason(tool: String?, request: String, workspace: String?) -> String? {
+        let range = NSRange(request.startIndex..., in: request)
+        if let hit = compiled.first(where: { $0.0.firstMatch(in: request, range: range) != nil }) { return hit.1 }
+        if let tool, fileWriteTools.contains(tool), let workspace, request.hasPrefix("/") {
+            let path = (request as NSString).standardizingPath
+            let root = (expandTilde(workspace) as NSString).standardizingPath
+            if path != root && !path.hasPrefix(root.hasSuffix("/") ? root : root + "/") { return "a write outside its workspace" }
+        }
+        return nil
+    }
+
+    /// The whole request a permission hook asks about, not the one-line summary: the full
+    /// command, the absolute path, or the tool's input.
+    static func text(tool: String, input: [String: Any]) -> String {
+        if let command = input["command"] as? String { return command }
+        if let parts = input["command"] as? [String] { return parts.joined(separator: " ") }
+        if let path = (input["file_path"] ?? input["notebook_path"]) as? String { return path }
+        let data = (try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
+        return tool + " " + String(decoding: data, as: UTF8.self)
+    }
+}
+
+extension SessionStore {
+    /// handle_waiting: replaces any earlier handoff. A session already waiting is the organizer's
+    /// from now; the reply describes that wait.
+    func delegate(_ session: TerminalSession, scope: Delegation.Scope, note: String?, now: Date = Date()) -> String? {
+        var delegation = Delegation(scope: scope, note: note)
+        session.record(.note, "Organizer handling: " + delegation.scopePhrase + (note.map { " (\($0))" } ?? ""))
+        if case .until(let end) = scope { scheduleDelegationSweep(after: end.timeIntervalSince(now)) }
+        defer { session.delegation = delegation }
+        guard case .needsInput(let reason) = session.state, reason != TerminalSession.trustReason else { return nil }
+        delegation.toldAt = now
+        scheduleDelegationSweep(after: Delegation.fallback)
+        return waitDescription(session, reason: reason)
+    }
+
+    /// Ends a handoff. A wait the organizer was told of and didn't answer goes to the user.
+    func stopDelegating(_ session: TerminalSession, why: String, tellOrganizer: Bool) {
+        guard let delegation = session.delegation else { return }
+        session.delegation = nil
+        session.record(.note, "Organizer stopped handling: " + why)
+        if delegation.toldAt != nil { notifyUserOfWait(session) }
+        if tellOrganizer, organizer != nil {
+            addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .stoppedHandling(why)))
+        }
+    }
+
+    /// A delegated session started waiting: the organizer hears instead of the user. False when
+    /// the user should be notified as usual. Folder trust is never delegated.
+    func organizerTakesWait(_ session: TerminalSession, reason: String, now: Date = Date()) -> Bool {
+        guard var delegation = session.delegation, let organizer, !organizer.isExitedProcess else { return false }
+        guard reason != TerminalSession.trustReason else {
+            session.record(.note, "Left for you: trusting a folder is your call")
+            return false
+        }
+        delegation.toldAt = now
+        session.delegation = delegation
+        addToOrganizerDigest(OrganizerEvent(label: session.label,
+                                            kind: .needsYou(waitDescription(session, reason: reason), note: delegation.note)))
+        scheduleDelegationSweep(after: Delegation.fallback)
+        return true
+    }
+
+    /// Scope accounting on each state change: a wait ending counts as handled; a used-up scope,
+    /// a finished task (`.turn`) or an exit ends the handoff.
+    func delegationStateChanged(_ session: TerminalSession, from previous: AgentState, now: Date = Date()) {
+        guard var delegation = session.delegation else { return }
+        if previous.needsAttention, delegation.toldAt != nil {
+            delegation.toldAt = nil
+            delegation.handled += 1
+        }
+        session.delegation = delegation
+        if case .exited = session.state {
+            stopDelegating(session, why: "it exited", tellOrganizer: true)
+        } else if delegation.isUsedUp(at: now) {
+            stopDelegating(session, why: "scope used up", tellOrganizer: true)
+        } else if delegation.scope == .turn, session.state == .idle, previous == .working {
+            stopDelegating(session, why: "it finished its task", tellOrganizer: true)
+        }
+    }
+
+    /// Waits the organizer hasn't answered in time go to the user; expired handoffs end.
+    func sweepDelegations(now: Date = Date()) {
+        for session in sessions {
+            guard let delegation = session.delegation else { continue }
+            if delegation.isOverdue(at: now), session.state.needsAttention {
+                escalate(session, why: "the organizer didn't answer within \(Int(Delegation.fallback)) s", now: now)
+            } else if delegation.isUsedUp(at: now) {
+                stopDelegating(session, why: "scope used up", tellOrganizer: true)
+            }
+        }
+    }
+
+    /// Hands the current wait back to the user, notified as a normal needs-you.
+    func escalate(_ session: TerminalSession, why: String, now: Date = Date()) {
+        guard var delegation = session.delegation else { return }
+        if delegation.toldAt != nil {
+            delegation.toldAt = nil
+            delegation.handled += 1
+        }
+        session.delegation = delegation
+        session.record(.note, "Left for you: " + why)
+        notifyUserOfWait(session)
+        if delegation.isUsedUp(at: now) { stopDelegating(session, why: "scope used up", tellOrganizer: true) }
+    }
+
+    /// answer_prompt: approve or deny one permission request of a delegated, waiting session.
+    /// Never "always"; risky requests and folder trust go to the user instead.
+    func answerForOrganizer(_ session: TerminalSession, _ answer: PromptAnswer, reason: String?) -> Result<String, DelegationError> {
+        guard answer != .always else {
+            return .failure(DelegationError("never \"always\": approve or deny this one request"))
+        }
+        guard session.delegation != nil else {
+            return .failure(DelegationError("@\(session.label) isn't handed to you; take over a session's waits with handle_waiting only when the user asks"))
+        }
+        guard case .needsInput(let waiting) = session.state else {
+            return .failure(DelegationError("@\(session.label) isn't waiting"))
+        }
+        guard waiting != TerminalSession.trustReason else {
+            return .failure(DelegationError("trusting a folder is the user's call; they've been notified"))
+        }
+        let approval = approvals[session.id]
+        let pending = session.pendingRequest
+        guard approval != nil || (pending != nil && pending == waiting) else {
+            return .failure(DelegationError("@\(session.label) asked a question, not for permission: answer it with send_message"))
+        }
+        let request = approval?.request ?? pending ?? waiting
+        let summary = approval?.summary ?? waiting
+        if answer == .approve, let why = RiskyRequest.reason(tool: approval?.toolName, request: request, workspace: session.spec.workPath) {
+            escalate(session, why: "\(why) (\(summary))")
+            return .failure(DelegationError("left for the user: \(why)"))
+        }
+        let denial = answer == .deny ? (reason ?? "The organizer denied this on the user's behalf.") : nil
+        switch self.answer(session, answer, reason: denial) {
+        case .success(let done):
+            session.record(.note, "Organizer answered: " + (answer == .deny ? "denied " : "allowed ") + summary)
+            return .success("\(done) @\(session.label): \(summary)")
+        case .failure(let error):
+            return .failure(DelegationError(error.description))
+        }
+    }
+
+    /// The normal needs-you, for a wait the organizer didn't take or left.
+    private func notifyUserOfWait(_ session: TerminalSession) {
+        guard case .needsInput(let reason) = session.state else { return }
+        if !(visibleIDs.contains(session.id) && NSApp.isActive) { session.unread = true }
+        guard notifiesUser else { return }
+        notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: true)
+        if let approval = approvals[session.id] {
+            notifier.postApproval(session: session, request: approval.summary, alwaysRule: alwaysRuleText(for: session))
+        }
+    }
+
+    /// The reason, plus the pending request when it says more, kept short for the digest.
+    private func waitDescription(_ session: TerminalSession, reason: String) -> String {
+        var text = reason
+        if let request = approvals[session.id]?.request ?? session.pendingRequest, !reason.contains(request) {
+            text += " · request: " + (request.count > 300 ? String(request.prefix(299)) + "…" : request)
+        }
+        return text.split(whereSeparator: \.isNewline).joined(separator: " ")
+    }
+
+    private func scheduleDelegationSweep(after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(delay, 0) + 0.5) { [weak self] in
+            self?.sweepDelegations()
+        }
+    }
+}
+
+struct DelegationError: Error, CustomStringConvertible {
+    let description: String
+    init(_ description: String) { self.description = description }
+}

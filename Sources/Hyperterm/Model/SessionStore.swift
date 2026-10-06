@@ -119,6 +119,8 @@ final class SessionStore: ObservableObject {
     private var lastOutline: [SessionOutline] = []
     private var persistWork: DispatchWorkItem?
     let notifier = AttentionNotifier()
+    /// Previews and tests post no banners.
+    private(set) var notifiesUser = true
 
     init() {}
 
@@ -127,6 +129,7 @@ final class SessionStore: ObservableObject {
     init(previewSessions: [TerminalSession], previewLayout: LayoutMode = .grid) {
         sessions = previewSessions
         layout = previewLayout
+        notifiesUser = false
         tileOrder = []
         selectedID = previewSessions.first?.id
         recent = previewSessions.map(\.id)
@@ -512,10 +515,13 @@ final class SessionStore: ObservableObject {
         notifier.updateBadge(count: attentionCount)
         onStatusChange?()
         reportToOrganizer(session, from: previous)
+        delegationStateChanged(session, from: previous)
         watchOverlaps(session, from: previous)
         let isVisible = visibleIDs.contains(session.id) && NSApp.isActive
         switch session.state {
         case .needsInput(let reason):
+            // Handed to the organizer: it hears instead, and the user only if it doesn't answer.
+            if organizerTakesWait(session, reason: reason) { break }
             if !isVisible { session.unread = true }
             notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: !isVisible)
         case .idle where previous == .working && session.kind.isAgent && raceFinished(session):

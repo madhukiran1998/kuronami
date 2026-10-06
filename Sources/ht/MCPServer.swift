@@ -181,7 +181,12 @@ user names a project loosely ("the foo project on my desktop"), find its folder 
 starting agents there. Save arrangements the user likes with save_layout and bring them back with \
 restore_layout. To chain work ("when @api is done, have @web use its new endpoint"), call watch_terminal on \
 the first agent with a note of what to do next; Kuronami messages you when it finishes, and you act on the \
-note. One message may carry several events, one per agent, each with its note. Keep notes in \
+note. One message may carry several events, one per agent, each with its note. Take over a session's \
+waiting only when the user asks, with the scope they gave, through handle_waiting (stop_handling when they \
+take it back). When Kuronami tells you a handled session is waiting, read_terminal it and answer in the \
+spirit of the user's note and the agent's task: send_message for a question, answer_prompt approve or deny \
+for a permission prompt. Never approve anything you aren't sure the user would; if unsure, leave it: the \
+user is notified after 90 s. Tell the user briefly what you answered on their behalf. Keep notes in \
 \(ControlPaths.organizerNotes): the user's preferences, project folders and open threads. Read it at the start \
 of a task when it may help, update it when you learn something durable, keep it under about 200 lines, and \
 never store secrets there. Start only the agents the user asked for. Keep replies short: say what you did in \
@@ -295,6 +300,43 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
         "inputSchema": ["type": "object", "properties": [String: Any]()],
     ],
     [
+        "name": "handle_waiting",
+        "description": "Only when the user asks (\"handle @api's questions until it's done\", \"answer @web's next 3 prompts\", \"watch @db for an hour\"): take over a session's waits for the scope they gave. While it lasts, Kuronami messages you instead of the user when it waits; the user is still notified if you don't answer within 90 s. Calling again replaces the scope.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
+                "scope": ["type": "string", "enum": ["turn", "count", "minutes"], "description": "turn: until it finishes its current task; count: its next `count` waits; minutes: for `minutes` minutes"],
+                "count": ["type": "integer", "description": "With scope count: how many waits, 1–50"],
+                "minutes": ["type": "integer", "description": "With scope minutes: how long, 1–1440"],
+                "note": ["type": "string", "description": "The user's instructions for answering, e.g. \"prefer pnpm\""],
+            ],
+            "required": ["terminal", "scope"],
+        ],
+    ],
+    [
+        "name": "stop_handling",
+        "description": "Stop handling a session's waits (handle_waiting); the user hears about them again.",
+        "inputSchema": [
+            "type": "object",
+            "properties": ["terminal": ["type": "string", "description": "Label, e.g. \"@api\""]],
+            "required": ["terminal"],
+        ],
+    ],
+    [
+        "name": "answer_prompt",
+        "description": "Approve or deny the permission request a session you handle (handle_waiting) is waiting on. Only for permission prompts: when it asked a question in chat, answer with send_message. Risky requests (deletes, pushes, deploys, secrets, sudo…) are left for the user.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
+                "answer": ["type": "string", "enum": ["approve", "deny"]],
+                "text": ["type": "string", "description": "With deny: why, which the agent sees"],
+            ],
+            "required": ["terminal", "answer"],
+        ],
+    ],
+    [
         "name": "set_policy",
         "description": "Change the steward's policy when the user asks: cap how many agents work at once, or pin terminals so they are never lowered or put to sleep. Omitted fields stay as they are.",
         "inputSchema": [
@@ -389,6 +431,22 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req.text = "policy"
         req.count = arguments["max_agents"] as? Int
         req.targets = arguments["pinned"] as? [String]
+    case "handle_waiting":
+        req = ControlRequest(cmd: .delegate)
+        req.text = "handle"
+        req.target = arguments["terminal"] as? String
+        req.label = arguments["scope"] as? String
+        req.count = req.label == "minutes" ? arguments["minutes"] as? Int : arguments["count"] as? Int
+        req.note = arguments["note"] as? String
+    case "stop_handling":
+        req = ControlRequest(cmd: .delegate)
+        req.text = "stop"
+        req.target = arguments["terminal"] as? String
+    case "answer_prompt":
+        req = ControlRequest(cmd: .approve)
+        req.target = arguments["terminal"] as? String
+        req.text = arguments["answer"] as? String
+        req.label = arguments["text"] as? String
     case "start_server":
         req = ControlRequest(cmd: .new)
         req.kind = "server"
@@ -416,6 +474,7 @@ private func describe(_ sessions: [SessionInfo], selfID: String?) -> String {
         var line = "@\(info.label) [\(info.kind)] \(info.state)"
         if info.id == selfID, info.labelSource != "user" { line += " (auto-named: rename_terminal to describe your work)" }
         if let detail = info.stateDetail { line += " (\(detail))" }
+        if let handling = info.delegation { line += " (organizer handling: \(handling))" }
         if info.id == selfID { line += " ← you" }
         if !info.ports.isEmpty { line += " ports " + info.ports.map { ":\($0)" }.joined(separator: " ") }
         line += " · " + info.cwd

@@ -27,6 +27,7 @@ enum ControlCommand: String, Codable {
     case history       // the organizer's closed sessions: text = list | reopen, targets for reopen
     case heavy         // heavy-job slot: text = acquire (replies when granted) | release, pid = holder
     case machine       // the organizer and the steward: text = status | policy (count = agent cap, targets = pinned)
+    case delegate      // the organizer handles target's waits: text = handle | stop | list (label = scope, count, note)
 }
 
 struct ControlRequest: Codable {
@@ -63,6 +64,8 @@ struct ControlRequest: Codable {
     var targets: [String]?
     /// For `heavy`: the process holding the slot; it is released when that process exits.
     var pid: Int32?
+    /// For `delegate` handle: the user's instructions for the organizer.
+    var note: String?
 }
 
 /// The most agents one start_agent call may start on the same task.
@@ -101,6 +104,8 @@ struct SessionInfo: Codable, Equatable {
     var conflicts: [String: [String]]?
     /// The agent CLI quit to free memory; a message or keystroke resumes its conversation.
     var asleep: Bool?
+    /// The organizer handles its waits: "turn", "2 left", "until 14:05".
+    var delegation: String? = nil
 }
 
 struct ControlResponse: Codable {

@@ -10,7 +10,8 @@ extension SessionStore {
     /// and closing a terminal still asks.
     static let organizerTools = ["list_terminals", "read_terminal", "send_message", "start_agent", "arrange_view",
                                  "close_terminal", "save_layout", "restore_layout", "watch_terminal",
-                                 "session_history", "reopen_session", "machine_status", "set_policy"]
+                                 "session_history", "reopen_session", "machine_status", "set_policy",
+                                 "handle_waiting", "stop_handling", "answer_prompt"]
         .map { "mcp__hyperterm__" + $0 }
 
     /// Where the organizer runs. Its own folder, trusted once: Claude Code asks to trust the home
@@ -209,7 +210,7 @@ extension SessionStore {
         addToOrganizerDigest(OrganizerEvent(label: escalation.label, kind: .steward(escalation.message)))
     }
 
-    private func addToOrganizerDigest(_ event: OrganizerEvent) {
+    func addToOrganizerDigest(_ event: OrganizerEvent) {
         if organizerDigest.isEmpty {
             DispatchQueue.main.asyncAfter(deadline: .now() + OrganizerDigest.window) { [weak self] in
                 self?.flushOrganizerDigest()
@@ -266,6 +267,9 @@ extension SessionStore {
 struct OrganizerEvent: Equatable {
     enum Kind: Equatable {
         case finished(String), failed(String), exited, steward(String)
+        /// A session handed to the organizer is waiting, with the user's note for it.
+        case needsYou(String, note: String?)
+        case stoppedHandling(String)
     }
 
     var label: String
@@ -276,6 +280,10 @@ struct OrganizerEvent: Equatable {
     var line: String {
         var line = "@\(label) "
         switch kind {
+        case .needsYou(let reason, let note):
+            return line + "is waiting: " + reason + (note.map { " (handle per: \($0))" } ?? "")
+        case .stoppedHandling(let why):
+            return "stopped handling @\(label): " + why
         case .finished(let summary): line += "finished: " + summary
         case .failed(let reason): line += "failed: " + reason
         case .exited: line += "exited"
