@@ -67,6 +67,8 @@ struct ControlRequest: Codable {
     var pid: Int32?
     /// For `delegate` handle: the user's instructions for the organizer.
     var note: String?
+    /// For `browser`: a page to open in the caller's browser (a URL, an address, or a file URL).
+    var url: String?
 }
 
 /// The most agents one start_agent call may start on the same task.

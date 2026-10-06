@@ -146,6 +146,15 @@ private let toolDefinitions: [[String: Any]] = [
         ],
     ],
     [
+        "name": "open_in_browser",
+        "description": "Show a page to the user in your own Tako browser (tiled next to you) instead of their outside Chrome: an HTML file you wrote, an artifact, a report, or a URL such as your dev server. Pass a file path or a URL. Use this whenever you'd otherwise open or tell the user to open a page.",
+        "inputSchema": [
+            "type": "object",
+            "properties": ["target": ["type": "string", "description": "A URL (https://…, localhost:3000) or a path to an .html file, absolute or relative to your working directory"]],
+            "required": ["target"],
+        ],
+    ],
+    [
         "name": "start_server",
         "description": "Start a long-running command (dev server, watcher, worker) in a new labeled Tako terminal instead of in the background of your own shell, so the user can see it and its ports. The user is asked to approve it in Tako first.",
         "inputSchema": [
@@ -478,6 +487,10 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req.target = arguments["terminal"] as? String
         req.text = arguments["answer"] as? String
         req.label = arguments["text"] as? String
+    case "open_in_browser":
+        guard let target = arguments["target"] as? String, !target.isEmpty else { return ("target is required", true) }
+        req = ControlRequest(cmd: .browser)
+        req.url = BrowserTarget.address(target, cwd: FileManager.default.currentDirectoryPath)
     case "start_server":
         req = ControlRequest(cmd: .new)
         req.kind = "server"
