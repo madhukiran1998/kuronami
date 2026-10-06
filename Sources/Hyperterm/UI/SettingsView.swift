@@ -138,7 +138,7 @@ private struct GeneralSettings: View {
                 .onAppear { installed.refresh() }
             }
             Hairline()
-            setting("Quick Ask with ⌃⌥Space", detail: "Start an agent from any app without switching to Kuronami.") {
+            setting("Quick Ask with ⌃⌥Space", detail: "Start an agent from any app without switching to Tako.") {
                 Toggle("", isOn: $quickAsk).labelsHidden()
                     .onChange(of: quickAsk) { AppSettings.quickAskEnabled = quickAsk }
             }
@@ -176,7 +176,7 @@ private struct IntegrationSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.l) {
-            row("Let agents use my Chrome", detail: "Off: agents browse only in Kuronami's browsers. On: Claude agents may also use your own Chrome through Claude in Chrome.") {
+            row("Let agents use my Chrome", detail: "Off: agents browse only in Tako's browsers. On: Claude agents may also use your own Chrome through Claude in Chrome.") {
                 Toggle("", isOn: $outsideChrome)
                     .labelsHidden()
                     .toggleStyle(.switch)
@@ -186,10 +186,10 @@ private struct IntegrationSettings: View {
                     }
             }
             Hairline()
-            row("ht in your shell", detail: "Script Kuronami from any terminal: ht ls, ht send, ht new.") {
+            row("ht in your shell", detail: "Script Tako from any terminal: ht ls, ht send, ht new.") {
                 Button("Set Up…") { NSApp.sendAction(#selector(AppDelegate.installCLI(_:)), to: nil, from: nil) }
             }
-            Text("Claude channels are in the Kuronami menu.").font(Typeface.caption).foregroundStyle(Tone.faint)
+            Text("Claude channels are in the Tako menu.").font(Typeface.caption).foregroundStyle(Tone.faint)
         }
         .buttonStyle(PanelButtonStyle())
         .padding(Space.xl)

@@ -105,7 +105,7 @@ private struct AccountRow: View {
             if let remove {
                 Button(role: .destructive, action: remove) { Image(systemName: "minus.circle") }
                     .buttonStyle(.borderless)
-                    .help("Remove from Kuronami (its folder and sign-in stay on disk)")
+                    .help("Remove from Tako (its folder and sign-in stay on disk)")
             }
         }
         .padding(.horizontal, 12)

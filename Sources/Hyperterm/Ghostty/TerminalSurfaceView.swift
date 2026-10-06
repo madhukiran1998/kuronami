@@ -505,7 +505,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
            event.modifierFlags.isDisjoint(with: [.shift, .option, .control, .command]) {
             events?.surfaceUserSubmitted()
         } else {
-            // Track whether the user has a draft in progress, so Kuronami never types into it.
+            // Track whether the user has a draft in progress, so Tako never types into it.
             let control = event.modifierFlags.contains(.control)
             let chars = event.charactersIgnoringModifiers ?? ""
             let clears = event.keyCode == UInt16(kVK_Escape) || (control && ["c", "u"].contains(chars))

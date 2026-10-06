@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-/// Generates the files that wire Claude Code and Codex into Kuronami without touching the user's
+/// Generates the files that wire Claude Code and Codex into Tako without touching the user's
 /// own config: hooks and MCP are passed per launch (`claude --settings/--mcp-config`,
 /// `codex -c ...`) through small wrapper scripts in ~/.hyperterm/bin.
 enum AgentIntegration {
@@ -56,7 +56,7 @@ enum AgentIntegration {
 
     /// Agents and servers are typed into a real login shell so the user's PATH and rc files
     /// apply, the command shows in history, and the shell remains after the program exits.
-    /// Everything Kuronami interpolates is shell-quoted; only the user's own server command and
+    /// Everything Tako interpolates is shell-quoted; only the user's own server command and
     /// agent arguments (typed by the user, never by agents) are passed through as written.
     static func initialInput(for spec: LaunchSpec, resume: Bool, task: String? = nil) -> String? {
         let extra = spec.command.map { " " + $0 } ?? ""

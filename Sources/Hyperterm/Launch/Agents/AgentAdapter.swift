@@ -1,7 +1,7 @@
 import Foundation
 
-/// Everything Kuronami knows about one agent CLI: how it launches and resumes, how it reports
-/// to Kuronami, where it keeps conversations and accounts, and how its screen reads. One
+/// Everything Tako knows about one agent CLI: how it launches and resumes, how it reports
+/// to Tako, where it keeps conversations and accounts, and how its screen reads. One
 /// implementation per CLI; call sites ask `kind.adapter` instead of switching on the kind.
 protocol AgentAdapter: Sendable {
     /// The command typed to run it, its wrapper's name in ~/.hyperterm/bin, and its process name.
@@ -14,11 +14,11 @@ protocol AgentAdapter: Sendable {
     /// The line typed into the shell to start or resume it. `options`, `extra` and `prompt` come
     /// shell-quoted, each with its leading space.
     func launchCommand(for spec: LaunchSpec, resume: Bool, options: String, extra: String, prompt: String) -> String
-    /// The CLI's own flags for Kuronami's launch choices.
+    /// The CLI's own flags for Tako's launch choices.
     func arguments(for options: AgentOptions) -> [String]
-    /// Whether Kuronami picks the conversation id at launch (so resume never waits on a hook).
+    /// Whether Tako picks the conversation id at launch (so resume never waits on a hook).
     var assignsSessionID: Bool { get }
-    /// Resumes a conversation outside Kuronami, for copying.
+    /// Resumes a conversation outside Tako, for copying.
     func resumeCommand(_ id: String) -> String
 
     // MARK: Conversation

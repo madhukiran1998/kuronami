@@ -61,7 +61,7 @@ enum SessionReaper {
     }
 
     /// Whether a signal may go to `process`: the same process that was recorded, and never
-    /// Kuronami or its direct children (terminal roots, Chromium helpers).
+    /// Tako or its direct children (terminal roots, Chromium helpers).
     static func maySignal(_ process: TrackedProcess, _ info: ProcessFacts?, mine: pid_t) -> Bool {
         guard let info, process.pid > 1, process.pid != mine else { return false }
         return info.start == process.start && info.ppid != mine

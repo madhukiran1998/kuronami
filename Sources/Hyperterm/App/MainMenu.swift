@@ -30,8 +30,8 @@ enum MainMenu {
     }
 
     private static func appMenu(_ target: AppDelegate) -> NSMenu {
-        let menu = NSMenu(title: "Kuronami")
-        menu.addItem(item("About Kuronami", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+        let menu = NSMenu(title: "Tako")
+        menu.addItem(item("About Tako", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
         menu.addItem(.separator())
         menu.addItem(item("Settings…", #selector(AccountsController.showSettings(_:)), ",", target: AccountsController.shared))
         menu.addItem(item("Accounts…", #selector(AccountsController.showAccounts(_:)), target: AccountsController.shared))
@@ -41,13 +41,13 @@ enum MainMenu {
         menu.addItem(channels)
         let outsideChrome = item("Let Agents Use My Chrome", #selector(AppDelegate.toggleOutsideChrome(_:)), target: target)
         outsideChrome.state = AgentBrowser.agentsMayUseOutsideChrome ? .on : .off
-        outsideChrome.toolTip = "Off: agents browse only in Kuronami's browsers. On: Claude agents may also use your own Chrome through Claude in Chrome."
+        outsideChrome.toolTip = "Off: agents browse only in Tako's browsers. On: Claude agents may also use your own Chrome through Claude in Chrome."
         menu.addItem(outsideChrome)
         menu.addItem(.separator())
-        menu.addItem(item("Hide Kuronami", #selector(NSApplication.hide(_:)), "h"))
+        menu.addItem(item("Hide Tako", #selector(NSApplication.hide(_:)), "h"))
         menu.addItem(item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]))
         menu.addItem(.separator())
-        menu.addItem(item("Quit Kuronami", #selector(NSApplication.terminate(_:)), "q"))
+        menu.addItem(item("Quit Tako", #selector(NSApplication.terminate(_:)), "q"))
         return menu
     }
 

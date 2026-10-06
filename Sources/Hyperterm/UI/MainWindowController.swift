@@ -29,7 +29,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             contentRect: NSRect(x: 0, y: 0, width: 1360, height: 840),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
-        window.title = "Kuronami"
+        window.title = "Tako"
         // No toolbar: its actions live in the sidebar footer, the traffic lights in the sidebar's
         // top inset, and the panes run to the window's top edge. Always dark; View › Theme picks
         // the colours and opacity (applyTheme).
@@ -334,7 +334,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             title = "@" + session.label
             subtitle = [session.git?.project, session.git?.branch].compactMap { $0 }.joined(separator: " · ")
         } else {
-            title = "Kuronami"
+            title = "Tako"
             subtitle = store.windowSubtitle
         }
         // Setting these relayouts the titlebar even when unchanged.

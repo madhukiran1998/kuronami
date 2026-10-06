@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kuronami</title>
+<title>Tako</title>
 <meta name="description" content="A native macOS terminal for running Claude Code and Codex in parallel: live status, approvals, agent-to-agent messaging, a browser per agent, and review.">
-<meta property="og:title" content="Kuronami">
+<meta property="og:title" content="Tako">
 <meta property="og:description" content="A native macOS terminal for running Claude Code and Codex in parallel.">
-<meta property="og:image" content="https://nikshepsvn.com/kuronami/images/workspace.png">
+<meta property="og:image" content="https://nikshepsvn.com/tako/images/workspace.png">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="color-scheme" content="dark">
@@ -152,35 +152,35 @@
 
 <div class="wrap">
   <header class="top">
-    <a class="brand" href="./"><img src="icon.png" alt="">Kuronami</a>
+    <a class="brand" href="./"><img src="icon.png" alt="">Tako</a>
     <nav>
       <a href="#features">Features</a>
       <a href="#tour">Tour</a>
       <a href="#compare">Compare</a>
       <a href="#install">Install</a>
-      <a href="https://github.com/nikshepsvn/kuronami">GitHub</a>
+      <a href="https://github.com/nikshepsvn/tako">GitHub</a>
     </nav>
   </header>
 
   <div class="intro">
     <h1>A terminal for running many coding agents at once.</h1>
-    <p>Kuronami runs Claude Code and Codex side by side in real terminals, and keeps track of them for you: which one needs an answer, which one is done, and what each one changed.</p>
+    <p>Tako runs Claude Code and Codex side by side in real terminals, and keeps track of them for you: which one needs an answer, which one is done, and what each one changed.</p>
     <div class="actions">
       <a class="button solid" href="#install">Install</a>
-      <a class="button" href="https://github.com/nikshepsvn/kuronami">View on GitHub</a>
+      <a class="button" href="https://github.com/nikshepsvn/tako">View on GitHub</a>
       <span class="small">Free and open source. macOS 15 or later.</span>
     </div>
   </div>
 
   <figure class="shot" style="margin:0">
-    <img src="images/workspace.png" width="1440" height="900" alt="Kuronami with three agents in a grid. One is waiting on an approval, with Allow and Deny on its card; another has finished and shows its diff size; a dev server sits on the shelf; the inspector is open.">
+    <img src="images/workspace.png" width="1440" height="900" alt="Tako with three agents in a grid. One is waiting on an approval, with Allow and Deny on its card; another has finished and shows its diff size; a dev server sits on the shelf; the inspector is open.">
     <figcaption class="caption">Three agents in a grid. <code>api-contracts</code> is waiting for approval to run a command; <code>navigation</code> is done and ready for review.</figcaption>
   </figure>
 
   <section id="features">
     <p class="label">Features</p>
     <h2>Built around the hard part of parallel agents: attention.</h2>
-    <p class="lead">Starting five agents is easy. Knowing which one is blocked, which one finished, and what it did is the actual work. Kuronami keeps the real <code>claude</code> and <code>codex</code> CLIs, with your own config, skills and MCP servers, and builds the rest around them.</p>
+    <p class="lead">Starting five agents is easy. Knowing which one is blocked, which one finished, and what it did is the actual work. Tako keeps the real <code>claude</code> and <code>codex</code> CLIs, with your own config, skills and MCP servers, and builds the rest around them.</p>
     <div class="features">
       <div class="feature">
         <h3>Live status for every agent</h3>
@@ -287,13 +287,13 @@
   <section id="compare">
     <p class="label">Comparison</p>
     <h2>How it compares.</h2>
-    <p class="lead">Tools for parallel agents fall into three groups. Each gets something right; Kuronami tries to cover all of it in one app.</p>
+    <p class="lead">Tools for parallel agents fall into three groups. Each gets something right; Tako tries to cover all of it in one app.</p>
     <div class="table">
       <table>
         <thead>
           <tr>
             <th></th>
-            <th class="k">Kuronami</th>
+            <th class="k">Tako</th>
             <th>tmux managers<small>Claude Squad, dmux</small></th>
             <th>Workspace apps<small>Conductor, Emdash, Superset</small></th>
             <th>Agent terminals<small>cmux</small></th>
@@ -314,7 +314,7 @@
         </tbody>
       </table>
     </div>
-    <p class="note">"Partly" means partial support, or only some tools in the group. "No" means not offered or not documented. From each tool's own README and site, October 2026; if something is out of date, <a href="https://github.com/nikshepsvn/kuronami/issues">open an issue</a>.</p>
+    <p class="note">"Partly" means partial support, or only some tools in the group. "No" means not offered or not documented. From each tool's own README and site, October 2026; if something is out of date, <a href="https://github.com/nikshepsvn/tako/issues">open an issue</a>.</p>
     <p class="else"><b>When to use something else.</b> On Linux or Windows, or working over SSH in tmux, use Claude Squad or Emdash. If you mostly run other agents (Gemini, Amp, OpenCode), the workspace apps support more of them. If you want every agent in a container, try Sculptor.</p>
   </section>
 
@@ -327,12 +327,12 @@
       </div>
       <div class="copy-wrap">
         <button class="copy" type="button" data-copy="brew install xcodegen zig@0.15
-git clone https://github.com/nikshepsvn/kuronami && cd kuronami
+git clone https://github.com/nikshepsvn/tako && cd tako
 scripts/build-ghosttykit.sh
 scripts/install.sh">Copy</button>
 <pre class="term"><span class="t-p">$</span> brew install xcodegen zig@0.15
-<span class="t-p">$</span> git clone https://github.com/nikshepsvn/kuronami
-<span class="t-p">$</span> cd kuronami
+<span class="t-p">$</span> git clone https://github.com/nikshepsvn/tako
+<span class="t-p">$</span> cd tako
 <span class="t-p">$</span> scripts/build-ghosttykit.sh  <span class="t-c"># once</span>
 <span class="t-p">$</span> scripts/install.sh</pre>
       </div>
@@ -342,11 +342,11 @@ scripts/install.sh">Copy</button>
 
 <footer>
   <div class="wrap">
-    <span>Kuronami (黒波, "black wave"). MIT licensed. Not affiliated with Anthropic or OpenAI.</span>
+    <span>Tako (蛸, "octopus"), formerly Kuronami. MIT licensed. Not affiliated with Anthropic or OpenAI.</span>
     <nav>
-      <a href="https://github.com/nikshepsvn/kuronami">GitHub</a>
-      <a href="https://github.com/nikshepsvn/kuronami#everything-it-does">Docs</a>
-      <a href="https://github.com/nikshepsvn/kuronami/issues">Issues</a>
+      <a href="https://github.com/nikshepsvn/tako">GitHub</a>
+      <a href="https://github.com/nikshepsvn/tako#everything-it-does">Docs</a>
+      <a href="https://github.com/nikshepsvn/tako/issues">Issues</a>
     </nav>
   </div>
 </footer>

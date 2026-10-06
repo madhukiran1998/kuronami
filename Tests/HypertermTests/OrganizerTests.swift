@@ -154,7 +154,7 @@ final class OrganizerTests: XCTestCase {
 
         store.flushOrganizerDigest(now: start.addingTimeInterval(OrganizerDigest.window + 1))
         XCTAssertEqual(organizer.pendingMessages,
-                       ["Kuronami: 2 updates: [1] @api finished: Added /orders. (your note: tell @web) [2] @db failed: API error"])
+                       ["Tako: 2 updates: [1] @api finished: Added /orders. (your note: tell @web) [2] @db failed: API error"])
         XCTAssertTrue(store.organizerDigest.isEmpty)
     }
 
@@ -180,7 +180,7 @@ final class OrganizerTests: XCTestCase {
         XCTAssertTrue(digest.isDue(at: start.addingTimeInterval(OrganizerDigest.window)))
 
         let message = digest.take(cleared: true) ?? ""
-        XCTAssertTrue(message.hasPrefix("Kuronami: Context was cleared. Read \(ControlPaths.organizerNotes)"), message)
+        XCTAssertTrue(message.hasPrefix("Tako: Context was cleared. Read \(ControlPaths.organizerNotes)"), message)
         XCTAssertTrue(message.hasSuffix("[1] @api exited [2] @web exited"), message)
         XCTAssertNil(digest.take())
     }

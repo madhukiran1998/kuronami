@@ -162,7 +162,7 @@ extension SessionStore {
             // committed and closing the others would quietly drop the winner's latest work.
             var committed: Result<String, ReviewError> = .success("")
             if !(Git.run(["status", "--porcelain"], at: path) ?? "").isEmpty {
-                committed = Review.commit(at: path, message: "Work from @\(label) (Kuronami)")
+                committed = Review.commit(at: path, message: "Work from @\(label) (Tako)")
             }
             let merged = committed.flatMap { _ in Review.merge(branch: branch, into: base, mainRoot: root) }
             DispatchQueue.main.async { [weak self] in

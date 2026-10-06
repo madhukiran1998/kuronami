@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The app icon, for the organizer's button: its own black ground, vermilion sun and brushed
-/// wave (`swift scripts/make-icon.swift --mark` renders them to Resources/Mark), so the sun can
-/// move behind the wave. It rests still while the organizer waits, rises and sets while it works,
+/// The app icon, for the organizer's button: its own bone ground, vermilion sun and Tako
+/// (`scripts/make-icon.sh` renders them to Resources/Mark from docs/brand), so the sun can
+/// move behind Tako. It rests still while the organizer waits, rises and sets while it works,
 /// and glows when it needs you. Only working loops, so an idle window never redraws for it, and
 /// Reduce Motion holds it still.
 struct KuronamiMark: NSViewRepresentable {
@@ -18,7 +18,7 @@ struct KuronamiMark: NSViewRepresentable {
     final class MarkView: NSView {
         private let ground = CALayer()
         private let sun = CALayer()
-        private let wave = CALayer()
+        private let tako = CALayer()
         private let rim = CAShapeLayer()
 
         var mood: Mood = .resting {
@@ -28,7 +28,7 @@ struct KuronamiMark: NSViewRepresentable {
         override init(frame: NSRect) {
             super.init(frame: frame)
             wantsLayer = true
-            for (layer, name) in [(ground, "ground"), (sun, "sun"), (wave, "wave")] {
+            for (layer, name) in [(ground, "ground"), (sun, "sun"), (tako, "tako")] {
                 layer.contents = Self.image(name)
                 layer.contentsGravity = .resizeAspect
                 self.layer?.addSublayer(layer)
@@ -56,7 +56,7 @@ struct KuronamiMark: NSViewRepresentable {
             let box = CGRect(x: (bounds.width - side) / 2, y: (bounds.height - side) / 2, width: side, height: side)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            for layer in [ground, sun, wave] { layer.frame = box }
+            for layer in [ground, sun, tako] { layer.frame = box }
             let circle = CGPath(ellipseIn: box, transform: nil)
             let mask = CAShapeLayer()
             mask.path = circle

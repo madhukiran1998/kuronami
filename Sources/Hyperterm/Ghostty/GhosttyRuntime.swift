@@ -55,7 +55,7 @@ final class GhosttyRuntime {
 
     /// The user's Ghostty config (fonts, theme, keybinds) applies as-is. Load order does the
     /// layering instead of editing their file: our styling goes underneath it, and only the
-    /// behavior Kuronami manages goes on top.
+    /// behavior Tako manages goes on top.
     private func makeConfig() -> ghostty_config_t? {
         guard let config = ghostty_config_new() else { return nil }
         loadBundledConfig(config, named: "hyperterm-style")

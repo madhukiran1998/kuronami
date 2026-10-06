@@ -21,7 +21,7 @@ final class InspectorPerformanceTests: XCTestCase {
 
     private func repository(at path: URL) throws {
         XCTAssertNotNil(runGit(["init", "-b", "main", path.path]))
-        XCTAssertNotNil(runGit(["-C", path.path, "-c", "user.name=Kuronami Test", "-c", "user.email=test@example.invalid",
+        XCTAssertNotNil(runGit(["-C", path.path, "-c", "user.name=Tako Test", "-c", "user.email=test@example.invalid",
                                 "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Fixture"]))
     }
 

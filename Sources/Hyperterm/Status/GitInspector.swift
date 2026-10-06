@@ -171,7 +171,7 @@ final class GitInspector: @unchecked Sendable {
     }
 }
 
-/// Runs git with repo-supplied hooks and fsmonitor disabled: Kuronami runs git inside
+/// Runs git with repo-supplied hooks and fsmonitor disabled: Tako runs git inside
 /// agent-controlled repos and must not execute their config. It runs at utility priority and
 /// takes no optional locks, so polling never slows or blocks the agents' own git.
 func runGit(_ arguments: [String]) -> String? {

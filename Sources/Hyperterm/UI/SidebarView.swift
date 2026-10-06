@@ -884,7 +884,7 @@ struct PortChips: View {
                     Button("Open in Browser") {
                         if let url = URL(string: "http://localhost:" + String(port)) { NSWorkspace.shared.open(url) }
                     }
-                    Button("Open in Kuronami") {
+                    Button("Open in Tako") {
                         NSApp.sendAction(#selector(AppDelegate.openPreview(_:)), to: nil, from: PortSender(port: port))
                     }
                 }

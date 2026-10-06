@@ -1,7 +1,7 @@
 import Foundation
 
 /// Minimal MCP server over stdio (newline-delimited JSON-RPC 2.0). Each tool call is forwarded
-/// to the Kuronami app over the control socket, tagged with this terminal's session id so the
+/// to the Tako app over the control socket, tagged with this terminal's session id so the
 /// app knows who is asking and can apply its rules.
 func runMCPServer() -> Never {
     let selfLabel = ProcessInfo.processInfo.environment["HT_LABEL"]
@@ -52,7 +52,7 @@ private func currentSelf(_ sessionID: String?) -> SessionInfo? {
 
 private func instructions(selfLabel: String?, me: SessionInfo?) -> String {
     let label = me?.label ?? selfLabel
-    let intro = label.map { "You are running in the Kuronami terminal labeled @\($0)." } ?? "You are running inside Kuronami."
+    let intro = label.map { "You are running in the Tako terminal labeled @\($0)." } ?? "You are running inside Tako."
     let naming: String
     if me?.labelSource == "user" {
         naming = "The user chose this label; don't rename it."
@@ -77,7 +77,7 @@ private func instructions(selfLabel: String?, me: SessionInfo?) -> String {
 private let toolDefinitions: [[String: Any]] = [
     [
         "name": "list_terminals",
-        "description": "List every Kuronami terminal: label, kind (claude/codex/shell/server), state (working, needs-input, idle, running, exited), what it's doing, cwd, and listening ports.",
+        "description": "List every Tako terminal: label, kind (claude/codex/shell/server), state (working, needs-input, idle, running, exited), what it's doing, cwd, and listening ports.",
         "inputSchema": ["type": "object", "properties": [:]],
     ],
     [
@@ -106,7 +106,7 @@ private let toolDefinitions: [[String: Any]] = [
     ],
     [
         "name": "set_status",
-        "description": "Post a one-line status to your card in the Kuronami sidebar so the user can see what you're doing without opening your terminal, e.g. \"Migrating auth tables · 2 of 4 done\" or \"Blocked: need the staging DB URL\". Update it at milestones, not every step. Empty text clears it.",
+        "description": "Post a one-line status to your card in the Tako sidebar so the user can see what you're doing without opening your terminal, e.g. \"Migrating auth tables · 2 of 4 done\" or \"Blocked: need the staging DB URL\". Update it at milestones, not every step. Empty text clears it.",
         "inputSchema": [
             "type": "object",
             "properties": ["text": ["type": "string", "description": "Under ~80 characters"]],
@@ -115,7 +115,7 @@ private let toolDefinitions: [[String: Any]] = [
     ],
     [
         "name": "rename_terminal",
-        "description": "Rename your own Kuronami terminal so its label reflects what you're working on now. Use a short kebab-case label (1–3 words, e.g. \"auth-refactor\"). Call it when you start a task and when your focus changes substantially. Your old label keeps working as an alias. Not allowed if the user named the terminal.",
+        "description": "Rename your own Tako terminal so its label reflects what you're working on now. Use a short kebab-case label (1–3 words, e.g. \"auth-refactor\"). Call it when you start a task and when your focus changes substantially. Your old label keeps working as an alias. Not allowed if the user named the terminal.",
         "inputSchema": [
             "type": "object",
             "properties": ["label": ["type": "string", "description": "New label, e.g. \"auth-refactor\""]],
@@ -133,7 +133,7 @@ private let toolDefinitions: [[String: Any]] = [
     ],
     [
         "name": "start_agent",
-        "description": "Delegate a self-contained subtask to a new Claude Code or Codex agent in its own Kuronami terminal and git worktree, so it works in parallel without touching your files. The user is asked to approve it first. The new agent messages you (send_message) when it's done. Use for independent work: a separate module, a migration, an investigation. Check on it with list_terminals or read_terminal.",
+        "description": "Delegate a self-contained subtask to a new Claude Code or Codex agent in its own Tako terminal and git worktree, so it works in parallel without touching your files. The user is asked to approve it first. The new agent messages you (send_message) when it's done. Use for independent work: a separate module, a migration, an investigation. Check on it with list_terminals or read_terminal.",
         "inputSchema": [
             "type": "object",
             "properties": [
@@ -147,7 +147,7 @@ private let toolDefinitions: [[String: Any]] = [
     ],
     [
         "name": "start_server",
-        "description": "Start a long-running command (dev server, watcher, worker) in a new labeled Kuronami terminal instead of in the background of your own shell, so the user can see it and its ports. The user is asked to approve it in Kuronami first.",
+        "description": "Start a long-running command (dev server, watcher, worker) in a new labeled Tako terminal instead of in the background of your own shell, so the user can see it and its ports. The user is asked to approve it in Tako first.",
         "inputSchema": [
             "type": "object",
             "properties": [
@@ -161,7 +161,7 @@ private let toolDefinitions: [[String: Any]] = [
 ]
 
 private let organizerInstructions = """
-You are the organizer in Kuronami: the agent behind the round button in the window's bottom-left corner. \
+You are the organizer in Tako: the agent behind the round button in the window's bottom-left corner. \
 The user opens your terminal from there to run their other terminals, so your job is managing sessions, \
 not doing project work yourself: agents do it. You have full access: read folders and run commands without asking. \
 Start agents in any project with start_agent (always pass folder). Give each a brief: the goal, the files it \
@@ -169,14 +169,14 @@ owns, what not to touch, and what done means. Before starting several, split the
 parallel only on work that touches different files or modules. \
 Agents you start or reopen appear on screen for the user. When the user asks to open, resume or continue \
 past sessions ("open my last sessions", "pick up where @api left off"), call session_history and then \
-reopen_session: it resumes their own conversations. A conversation Kuronami never ran (not in session_history) \
+reopen_session: it resumes their own conversations. A conversation Tako never ran (not in session_history) \
 resumes the same way with reopen_session's conversation and folder; never run claude or codex through start_server. \
 Never start new agents to read old transcripts. \
 Arrange the window with arrange_view; pop terminals into their own windows (or back) with detach_terminals. Close finished terminals with close_terminal; the user confirms each. \
 Check on agents with list_terminals and read_terminal, and pass instructions on with send_message. A session \
 with subagents running (list_terminals shows them) is still working even when idle: don't close it or chain the \
 next step yet. Its subagents can't be messaged directly; send_message the session and it relays. When you \
-relay an agent's result, quote its own words from read_terminal instead of paraphrasing. Kuronami's steward \
+relay an agent's result, quote its own words from read_terminal instead of paraphrasing. Tako's steward \
 keeps the Mac responsive: it lowers hidden idle agents, may put them to sleep (they wake when messaged), and \
 queues new agents when memory is short. machine_status shows what it sees. A message may carry its warnings (an \
 agent using too much memory, or burning CPU while idle): check the agent and tell the user, and restart or close it \
@@ -184,10 +184,10 @@ only with their go-ahead. Change its policy with set_policy only when the user a
 user names a project loosely ("the foo project on my desktop"), find its folder (e.g. ls ~/Desktop) before \
 starting agents there. Save arrangements the user likes with save_layout and bring them back with \
 restore_layout. To chain work ("when @api is done, have @web use its new endpoint"), call watch_terminal on \
-the first agent with a note of what to do next; Kuronami messages you when it finishes, and you act on the \
+the first agent with a note of what to do next; Tako messages you when it finishes, and you act on the \
 note. One message may carry several events, one per agent, each with its note. Take over a session's \
 waiting only when the user asks, with the scope they gave, through handle_waiting (stop_handling when they \
-take it back). When Kuronami tells you a handled session is waiting, read_terminal it and answer in the \
+take it back). When Tako tells you a handled session is waiting, read_terminal it and answer in the \
 spirit of the user's note and the agent's task: send_message for a question, answer_prompt approve or deny \
 for a permission prompt. Never approve anything you aren't sure the user would; if unsure, leave it: the \
 user is notified after 90 s. Tell the user briefly what you answered on their behalf. When the user says they're \
@@ -224,7 +224,7 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     [
         "name": "arrange_view",
         "description": """
-        Arrange the Kuronami window. Pass any of: layout (focus: one terminal fills the window; split: the two most \
+        Arrange the Tako window. Pass any of: layout (focus: one terminal fills the window; split: the two most \
         recent; grid: many tiles), focus (the terminal to bring to the front), tiles (the grid's exact shape). \
         tiles is a terminal label or a split: {"split": "row" (side by side) or "column" (stacked), "children": [...], \
         "sizes": [2, 1] (optional relative sizes)}. Children are labels or nested splits. Example: @api big on the \
@@ -243,7 +243,7 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "close_terminal",
-        "description": "Close a terminal by label: ends its process. The user confirms each close in Kuronami; a refusal means keep it.",
+        "description": "Close a terminal by label: ends its process. The user confirms each close in Tako; a refusal means keep it.",
         "inputSchema": [
             "type": "object",
             "properties": ["terminal": ["type": "string", "description": "Label, e.g. \"@web\""]],
@@ -269,7 +269,7 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "watch_terminal",
-        "description": "Get a message from Kuronami when an agent finishes its current or next turn (or fails or exits), with its last summary and your note. One message per call. Use it to chain work: hand one agent's result to the next.",
+        "description": "Get a message from Tako when an agent finishes its current or next turn (or fails or exits), with its last summary and your note. One message per call. Use it to chain work: hand one agent's result to the next.",
         "inputSchema": [
             "type": "object",
             "properties": [
@@ -292,7 +292,7 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "reopen_session",
-        "description": "Reopen closed sessions from session_history: each resumes its own conversation in its folder and shows on screen (several at once in a grid). For a Claude or Codex conversation Kuronami never ran (not in session_history), pass conversation (its session id, e.g. a ~/.claude/projects/<folder>/<id>.jsonl name) and folder instead. Use this, not start_agent or start_server, to continue past work.",
+        "description": "Reopen closed sessions from session_history: each resumes its own conversation in its folder and shows on screen (several at once in a grid). For a Claude or Codex conversation Tako never ran (not in session_history), pass conversation (its session id, e.g. a ~/.claude/projects/<folder>/<id>.jsonl name) and folder instead. Use this, not start_agent or start_server, to continue past work.",
         "inputSchema": [
             "type": "object",
             "properties": [
@@ -319,12 +319,12 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "machine_status",
-        "description": "What Kuronami's steward sees: memory pressure, heat, free memory, the launch queue and heavy-job slots, and each terminal's memory, CPU and band (focused, working, waiting, idle), plus open warnings such as an agent over 3 GB.",
+        "description": "What Tako's steward sees: memory pressure, heat, free memory, the launch queue and heavy-job slots, and each terminal's memory, CPU and band (focused, working, waiting, idle), plus open warnings such as an agent over 3 GB.",
         "inputSchema": ["type": "object", "properties": [String: Any]()],
     ],
     [
         "name": "handle_waiting",
-        "description": "Only when the user asks (\"handle @api's questions until it's done\", \"answer @web's next 3 prompts\", \"watch @db for an hour\"): take over a session's waits for the scope they gave. While it lasts, Kuronami messages you instead of the user when it waits; the user is still notified if you don't answer within 90 s. Calling again replaces the scope.",
+        "description": "Only when the user asks (\"handle @api's questions until it's done\", \"answer @web's next 3 prompts\", \"watch @db for an hour\"): take over a session's waits for the scope they gave. While it lasts, Tako messages you instead of the user when it waits; the user is still notified if you don't answer within 90 s. Calling again replaces the scope.",
         "inputSchema": [
             "type": "object",
             "properties": [
@@ -554,7 +554,7 @@ private func write(_ object: [String: Any]) {
     stdoutLock.unlock()
 }
 
-/// Channel mode: long-poll Kuronami for messages addressed to this session and push each one
+/// Channel mode: long-poll Tako for messages addressed to this session and push each one
 /// into Claude as a `notifications/claude/channel` event.
 private func startChannelLoop() {
     Thread.detachNewThread {
