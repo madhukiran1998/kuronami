@@ -22,7 +22,7 @@ final class SleepTests: XCTestCase {
     func testAnAgentWithSubagentsRunningStaysAwake() {
         let store = SessionStore(previewSessions: [], previewLayout: .grid)
         let api = agent("api")
-        api.runningSubagents = ["a1"]
+        api.runningSubagents = ["a1": Subagent(type: "Explore", startedAt: Date())]
         XCTAssertFalse(store.canSleep(api), "quitting would end its background subagent")
         api.apply(.processStarted, source: "test", force: .starting)
         XCTAssertTrue(api.runningSubagents.isEmpty, "a relaunched CLI has none")

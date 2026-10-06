@@ -445,6 +445,7 @@ final class SessionStore: ObservableObject {
         selectedID = session?.id
         if let session {
             if session.unread { session.unread = false }
+            if session.finishedUnseen { session.finishedUnseen = false }
             recent.removeAll { $0 == session.id }
             recent.insert(session.id, at: 0)
         }
@@ -540,6 +541,7 @@ final class SessionStore: ObservableObject {
 
     func sessionStateChanged(_ session: TerminalSession, from previous: AgentState) {
         notifier.updateBadge(count: attentionCount)
+        if previous == .working { markFinished(session) }
         onStatusChange?()
         reportToOrganizer(session, from: previous)
         delegationStateChanged(session, from: previous)
@@ -593,6 +595,25 @@ final class SessionStore: ObservableObject {
     /// Clicking into a tile's terminal makes it the selected session.
     func sessionFocused(_ session: TerminalSession) {
         if selectedID != session.id { select(session) }
+        else if session.finishedUnseen { session.finishedUnseen = false; onStatusChange?() }
+    }
+
+    /// How long a finished agent stays marked as done before it reads as plain idle.
+    static let finishedMarkDuration: TimeInterval = 180
+
+    /// An agent's work is done: its turn ended and no background subagent is still running. It
+    /// stays marked for a few minutes or until the user looks, unless they were already looking.
+    func markFinished(_ session: TerminalSession) {
+        guard session.kind.isAgent, session.state == .idle, session.runningSubagents.isEmpty,
+              !(selectedID == session.id && NSApp.isActive) else { return }
+        session.finishedUnseen = true
+        let finishedAt = session.stateChangedAt
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.finishedMarkDuration) { [weak self, weak session] in
+            // A later turn has its own mark and its own timer.
+            guard let session, session.finishedUnseen, session.stateChangedAt == finishedAt else { return }
+            session.finishedUnseen = false
+            self?.onStatusChange?()
+        }
     }
 
     // MARK: - Persistence

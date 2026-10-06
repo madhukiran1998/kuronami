@@ -47,6 +47,13 @@ struct TaskProgress: Equatable {
     var current: String? { order.first { !completed.contains($0) }.flatMap { subjects[$0] } }
 }
 
+/// A Claude subagent still running, from SubagentStart; SubagentStop removes it.
+struct Subagent: Equatable {
+    /// "Explore", "general-purpose", or a custom agent's name.
+    var type: String
+    var startedAt: Date
+}
+
 /// The last test run an agent did, from PostToolUse / PostToolUseFailure on test commands.
 struct TestEvidence: Equatable {
     var passed: Bool

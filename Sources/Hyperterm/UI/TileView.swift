@@ -15,6 +15,8 @@ final class TileView: NSView {
     private let border = CALayer()
     private let headerRule = CALayer()
     private let attentionMarker = CALayer()
+    /// The same bar in matcha: the agent finished a turn you haven't looked at yet.
+    private let finishedMarker = CALayer()
     private var recapHost: NSHostingView<RecapBanner>?
     private var searchHost: NSHostingView<SearchBar>?
     let search = SearchModel()
@@ -48,6 +50,7 @@ final class TileView: NSView {
         let header: Bool
         let focused: Bool
         let attention: Bool
+        let finished: Bool
         let dropTarget: Bool
     }
 
@@ -75,9 +78,14 @@ final class TileView: NSView {
         attentionMarker.cornerRadius = Size.hairline
         attentionMarker.zPosition = 21
         attentionMarker.isHidden = true
+        finishedMarker.backgroundColor = NSColor(Palette.running).cgColor
+        finishedMarker.cornerRadius = Size.hairline
+        finishedMarker.zPosition = 21
+        finishedMarker.isHidden = true
         content.layer?.addSublayer(headerRule)
         layer?.addSublayer(border)
         layer?.addSublayer(attentionMarker)
+        layer?.addSublayer(finishedMarker)
 
         content.addSubview(header)
         header.isHidden = true
@@ -159,6 +167,7 @@ final class TileView: NSView {
         headerRule.frame = NSRect(x: 0, y: bounds.height - headerHeight - 1, width: bounds.width, height: 1)
         headerRule.isHidden = !showsHeader
         attentionMarker.frame = NSRect(x: 0, y: 12, width: 2, height: max(0, bounds.height - 24))
+        finishedMarker.frame = attentionMarker.frame
         CATransaction.commit()
     }
 
@@ -173,7 +182,7 @@ final class TileView: NSView {
 
     private func updateChrome() {
         let chrome = Chrome(header: showsHeader, focused: isFocusedTile,
-                            attention: session.state.needsAttention, dropTarget: dropTarget)
+                            attention: session.state.needsAttention, finished: session.finishedUnseen, dropTarget: dropTarget)
         guard chrome != drawnChrome else { return }
         drawnChrome = chrome
         CATransaction.begin()
@@ -192,6 +201,7 @@ final class TileView: NSView {
             border.borderWidth = 1
         }
         attentionMarker.isHidden = !chrome.attention
+        finishedMarker.isHidden = !chrome.finished || chrome.attention
         headerRule.backgroundColor = Ink.hairline.cgColor
         CATransaction.commit()
     }
