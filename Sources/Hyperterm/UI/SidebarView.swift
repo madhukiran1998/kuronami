@@ -416,12 +416,12 @@ private struct SidebarFooter: View {
             Hairline()
             HStack(spacing: Space.s) {
                 // Both meters stack when Claude and Codex are both in use; each is labeled then.
-                VStack(alignment: .leading, spacing: Space.xs) {
+                VStack(alignment: .leading, spacing: Space.s) {
                     let both = store.rateLimits != nil && store.codexRateLimits != nil
                     if let limits = store.rateLimits { UsageMeter(limits: limits, label: both ? "Claude" : nil) }
                     if let limits = store.codexRateLimits { UsageMeter(limits: limits, label: both || store.rateLimits == nil ? "Codex" : nil) }
                 }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Menu {
                     Button("New Terminal…", action: actions.newSession)
                     Divider()
@@ -457,11 +457,14 @@ struct UsageMeter: View {
     let limits: RateLimits
     var label: String?
 
+    /// Wide enough for "Week" and "100%" in the micro face, so the bars line up.
+    private static let titleWidth: CGFloat = 30
+    private static let percentWidth: CGFloat = 32
+
     var body: some View {
-        HStack(spacing: Space.m) {
+        VStack(alignment: .leading, spacing: Space.xxs) {
             if let label {
-                Text(label).font(Typeface.micro.weight(.medium)).foregroundStyle(Tone.muted)
-                    .frame(width: 38, alignment: .leading)
+                Text(label).font(Typeface.micro.weight(.medium)).foregroundStyle(Tone.muted).lineLimit(1)
             }
             gauge("5h", limits.fiveHourPercent, limits.fiveHourResets)
             gauge("Week", limits.sevenDayPercent, limits.sevenDayResets)
@@ -471,17 +474,23 @@ struct UsageMeter: View {
     @ViewBuilder private func gauge(_ title: String, _ percent: Double?, _ reset: Date?) -> some View {
         if let percent {
             let high = percent > 80
-            HStack(spacing: Space.xs) {
+            let fraction = max(0, min(percent, 100)) / 100
+            HStack(spacing: Space.s) {
                 Text(title).foregroundStyle(Tone.faint)
+                    .frame(width: Self.titleWidth, alignment: .leading)
                 Capsule().fill(Tone.raised)
-                    .frame(width: 36, height: 3)
+                    .frame(height: 3)
                     .overlay(alignment: .leading) {
-                        Capsule().fill(high ? Palette.attention : Tone.muted)
-                            .frame(width: 36 * max(0, min(percent, 100)) / 100, height: 3)
+                        GeometryReader { bar in
+                            Capsule().fill(high ? Palette.attention : Tone.muted)
+                                .frame(width: bar.size.width * fraction)
+                        }
                     }
                 Text("\(Int(percent))%").monospacedDigit().foregroundStyle(high ? Palette.attention : Tone.faint)
+                    .frame(width: Self.percentWidth, alignment: .trailing)
             }
             .font(Typeface.micro)
+            .lineLimit(1)
             .help("\(title == "5h" ? "5-hour" : "Weekly") usage" + (reset.map { " · resets \($0.formatted(date: .abbreviated, time: .shortened))" } ?? ""))
         }
     }

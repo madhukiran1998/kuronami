@@ -72,6 +72,10 @@ final class OrganizerDock {
             container.bottomAnchor.constraint(equalTo: frame.bottomAnchor, constant: -Space.xs),
         ])
         panel.contentView = frame
+        // Clicking anywhere else folds it away, like a popover.
+        NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.closeOnClickAway() }
+        }
     }
 
     /// Puts the button in `window`'s corner. Called again whenever the window comes back, since
@@ -116,7 +120,20 @@ final class OrganizerDock {
 
     // MARK: - Opening and closing
 
-    func toggle() { state.isOpen ? close() : open() }
+    func toggle() {
+        // The click on the button itself took focus from the panel and already folded it.
+        if let foldedAt, Date().timeIntervalSince(foldedAt) < 0.4 { return }
+        state.isOpen ? close() : open()
+    }
+
+    /// When the panel last folded because focus left it.
+    private var foldedAt: Date?
+
+    private func closeOnClickAway() {
+        guard state.isOpen else { return }
+        foldedAt = Date()
+        close()
+    }
 
     func open() {
         guard let window else { return }
