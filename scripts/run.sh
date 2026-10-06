@@ -2,6 +2,12 @@
 # Build and (re)launch the debug app.
 set -e
 cd "$(dirname "$0")/.."
+# A worktree has no Signing.local.xcconfig (it's ignored): take the main checkout's, so this build
+# signs as the same identity and keeps the folder access already allowed.
+MAIN=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+if [ ! -f Signing.local.xcconfig ] && [ -f "$MAIN/Signing.local.xcconfig" ]; then
+  cp "$MAIN/Signing.local.xcconfig" .
+fi
 xcodegen generate >/dev/null
 xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration "${CONFIG:-Debug}" \
   -derivedDataPath build/DerivedData build 2>&1 | grep -E "error:|warning: .*(Hyperterm|Kuronami)|BUILD (SUCCEEDED|FAILED)" | sort -u
