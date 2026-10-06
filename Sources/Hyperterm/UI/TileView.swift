@@ -14,9 +14,10 @@ final class TileView: NSView {
     private let model: TileHeaderModel
     private let border = CALayer()
     private let headerRule = CALayer()
-    private let attentionMarker = CALayer()
-    /// The same bar in matcha: the agent finished a turn you haven't looked at yet.
-    private let finishedMarker = CALayer()
+    /// Waiting or finished-and-unseen: a faint wash over the header and body, and a 1px underline below the header.
+    private let headerWash = CALayer()
+    private let bodyWash = CALayer()
+    private let headerUnderline = CALayer()
     private var recapHost: NSHostingView<RecapBanner>?
     private var searchHost: NSHostingView<SearchBar>?
     let search = SearchModel()
@@ -74,18 +75,16 @@ final class TileView: NSView {
         border.zPosition = 20
         headerRule.backgroundColor = Ink.hairline.cgColor
         headerRule.zPosition = 9
-        attentionMarker.backgroundColor = NSColor(Palette.attention).cgColor
-        attentionMarker.cornerRadius = Size.hairline
-        attentionMarker.zPosition = 21
-        attentionMarker.isHidden = true
-        finishedMarker.backgroundColor = NSColor(Palette.running).cgColor
-        finishedMarker.cornerRadius = Size.hairline
-        finishedMarker.zPosition = 21
-        finishedMarker.isHidden = true
+        for wash in [headerWash, bodyWash] {
+            wash.zPosition = 8
+            wash.isHidden = true
+            content.layer?.addSublayer(wash)
+        }
+        headerUnderline.zPosition = 10
+        headerUnderline.isHidden = true
         content.layer?.addSublayer(headerRule)
+        content.layer?.addSublayer(headerUnderline)
         layer?.addSublayer(border)
-        layer?.addSublayer(attentionMarker)
-        layer?.addSublayer(finishedMarker)
 
         content.addSubview(header)
         header.isHidden = true
@@ -166,8 +165,9 @@ final class TileView: NSView {
         border.frame = bounds
         headerRule.frame = NSRect(x: 0, y: bounds.height - headerHeight - 1, width: bounds.width, height: 1)
         headerRule.isHidden = !showsHeader
-        attentionMarker.frame = NSRect(x: 0, y: 12, width: 2, height: max(0, bounds.height - 24))
-        finishedMarker.frame = attentionMarker.frame
+        headerWash.frame = NSRect(x: 0, y: bounds.height - headerHeight, width: bounds.width, height: headerHeight)
+        bodyWash.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - headerHeight))
+        headerUnderline.frame = headerRule.frame
         CATransaction.commit()
     }
 
@@ -178,6 +178,8 @@ final class TileView: NSView {
         let fill = Theme.window.tileFill(terminal: Theme.terminalBackground).cgColor
         content.layer?.backgroundColor = fill
         header.layer?.backgroundColor = fill
+        drawnChrome = nil
+        updateChrome()
     }
 
     private func updateChrome() {
@@ -200,8 +202,19 @@ final class TileView: NSView {
             border.borderColor = Ink.hairline.cgColor
             border.borderWidth = 1
         }
-        attentionMarker.isHidden = !chrome.attention
-        finishedMarker.isHidden = !chrome.finished || chrome.attention
+        // Waiting is gold, finished-and-unseen is green; both clear once seen. The border is untouched.
+        let tint: (color: NSColor, rule: CGFloat, header: CGFloat, body: CGFloat)? =
+            chrome.attention ? (NSColor(Palette.attention), 0.7, 0.07, 0.03)
+            : chrome.finished ? (NSColor(Palette.running), 0.6, 0.03, 0.03) : nil
+        let tinted = tint != nil && chrome.header
+        headerWash.isHidden = !tinted
+        headerUnderline.isHidden = !tinted
+        bodyWash.isHidden = tint == nil
+        if let tint {
+            headerWash.backgroundColor = tint.color.withAlphaComponent(tint.header).cgColor
+            bodyWash.backgroundColor = tint.color.withAlphaComponent(tint.body).cgColor
+            headerUnderline.backgroundColor = tint.color.withAlphaComponent(tint.rule).cgColor
+        }
         headerRule.backgroundColor = Ink.hairline.cgColor
         CATransaction.commit()
     }
