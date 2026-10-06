@@ -344,6 +344,8 @@ private struct ApprovalStrip: View {
     let actions: SessionActions
     @State private var error: String?
 
+    private var asksTrust: Bool { session.state == .needsInput(TerminalSession.trustReason) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
             if let plan = session.pendingPlan {
@@ -362,7 +364,7 @@ private struct ApprovalStrip: View {
                 Text(session.state.detail ?? "Waiting for you").font(Typeface.callout).foregroundStyle(Tone.muted)
             }
             HStack(spacing: Space.xs) {
-                Button(session.pendingPlan != nil ? "Approve Plan" : "Allow") { answer(.approve) }
+                Button(session.pendingPlan != nil ? "Approve Plan" : asksTrust ? "Trust Folder" : "Allow") { answer(.approve) }
                     .buttonStyle(PanelButtonStyle(prominent: true, tint: Palette.attention))
                     .help(session.pendingPlan != nil ? "Approve the plan and let the agent start (⌥⌘Y)" : "Allow once (⌥⌘Y)")
                 Button(session.pendingPlan != nil ? "Keep Planning" : "Deny") { answer(.deny) }

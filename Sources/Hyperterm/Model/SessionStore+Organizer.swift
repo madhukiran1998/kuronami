@@ -309,7 +309,14 @@ extension SessionStore {
         guard let organizer else { return }
         if organizer.id == session.id { flushOrganizerDigest(); return }
         // An exited organizer would drop the event; the watch keeps until it can hear.
-        guard !organizer.isExitedProcess, let event = organizerEvent(session, from: previous) else { return }
+        guard !organizer.isExitedProcess else { return }
+        // An agent launched by an agent can stop at the folder-trust prompt; only the user can
+        // answer it, so the organizer is told, to pass that on rather than wait for it.
+        if session.spec.labelSource == .agent, session.state == .needsInput(TerminalSession.trustReason), previous != session.state {
+            addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .needsYou(
+                "it's asking whether to trust this folder. Only the user can answer: they've been notified and can press Trust Folder on its card. Don't send it input", note: nil)))
+        }
+        guard let event = organizerEvent(session, from: previous) else { return }
         addToOrganizerDigest(event)
     }
 

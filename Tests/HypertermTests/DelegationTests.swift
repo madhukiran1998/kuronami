@@ -87,6 +87,17 @@ final class DelegationTests: XCTestCase {
         XCTAssertTrue(error.description.contains("trusting a folder"))
     }
 
+    func testOrganizerIsToldWhenItsAgentStopsAtFolderTrust() {
+        let (store, api, _) = fixture()
+        api.apply(.processStarted, source: "test", force: .needsInput(TerminalSession.trustReason))
+        store.reportToOrganizer(api, from: .idle)
+        XCTAssertTrue(store.organizerDigest.isEmpty, "a user-launched agent's trust prompt is not the organizer's business")
+
+        api.spec.labelSource = .agent
+        store.reportToOrganizer(api, from: .idle)
+        XCTAssertTrue(store.organizerDigest.events.last?.line.contains("Only the user can answer") == true)
+    }
+
     func testOrganizerNeverAnswersAlwaysOrQuestionsOrUndelegatedSessions() {
         let (store, api, _) = fixture()
         set(api, .needsInput("Bash: pnpm test"), store)

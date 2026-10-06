@@ -95,7 +95,7 @@ final class OrganizerDock {
         // organizer's own work (a confirm sheet, a popped-out tile, an app it opens) also takes
         // focus from the panel, and must not fold it.
         NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
-            MainActor.assumeIsolated { self?.closeOnClickAway(event) }
+            MainActor.assumeIsolated { self?.closeOnClickAway(event); self?.focusOnClickIn(event) }
             return event
         }
     }
@@ -152,6 +152,13 @@ final class OrganizerDock {
               clicked.sheetParent == nil, !keepsOpenForClicks(clicked) else { return }
         // The click is already taking focus where it landed.
         close(restoreFocus: false)
+    }
+
+    /// A click anywhere on the panel (its frame and header too) leaves the keyboard in the terminal.
+    private func focusOnClickIn(_ event: NSEvent) {
+        guard state.isOpen, event.window === panel, chooser.isHidden, let session else { return }
+        if !panel.isKeyWindow { panel.makeKey() }
+        if panel.firstResponder !== session.surface, !(panel.firstResponder is NSText) { panel.makeFirstResponder(session.surface) }
     }
 
     func open() {
