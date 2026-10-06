@@ -1,6 +1,13 @@
 import AppKit
 import Combine
 
+/// A running Claude subagent.
+struct Helper: Identifiable {
+    let id: String
+    let type: String
+    let startedAt: Date
+}
+
 /// One labeled terminal: its launch spec, its live libghostty surface, and what it's doing.
 @MainActor
 final class TerminalSession: ObservableObject, Identifiable {
@@ -44,6 +51,11 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var runningSubagents: [String: Subagent] = [:]
     @Published var testEvidence: TestEvidence?
     @Published var diffStat: DiffStat?
+    /// The running subagents as sidebar rows, oldest first.
+    var helpers: [Helper] {
+        runningSubagents.map { Helper(id: $0.key, type: $0.value.type, startedAt: $0.value.startedAt) }
+            .sorted { $0.startedAt < $1.startedAt }
+    }
     /// Finished a turn with changes that the user hasn't opened in review yet.
     @Published var readyForReview = false
     /// Servers normally sit in the canvas's strip; pinned ones get a grid tile.

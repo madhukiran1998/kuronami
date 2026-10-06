@@ -107,6 +107,7 @@ struct SidebarView: View {
 /// The row behind a session: selection fill, hover, click, context menu.
 private struct RowChrome: ViewModifier {
     let selected: Bool
+    var waiting = false
     let action: () -> Void
     @State private var hovering = false
 
@@ -116,6 +117,8 @@ private struct RowChrome: ViewModifier {
             .padding(.vertical, Space.s - 1)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(selected ? Tone.raised : hovering ? Tone.surface : .clear,
+                        in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+            .background(waiting ? Palette.attention.opacity(0.07) : .clear,
                         in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
             .onHover { hovering = $0 }
@@ -163,16 +166,19 @@ struct AgentRow: View {
                         .help("Tell the agent to carry on once the usage limit resets")
                 }
                 badges
+                HelpersLine(session: session)
             }
             .padding(.leading, Size.avatar + Space.s)
         }
-        .modifier(RowChrome(selected: selected) { store.select(session) })
+        .modifier(RowChrome(selected: selected, waiting: session.state.needsAttention) { store.select(session) })
         .contextMenu { SessionMenu(session: session, actions: actions) }
-        .opacity(session.isMinimized ? 0.6 : 1)
+        .opacity(session.isMinimized ? 0.6 : isDone && !session.unread && !selected ? 0.62 : 1)
         .help(tooltip)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(session.label), \(session.statusWord)")
     }
+
+    private var isDone: Bool { session.state == .idle && session.statusWord == "Done" }
 
     private var isExited: Bool {
         if case .exited = session.state { return true }
@@ -264,12 +270,14 @@ struct StateLabel: View {
         }
     }
 
+    private var isDone: Bool { session.state == .idle && session.statusWord == "Done" }
+
     private func text(now: Date) -> String {
         let since = elapsed(since: session.stateChangedAt, now: now)
         switch session.state {
         case .working: return "Working \(since)"
         case .needsInput: return "Needs you"
-        case .idle: return "\(session.statusWord) · \(since)"
+        case .idle: return "\(isDone ? "✓ " : "")\(session.statusWord) · \(since)"
         default: return session.statusWord
         }
     }
@@ -279,8 +287,54 @@ struct StateLabel: View {
         case .working, .starting: return Palette.working
         case .needsInput: return Palette.attention
         case .failed: return Palette.failed
+        case .idle where isDone && session.unread: return Palette.running
         default: return Tone.faint
         }
+    }
+}
+
+/// "▸ 2 helpers · general-purpose ×2", folded; the chevron opens one small row per helper.
+private struct HelpersLine: View {
+    @ObservedObject var session: TerminalSession
+    @State private var open = false
+
+    var body: some View {
+        if !session.helpers.isEmpty {
+            VStack(alignment: .leading, spacing: Space.xxs) {
+                Button { open.toggle() } label: {
+                    Text("\(open ? "▾" : "▸") \(session.helpers.count) helper\(session.helpers.count == 1 ? "" : "s") · \(summary)")
+                        .font(Typeface.caption)
+                        .foregroundStyle(Tone.muted)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .buttonStyle(.plain)
+                if open {
+                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                        VStack(alignment: .leading, spacing: Space.xxs) {
+                            ForEach(session.helpers) { helper in
+                                HStack(spacing: Space.xs + 1) {
+                                    Circle().fill(Palette.working).frame(width: 5, height: 5)
+                                    Text(helper.type).lineLimit(1).truncationMode(.tail)
+                                    Spacer(minLength: Space.xs)
+                                    Text(elapsed(since: helper.startedAt, now: context.date)).monospacedDigit()
+                                }
+                                .font(Typeface.caption)
+                                .foregroundStyle(Tone.muted)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var summary: String {
+        var counts: [(type: String, n: Int)] = []
+        for helper in session.helpers {
+            if let i = counts.firstIndex(where: { $0.type == helper.type }) { counts[i].n += 1 } else { counts.append((helper.type, 1)) }
+        }
+        return counts.map { $0.n > 1 ? "\($0.type) ×\($0.n)" : $0.type }.joined(separator: ", ")
     }
 }
 
