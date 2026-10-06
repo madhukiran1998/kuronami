@@ -23,7 +23,9 @@ usage: ht <command>
   mcp                              run the MCP server (used by agents)
   browser                          open the embedded browser; prints its DevTools endpoint
   browser-mcp [port]               run the browser MCP server (used by agents)
+  mcp-lazy --name n -- <command…>  run a stdio MCP server, started on first use (used by agents)
   hook <source> [payload]          forward an agent hook event (used by agents)
+  heavy -- <command…>              wait for a heavy-job slot (builds, tests), then run the command
 """
 
 func fail(_ message: String, code: Int32 = 1) -> Never {
@@ -198,7 +200,7 @@ case "permission":
 case "statusline":
     // Claude statusLine: report telemetry to Kuronami, then print the user's own statusline.
     let input = FileHandle.standardInput.readDataToEndOfFile()
-    if callerSession != nil {
+    if let callerSession, statusLineDue(session: callerSession) {
         var req = ControlRequest(cmd: .statusline)
         req.payload = String(decoding: input, as: UTF8.self)
         _ = try? sendControlRequest(req, timeout: 1)
@@ -213,6 +215,15 @@ case "browser-mcp":
     let port = args.first.flatMap(Int.init) ?? 9339
     runBrowserMCP(port: port)
 
+case "mcp-lazy":
+    runLazyMCP(args)
+
+case "mcp-lazy-config":
+    runLazyMCPConfig(args)
+
+case "heavy":
+    runHeavy(args)
+
 case "browser":
     print(requireOK(request(.browser) { $0.from = callerSession }).text ?? "")
 
@@ -221,6 +232,18 @@ case "-h", "--help", "help":
 
 default:
     fail("ht: unknown command '\(command)'\n\n\(usage)")
+}
+
+/// Claude reruns the statusline up to a few times a second; Kuronami needs one report every 2 s.
+/// The last report's time is a file's mtime in a per-user temp dir.
+func statusLineDue(session: String) -> Bool {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ht-statusline")
+    let stamp = dir.appendingPathComponent(session.filter { $0.isHexDigit || $0 == "-" })
+    if let last = (try? FileManager.default.attributesOfItem(atPath: stamp.path))?[.modificationDate] as? Date,
+       Date().timeIntervalSince(last) < 2 { return false }
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    _ = FileManager.default.createFile(atPath: stamp.path, contents: nil)
+    return true
 }
 
 /// Runs the statusLine command from the user's own ~/.claude/settings.json with the same input.

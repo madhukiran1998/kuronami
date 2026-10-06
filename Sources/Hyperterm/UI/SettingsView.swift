@@ -17,10 +17,29 @@ enum AppSettings {
         set { defaults.set(newValue, forKey: "checkpointsEnabled") }
     }
 
+    /// The steward quits idle agents' CLIs to free memory, resuming them on the next message.
+    /// On for new installs; off for people upgrading, so agents they left idle aren't quit unasked.
+    static var autoSleepEnabled: Bool {
+        get { defaults.object(forKey: "autoSleepEnabled") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "autoSleepEnabled") }
+    }
+
+    /// Fixes the auto-sleep default once, before the first launch writes any session state.
+    static func settleAutoSleepDefault(existingInstall: Bool) {
+        guard defaults.object(forKey: "autoSleepEnabled") == nil else { return }
+        defaults.set(!existingInstall, forKey: "autoSleepEnabled")
+    }
+
     /// The permission mode new agents start with; nil leaves each CLI's own setting in charge.
     static var defaultMode: PermissionMode? {
         get { defaults.string(forKey: "defaultPermissionMode").flatMap(PermissionMode.init(rawValue:)) }
         set { defaults.set(newValue?.rawValue, forKey: "defaultPermissionMode") }
+    }
+
+    /// View › Theme. Read once at launch through `Theme.window`, which is what changes it.
+    static var windowTheme: WindowTheme {
+        get { .load(from: defaults) }
+        set { newValue.save(to: defaults) }
     }
 }
 
@@ -66,8 +85,23 @@ struct SettingsView: View {
 private struct GeneralSettings: View {
     @State private var quickAsk = AppSettings.quickAskEnabled
     @State private var checkpoints = AppSettings.checkpointsEnabled
+    @State private var autoSleep = AppSettings.autoSleepEnabled
     @State private var mode = AppSettings.defaultMode
     @State private var editor = Editors.preferred?.id ?? ""
+    @AppStorage(SessionStore.organizerKindKey, store: SessionStore.organizerDefaults) private var organizerRaw: String?
+    @ObservedObject private var installed = InstalledAgents.shared
+
+    /// Shared with the organizer panel's header: a running organizer restarts on the new CLI.
+    private var organizerKind: Binding<SessionKind?> {
+        Binding(get: { SessionStore.chosenOrganizerKind ?? TerminalSessionFactory.store?.organizer?.kind }, set: { kind in
+            guard let kind else { return }
+            if let store = TerminalSessionFactory.store, store.organizer != nil {
+                store.switchOrganizer(to: kind)
+            } else {
+                SessionStore.organizerKind = kind
+            }
+        })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.l) {
@@ -90,6 +124,19 @@ private struct GeneralSettings: View {
                 .fixedSize()
                 .onChange(of: editor) { UserDefaults.standard.set(editor, forKey: "preferredEditor") }
             }
+            setting("Run the organizer with", detail: "Switching restarts it in its own folder. Its notes file carries over, so it keeps what it learned.") {
+                Picker("", selection: organizerKind) {
+                    if organizerKind.wrappedValue == nil { Text("Not Chosen").tag(SessionKind?.none) }
+                    ForEach(SessionStore.organizerChoices) { kind in
+                        Text(installed.isInstalled(kind) ? kind.displayName : kind.displayName + " (not installed)")
+                            .tag(SessionKind?.some(kind))
+                            .selectionDisabled(!installed.isInstalled(kind))
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .onAppear { installed.refresh() }
+            }
             Hairline()
             setting("Quick Ask with ⌃⌥Space", detail: "Start an agent from any app without switching to Kuronami.") {
                 Toggle("", isOn: $quickAsk).labelsHidden()
@@ -98,6 +145,10 @@ private struct GeneralSettings: View {
             setting("Checkpoint every turn", detail: "Hidden Git snapshots power per-turn diffs and reverting files. Your index, branches and stash are never touched.") {
                 Toggle("", isOn: $checkpoints).labelsHidden()
                     .onChange(of: checkpoints) { AppSettings.checkpointsEnabled = checkpoints }
+            }
+            setting("Put idle agents to sleep", detail: "After 10 quiet minutes an agent's CLI quits to free memory; the next message wakes it in the same conversation. Agents with background tasks stay awake.") {
+                Toggle("", isOn: $autoSleep).labelsHidden()
+                    .onChange(of: autoSleep) { AppSettings.autoSleepEnabled = autoSleep }
             }
         }
         .toggleStyle(.switch)
@@ -135,9 +186,6 @@ private struct IntegrationSettings: View {
                     }
             }
             Hairline()
-            row("Codex approvals", detail: "Answer Codex permission prompts from Kuronami's cards and notifications.") {
-                Button("Enable…") { AgentIntegration.installCodexApprovalHook() }
-            }
             row("ht in your shell", detail: "Script Kuronami from any terminal: ht ls, ht send, ht new.") {
                 Button("Set Up…") { NSApp.sendAction(#selector(AppDelegate.installCLI(_:)), to: nil, from: nil) }
             }

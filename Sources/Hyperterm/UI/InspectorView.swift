@@ -22,8 +22,8 @@ struct InspectorView: View {
             }
         }
         .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // The fill is the AppKit backing's (the theme's).
         .foregroundStyle(Tone.text)
-        .background(Tone.deep)
         .tint(Palette.accent)
     }
 }
@@ -1008,6 +1008,7 @@ private struct InfoView: View {
                     section("Usage") {
                         if let model = session.usage.model { row("Model", model) }
                         if let cost = session.usage.costUSD { row("Cost", String(format: "$%.2f", cost)) }
+                        ResourceRow(steward: .shared, sessionID: session.id)
                         if let context = session.usage.contextPercent {
                             HStack(spacing: Space.s) {
                                 Text("Context").foregroundStyle(Tone.muted).frame(width: 72, alignment: .leading)
@@ -1038,7 +1039,7 @@ private struct InfoView: View {
                             ActionRow(symbol: copiedResume ? "checkmark" : "doc.on.doc",
                                       title: copiedResume ? "Copied" : "Copy Resume Command",
                                       detail: String(id.prefix(8))) {
-                                let command = session.kind == .claude ? "claude --resume \(id)" : "codex resume \(id)"
+                                let command = session.kind.adapter?.resumeCommand(id) ?? id
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(command, forType: .string)
                                 copiedResume = true

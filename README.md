@@ -178,6 +178,8 @@ ht ls
 - **Grid, split, or focus.** Every live terminal as a tile (⌘⌥3), the last two side by side (⌘⌥2), or one (⌘⌥1). ⌘⏎ zooms a tile.
 - **Resize anything.** Drag the gap between two tiles to resize them; it snaps to halves and thirds, and double-clicking evens that split out again. ⌥⌘0 evens out every tile. Split and grid each remember their own arrangement across launches.
 - **Arrange it your way.** Drag a tile by its header and drop it on another to trade places. Minimize a tile (⇧⌘M or the – on its header) to park it on the shelf under the canvas, next to your dev servers; click it there, or in the sidebar, to bring it back.
+- **Close to hide.** The red close button hides the window and leaves agents running; the Dock or the menu bar brings it back. ⌘Q quits.
+- **Idle agents sleep.** With *Put idle agents to sleep* on (Settings › General), an agent that has been idle for 10 minutes quits its CLI to free memory and keeps its screen; the next message or keystroke wakes it in the same conversation. Agents with subagents or background tasks running stay awake.
 - **Since you left.** Come back to an agent and a banner sums up what happened: edits, commands, approvals, tests, and the final answer.
 
 #### Start agents the way you want
@@ -186,19 +188,20 @@ ht ls
 - **Permissions, model and effort per agent.** *Ask First*, *Accept Edits*, *Plan* or *Full Access*, translated to each CLI's own flags (`--permission-mode` for Claude; approval and sandbox flags for Codex). Pick a model (Claude's `opus`/`sonnet`/`haiku` aliases, or any name) and, for Codex, reasoning effort. Leave them alone and the agent's own config applies.
 - **Plans you approve.** An agent in plan mode shows *Plan ready* on its card with *Approve Plan* and *Keep Planning*; the inspector's Plan tab shows the whole plan.
 - **Fork a conversation.** Right-click a Claude agent → *Fork Conversation* starts a new agent that continues from this point (`--resume --fork-session`); the original carries on unchanged.
+- **Or ask the organizer.** The Kuronami mark in the window's corner (⌃⌘O) opens an organizer agent: tell it what you want started, arranged or watched, and it does it with Kuronami's own tools. It can also answer questions for sessions you hand it, and it remembers past sessions.
 - **Reopen closed agents.** Closed agents with a conversation stay under *Recently closed* in the sidebar (and in ⌘P), one click from resuming.
 
 #### Answer approvals from anywhere
 - **Real approvals, not keystrokes.** Kuronami installs Claude's `PermissionRequest` hook (per launch, never in your global settings). The moment an agent asks, its card shows the exact command with **Allow / Always / Deny**. Always saves the rule Claude suggested, and Deny can carry a reason the agent sees. Claude's own dialog still works in the terminal, and whichever answer comes first wins.
 - **From the notification banner.** Allow or Deny straight from macOS notifications. The menu bar shows the waiting count.
-- **Codex:** approvals from Kuronami work after you enable the hook once (App menu → *Enable Codex Approvals in Kuronami…*). Until then, Codex prompts are answered by choosing the numbered option on screen.
+- **Codex:** approvals from Kuronami work through Codex's `PermissionRequest` hook, attached per launch with the rest of Kuronami's hooks (each passed with its own trust hash, so there's nothing to review in `/hooks`). With hooks turned off in your Codex config, prompts are answered by choosing the numbered option on screen.
 
 #### Review the work
 - **Ready for review.** When an agent finishes with changes, its card shows *Review +128 −41*. The inspector (⌥⌘R) shows the diff.
 - **Any scope.** All changes since the branch left its base, only what's uncommitted, or exactly one turn. Unified or side by side, with whitespace changes hidden if you like.
 - **Comment on lines.** Double-click a diff line to comment; *Send comments* delivers them to the agent as one message (queued if it's mid-turn).
 - **Finish it.** Commit with a message your own Claude Code (or Codex) CLI drafts from the diff, following the repo's style; push; open a PR with a written title and description (via `gh`); merge into the base branch (refused if the main checkout is dirty or on another branch); or archive the worktree. Archiving commits leftover work to the branch first, so nothing is lost.
-- **Open in your editor.** ⌥⌘O, the toolbar, or any file's context menu opens the workspace in Cursor, VS Code, Zed, Xcode, JetBrains IDEs and others, whichever you have; the last one used becomes the default.
+- **Open in your editor.** ⌥⌘O, the editor button in the sidebar footer, or any file's context menu opens the workspace in Cursor, VS Code, Zed, Xcode, JetBrains IDEs and others, whichever you have; the last one used becomes the default.
 
 #### Turns and checkpoints
 Every agent turn in a Git workspace is checkpointed: a snapshot when the prompt goes in and another when the turn ends. Snapshots are hidden commits under `refs/kuronami/<session>/`, built in a throwaway index, so your index, HEAD, branches and stash are never touched and ignored files are left out.
@@ -210,7 +213,7 @@ Every agent turn in a Git workspace is checkpointed: a snapshot when the prompt 
 - **Continue after a rate limit.** When an agent stops on a usage limit, its card offers *Continue at 3:40 PM*; at the reset it's told to carry on.
 
 #### Project actions
-The toolbar's play button (and ⌘P) runs your project's commands. Kuronami detects them from `package.json` scripts (with your package manager), `Cargo.toml`, `Package.swift`, `go.mod`, `pyproject.toml` or a `Makefile`, or you list them yourself:
+The play button in the sidebar footer (and ⌘P) runs your project's commands. Kuronami detects them from `package.json` scripts (with your package manager), `Cargo.toml`, `Package.swift`, `go.mod`, `pyproject.toml` or a `Makefile`, or you list them yourself:
 ```json
 { "actions": [
     { "name": "Test", "command": "pnpm test" },
@@ -280,7 +283,7 @@ Only you can press keys, answer prompts, type raw text, open shells, or close te
 
 ### Nothing global is modified
 
-Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.hyperterm/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Claude agents also get `--no-chrome` per launch, so they use Kuronami's browsers rather than your Chrome (App menu → *Let Agents Use My Chrome* drops it). Your Chrome profile is only read when you choose *Import Chrome Logins…*. Two opt-in menu items write config, and each asks first: channels (`claude mcp add --scope user hyperterm`) and Codex approvals (`~/.codex/hooks.json`).
+Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.hyperterm/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Claude agents also get `--no-chrome` per launch, so they use Kuronami's browsers rather than your Chrome (App menu → *Let Agents Use My Chrome* drops it). Your Chrome profile is only read when you choose *Import Chrome Logins…*. One opt-in menu item writes config, and asks first: channels (`claude mcp add --scope user hyperterm`). Codex runs with `--no-daemon`, so its hooks and MCP servers stay in the agent's own terminal.
 
 ### `ht` CLI
 
@@ -306,6 +309,7 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 | ⌘P | Go to a terminal, run an action, or `@label message` |
 | ⌘J | Jump to the agent waiting longest |
 | ⌥⌘R / ⌥⌘I | Review changes / toggle inspector |
+| ⌃⌘O | Open or hide the organizer |
 | ⌥⌘O | Open the selected workspace in your editor |
 | ⌘⌥1 · 2 · 3, ⌘⏎ | Focus · split · grid, zoom tile |
 | ⌥⌘0 | Even out tiles |
@@ -322,7 +326,9 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 |---|---|
 | Claude hooks: `UserPromptSubmit`, `PreToolUse`, `PostToolUse(Failure)`, `PermissionRequest`, `Notification`, `Stop`, `StopFailure`, `TaskCreated/Completed` | Turn state, the exact request being approved, activity, tests, todo progress, failure reasons |
 | Claude statusLine | Cost, context, 5-hour/weekly usage |
-| Codex `notify` + OSC 9 | Turn complete (summary, thread id), approval requests |
+| Codex hooks: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `Stop`, `Interrupt` | The same as Claude's: turn state, thread id, the exact request being approved, activity, tests |
+| Codex `notify` + OSC 9 | Fallback when Codex hooks are off: turn complete (summary, thread id), approval requests |
+| The first screen | Folder-trust prompts; Codex's sign-in screen ("needs you: Sign in to Codex") |
 | `~/.claude/sessions/<pid>.json` | Corrects a stale "working" after an interrupt |
 | Process tree + libproc sockets | Ports, foreground command, an agent quitting back to its shell, server crashes |
 | Browser tool calls (through `ht browser-mcp`) | Which agent is driving which browser, shown on its tile and sidebar row |
@@ -357,7 +363,7 @@ Sources/Hyperterm/Status    StatusReducer, ProcessInspector (identity, ports), G
 Sources/Hyperterm/IPC       control socket server and request handler (permissions)
 Sources/Hyperterm/Launch    agent wrappers, per-launch hooks/statusLine/MCP config
 Sources/Hyperterm/Browser   Chromium runtime (lazy start, DevTools port), browser surface and bar, Chrome logins import
-Sources/Hyperterm/UI        Design (tokens + components), LayoutTree, sidebar, toolbar, tiles, inspector, switcher, sheets
+Sources/Hyperterm/UI        Design (tokens + components), LayoutTree, sidebar, organizer, tiles, inspector, switcher, sheets
 Sources/HypertermHelper     Chromium helper process (renderer, GPU, utility)
 Sources/ht                  CLI, hook/permission/statusline entry points, stdio MCP server, browser MCP proxy
 Tests/HypertermTests        state machine, layout tree, checkpoints (real Git), agent options, project actions, naming,

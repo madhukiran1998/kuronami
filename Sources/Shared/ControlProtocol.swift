@@ -21,6 +21,14 @@ enum ControlCommand: String, Codable {
     case statusline    // Claude statusLine JSON (cost, context, rate limits)
     case subscribe     // channel long-poll from an agent's MCP server: returns queued messages
     case browser       // start the embedded browser if needed; text = its DevTools endpoint
+    case arrange       // the organizer arranges the view: text = layout, target = focus, tiles
+    case layouts       // the organizer's named layouts: text = save | restore | list, label = name
+    case watch         // the organizer hears when target finishes; text = its note for then
+    case history       // the organizer's closed sessions: text = list | reopen, targets for reopen
+    case heavy         // heavy-job slot: text = acquire (replies when granted) | release, pid = holder
+    case detach        // the organizer pops tiles into their own windows: text = out | back, targets
+    case machine       // the organizer and the steward: text = status | policy (count = agent cap, targets = pinned)
+    case delegate      // the organizer handles target's waits: text = handle | stop | list (label = scope, count, note)
 }
 
 struct ControlRequest: Codable {
@@ -49,6 +57,28 @@ struct ControlRequest: Codable {
     var account: String?
     /// For `hook`: when the hook process started (continuous clock, ns), to order events.
     var sentAt: UInt64?
+    /// For `arrange`: the grid's tiles, as a tree of splits whose leaves are labels.
+    var tiles: TileSpec?
+    /// For `new` from the organizer: how many agents take the same task.
+    var count: Int?
+    /// For `history` reopen: labels or ids of closed sessions.
+    var targets: [String]?
+    /// For `heavy`: the process holding the slot; it is released when that process exits.
+    var pid: Int32?
+    /// For `delegate` handle: the user's instructions for the organizer.
+    var note: String?
+}
+
+/// The most agents one start_agent call may start on the same task.
+let organizerStartCap = 5
+
+/// A tile arrangement as an agent describes it: a leaf names a terminal, a split lays its
+/// children side by side (`row`) or stacked (`column`), sized by `sizes` (even when omitted).
+struct TileSpec: Codable, Equatable {
+    var terminal: String?
+    var split: String?
+    var sizes: [Double]?
+    var children: [TileSpec]?
 }
 
 struct SessionInfo: Codable, Equatable {
@@ -69,6 +99,18 @@ struct SessionInfo: Codable, Equatable {
     var activity: String?
     var project: String?
     var branch: String?
+    /// The agent behind the sidebar's box, which runs the user's other sessions.
+    var organizer: Bool?
+    /// Agents whose workspaces would conflict with this one's if merged, by label, with the files.
+    var conflicts: [String: [String]]?
+    /// The agent CLI quit to free memory; a message or keystroke resumes its conversation.
+    var asleep: Bool?
+    /// The organizer handles its waits: "turn", "2 left", "until 14:05".
+    var delegation: String? = nil
+    /// Shown in its own window instead of the canvas.
+    var detached: Bool? = nil
+    /// Claude subagents still running, which may outlast the session's own turn.
+    var subagents: Int? = nil
 }
 
 struct ControlResponse: Codable {
@@ -93,9 +135,13 @@ struct ControlResponse: Codable {
 
 enum ControlPaths {
     /// ~/.hyperterm: short and space-free because these paths are typed into shells and
-    /// embedded in agent configs.
+    /// embedded in agent configs. $HT_HOME moves it, so a dev build (scripts/run.sh) keeps its
+    /// sessions, socket and browser profile apart from the installed app's.
     static var supportDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hyperterm", isDirectory: true)
+        if let env = ProcessInfo.processInfo.environment["HT_HOME"], !env.isEmpty {
+            return URL(fileURLWithPath: env, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hyperterm", isDirectory: true)
     }
 
     /// $HT_SOCKET wins so sessions always talk to the app instance that spawned them.
@@ -103,7 +149,18 @@ enum ControlPaths {
         if let env = ProcessInfo.processInfo.environment["HT_SOCKET"], !env.isEmpty { return env }
         return supportDirectory.appendingPathComponent("control.sock").path
     }
+
+    /// The organizer's own notes: the user's preferences, project folders and open threads.
+    static var organizerNotes: String {
+        supportDirectory.appendingPathComponent("organizer-notes.md").path
+    }
 }
+
+/// Default names for new agents and shells, used in order: short to say, and each one's first
+/// letter also finds it ("b" is @bravo).
+let phoneticLabels = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
+                      "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo",
+                      "sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu"]
 
 /// Normalizes "@api", "api", " API " to "api".
 func normalizeLabel(_ raw: String) -> String {

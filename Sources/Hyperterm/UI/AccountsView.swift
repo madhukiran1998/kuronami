@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Claude Code and Codex accounts: who each is signed in as, which one new agents use, and
@@ -71,45 +72,55 @@ private struct AccountRow: View {
     let signIn: () -> Void
     let remove: (() -> Void)?
 
+    @State private var email: String?
+    @State private var limits: RateLimits?
+
     var body: some View {
-        // Re-read the sign-in now and then: it changes when a login terminal finishes.
-        TimelineView(.periodic(from: .now, by: 3)) { _ in
-            let email = AccountStore.signedInEmail(account)
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(account.name).font(Typeface.headline)
-                        if isPreferred {
-                            Text("New agents")
-                                .font(Typeface.micro)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Palette.working.opacity(0.16)))
-                                .foregroundStyle(Palette.working)
-                        }
-                    }
-                    Text(email ?? "Not signed in")
-                        .font(Typeface.callout)
-                        .foregroundStyle(email == nil ? Palette.attention : Color.secondary)
-                    // Known once an agent on this account has finished a turn.
-                    if let limits = TerminalSessionFactory.store?.accountLimits["\(account.kind.rawValue)/\(account.id)"] {
-                        UsageMeter(limits: limits)
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(account.name).font(Typeface.headline)
+                    if isPreferred {
+                        Text("New agents")
+                            .font(Typeface.micro)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Palette.working.opacity(0.16)))
+                            .foregroundStyle(Palette.working)
                     }
                 }
-                Spacer()
-                if !isPreferred {
-                    Button("Use for New Agents", action: makePreferred).controlSize(.small)
-                }
-                Button(email == nil ? "Sign In" : "Sign In Again", action: signIn).controlSize(.small)
-                if let remove {
-                    Button(role: .destructive, action: remove) { Image(systemName: "minus.circle") }
-                        .buttonStyle(.borderless)
-                        .help("Remove from Kuronami (its folder and sign-in stay on disk)")
+                Text(email ?? "Not signed in")
+                    .font(Typeface.callout)
+                    .foregroundStyle(email == nil ? Palette.attention : Color.secondary)
+                // Known once an agent on this account has finished a turn.
+                if let limits {
+                    UsageMeter(limits: limits)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            Spacer()
+            if !isPreferred {
+                Button("Use for New Agents", action: makePreferred).controlSize(.small)
+            }
+            Button(email == nil ? "Sign In" : "Sign In Again", action: signIn).controlSize(.small)
+            if let remove {
+                Button(role: .destructive, action: remove) { Image(systemName: "minus.circle") }
+                    .buttonStyle(.borderless)
+                    .help("Remove from Kuronami (its folder and sign-in stay on disk)")
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        // The sign-in changes when a login terminal finishes, which happens in another window:
+        // re-read it when a window becomes key instead of polling the file.
+        .onAppear { email = AccountStore.signedInEmail(account) }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            email = AccountStore.signedInEmail(account)
+        }
+        .onReceive(limitsPublisher) { limits = $0["\(account.kind.rawValue)/\(account.id)"] }
+    }
+
+    private var limitsPublisher: AnyPublisher<[String: RateLimits], Never> {
+        TerminalSessionFactory.store?.$accountLimits.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()
     }
 }
 

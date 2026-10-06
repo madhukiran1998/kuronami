@@ -39,7 +39,6 @@ enum MainMenu {
         let channels = item("Deliver Messages via Claude Channels", #selector(AppDelegate.toggleChannels(_:)), target: target)
         channels.state = SessionStore.channelsEnabled ? .on : .off
         menu.addItem(channels)
-        menu.addItem(item("Enable Codex Approvals in Kuronami…", #selector(AppDelegate.enableCodexApprovals(_:)), target: target))
         let outsideChrome = item("Let Agents Use My Chrome", #selector(AppDelegate.toggleOutsideChrome(_:)), target: target)
         outsideChrome.state = AgentBrowser.agentsMayUseOutsideChrome ? .on : .off
         outsideChrome.toolTip = "Off: agents browse only in Kuronami's browsers. On: Claude agents may also use your own Chrome through Claude in Chrome."
@@ -95,8 +94,18 @@ enum MainMenu {
 
     private static func viewMenu(_ target: AppDelegate) -> NSMenu {
         let menu = NSMenu(title: "View")
-        menu.addItem(item("Toggle Sidebar", #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control]))
+        menu.addItem(item("Toggle Sidebar", #selector(AppDelegate.toggleSidebarPane(_:)), "s", [.command, .control], target: target))
         menu.addItem(item("Toggle Inspector", #selector(AppDelegate.toggleInspectorPane(_:)), "i", [.command, .option], target: target))
+        menu.addItem(item("Toggle Organizer", #selector(AppDelegate.toggleOrganizer(_:)), "o", [.command, .control], target: target))
+        let theme = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
+        theme.submenu = NSMenu(title: "Theme")
+        for option in WindowTheme.allCases {
+            let entry = item(option.title, #selector(AppDelegate.chooseWindowTheme(_:)), target: target)
+            entry.representedObject = option.rawValue
+            entry.state = option == Theme.window ? .on : .off
+            theme.submenu?.addItem(entry)
+        }
+        menu.addItem(theme)
         menu.addItem(.separator())
         menu.addItem(item("Focus", #selector(AppDelegate.layoutFocus(_:)), "1", [.command, .option], target: target))
         menu.addItem(item("Split", #selector(AppDelegate.layoutSplit(_:)), "2", [.command, .option], target: target))

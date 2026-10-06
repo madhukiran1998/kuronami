@@ -59,7 +59,8 @@ private func reduceClaudeHook(_ state: AgentState, name: String, notificationTyp
         if isPrompt && !isIdleReminder { return .needsInput(message ?? "Waiting for your approval") }
         if isIdleReminder { return state.needsAttention || state == .working ? state : .idle }
         return state
-    case "Stop":
+    case "Stop", "Interrupt":
+        // Codex sends Interrupt when the user stops a turn (Esc); Claude sends nothing then.
         return .idle
     case "StopFailure":
         return .failed(message ?? "Turn ended with an API error")

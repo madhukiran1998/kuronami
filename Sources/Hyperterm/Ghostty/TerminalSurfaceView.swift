@@ -3,6 +3,7 @@
 
 import AppKit
 import Carbon
+import CoreImage
 import GhosttyKit
 
 /// What the host learns from a terminal surface. Implemented by `TerminalSession`.
@@ -21,6 +22,10 @@ protocol TerminalSurfaceEvents: AnyObject {
     func surfaceUserSubmitted()
     func surfaceSearch(total: Int?, selected: Int?, start: Bool)
     func surfaceUserEdited(clearsDraft: Bool)
+    /// The user typed @@: pick a session to name.
+    func surfaceMentionRequested()
+    /// True when the host takes this keystroke instead of the program (a sleeping agent).
+    func surfaceInterceptsKey(_ event: NSEvent) -> Bool
 }
 
 struct SurfaceLaunch {
@@ -43,6 +48,8 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     private var markedText = NSMutableAttributedString()
     private var keyTextAccumulator: [String]?
     private var lastPerformKeyEvent: TimeInterval?
+    /// The last key typed was a plain @, so another one opens the session picker.
+    private var lastKeyWasAt = false
     private var focused = false
     private var pointerStyle: NSCursor = .iBeam
     private var trackingArea: NSTrackingArea?
@@ -53,6 +60,8 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { false }
+    /// Tiles reach under the titlebar band; a press there selects text, it doesn't move the window.
+    override var mouseDownCanMoveWindow: Bool { false }
 
     init(launch: SurfaceLaunch) {
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
@@ -120,6 +129,42 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         return ghostty_surface_process_exited(surface)
     }
 
+    // MARK: - Frozen frame
+
+    /// The last frame drawn, held over the terminal while the program behind it is gone (a
+    /// sleeping agent), so a full-screen TUI's exit doesn't take its screen with it.
+    private var frozenFrame: NSImageView?
+
+    /// Holds the current frame on screen. False when there is no drawn frame to hold.
+    @discardableResult
+    func freezeFrame() -> Bool {
+        guard frozenFrame == nil, let image = currentFrame() else { return frozenFrame != nil }
+        let view = PassthroughImageView(image: image)
+        view.imageScaling = .scaleNone
+        view.imageAlignment = .alignTopLeft
+        view.frame = bounds
+        view.autoresizingMask = [.width, .height]
+        addSubview(view)
+        frozenFrame = view
+        return true
+    }
+
+    func thawFrame() {
+        frozenFrame?.removeFromSuperview()
+        frozenFrame = nil
+    }
+
+    /// libghostty presents each frame as an IOSurface in its layer's contents.
+    private func currentFrame() -> NSImage? {
+        let layers = [layer].compactMap { $0 } + (layer?.sublayers ?? [])
+        guard let contents = layers.lazy.compactMap({ $0.contents as CFTypeRef? }).first(where: {
+            CFGetTypeID($0) == IOSurfaceGetTypeID()
+        }) else { return nil }
+        let image = CIImage(ioSurface: unsafeBitCast(contents, to: IOSurfaceRef.self))
+        guard let cgImage = CIContext().createCGImage(image, from: image.extent) else { return nil }
+        return NSImage(cgImage: cgImage, size: bounds.size)
+    }
+
     // MARK: - Host-driven input
 
     /// Inserts text as a paste (bracketed when the program enabled it).
@@ -176,31 +221,36 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     /// The visible rows only: cheap enough to poll for previews.
     func readViewport() -> String {
-        guard let surface else { return "" }
-        var text = ghostty_text_s()
-        let selection = ghostty_selection_s(
-            top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
-            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
-            rectangle: false)
-        guard ghostty_surface_read_text(surface, selection, &text) else { return "" }
-        defer { ghostty_surface_free_text(surface, &text) }
-        return String(cString: text.text)
+        read(GHOSTTY_POINT_VIEWPORT) ?? ""
     }
 
     /// Returns the last `lines` lines of the screen including scrollback.
     func readText(lastLines lines: Int) -> String {
-        guard let surface else { return "" }
+        let count = max(1, lines)
+        // The active area is the bottom screenful, so most reads never copy the scrollback. Its
+        // first line may be the tail of a row wrapped from above, so it answers only when it
+        // holds more than `count` lines.
+        let active = Self.lines(read(GHOSTTY_POINT_ACTIVE) ?? "")
+        if active.count > count { return active.suffix(count).joined(separator: "\n") }
+        return Self.lines(read(GHOSTTY_POINT_SCREEN) ?? "").suffix(count).joined(separator: "\n")
+    }
+
+    /// Lines without the blank ones at the bottom.
+    private static func lines(_ text: String) -> [Substring] {
+        Array(text.split(separator: "\n", omittingEmptySubsequences: false)
+            .reversed().drop(while: { $0.trimmingCharacters(in: .whitespaces).isEmpty }).reversed())
+    }
+
+    private func read(_ tag: ghostty_point_tag_e) -> String? {
+        guard let surface else { return nil }
         var text = ghostty_text_s()
         let selection = ghostty_selection_s(
-            top_left: ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
-            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+            top_left: ghostty_point_s(tag: tag, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+            bottom_right: ghostty_point_s(tag: tag, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
             rectangle: false)
-        guard ghostty_surface_read_text(surface, selection, &text) else { return "" }
+        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
         defer { ghostty_surface_free_text(surface, &text) }
-        let all = String(cString: text.text)
-        let trimmed = all.split(separator: "\n", omittingEmptySubsequences: false)
-            .reversed().drop(while: { $0.trimmingCharacters(in: .whitespaces).isEmpty }).reversed()
-        return trimmed.suffix(max(1, lines)).joined(separator: "\n")
+        return String(cString: text.text)
     }
 
     func performBinding(_ action: String) {
@@ -415,6 +465,17 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     override func keyDown(with event: NSEvent) {
         guard let surface else {
             interpretKeyEvents([event])
+            return
+        }
+        if events?.surfaceInterceptsKey(event) == true { return }
+        // @@ opens the session picker. The first @ already reached the program; erasing it also
+        // closes Claude Code's file picker that it opened.
+        let typedAt = event.characters == "@" && markedText.length == 0
+            && event.modifierFlags.isDisjoint(with: [.command, .control, .option])
+        defer { lastKeyWasAt = typedAt && !lastKeyWasAt }
+        if typedAt && lastKeyWasAt {
+            _ = pressKey(named: "backspace")
+            events?.surfaceMentionRequested()
             return
         }
         let translationEvent = GhosttyInput.translationEvent(for: event, surface: surface)
@@ -655,6 +716,11 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
         return false
     }
+}
+
+/// Clicks fall through to the terminal, so focusing a frozen tile still works.
+private final class PassthroughImageView: NSImageView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 private func withOptionalCString<T>(_ value: String?, _ body: (UnsafePointer<CChar>?) -> T) -> T {

@@ -13,11 +13,29 @@ final class SessionStore: ObservableObject {
     var onSurfaceChange: ((TerminalSession) -> Void)?
     /// Called whenever the visible set, layout, or focused session changes.
     var onArrangementChange: (() -> Void)?
+    /// The organizer set the grid's tiles; the canvas adopts the shape as if the user had.
+    var onArrangeTiles: ((LayoutNode) -> Void)?
+    /// The organizer is between being asked for and its session existing; one start at a time.
+    var organizerStarting = false
+    /// Something asked for the organizer (e.g. the switcher); the window opens its panel.
+    var onShowOrganizer: (() -> Void)?
+    /// A detached session was chosen; the window brings its own window forward.
+    var onShowDetached: ((TerminalSession) -> Void)?
+    /// Pop a tile out into its own window, or put it back in the canvas (the organizer asks).
+    var onDetach: ((TerminalSession) -> Void)?
+    var onReattach: ((TerminalSession) -> Void)?
+    /// Terminals the organizer waits on, each with the note it left for when that one finishes.
+    var organizerWatches: [UUID: String] = [:]
+    var organizerDigest = OrganizerDigest()
+    /// What the organizer opened in the last few seconds (see showOpenedByOrganizer).
+    var organizerOpened: [(id: UUID, at: Date)] = []
+    var overlapWatch = OverlapWatch()
     /// Called when a session's status changes. It can change which tiles show (grid hides exited
     /// sessions) and their chrome, but must not pull keyboard focus away from where the user is.
     var onStatusChange: (() -> Void)?
     var onRemove: ((TerminalSession) -> Void)?
     var onSearchUpdate: ((TerminalSession, Int?, Int?, Bool) -> Void)?
+    var onMentionRequest: ((TerminalSession) -> Void)?
 
     /// Most recently selected first; split view shows the top two.
     private var recent: [UUID] = []
@@ -108,6 +126,8 @@ final class SessionStore: ObservableObject {
     private var lastOutline: [SessionOutline] = []
     private var persistWork: DispatchWorkItem?
     let notifier = AttentionNotifier()
+    /// Previews and tests post no banners.
+    private(set) var notifiesUser = true
 
     init() {}
 
@@ -116,6 +136,7 @@ final class SessionStore: ObservableObject {
     init(previewSessions: [TerminalSession], previewLayout: LayoutMode = .grid) {
         sessions = previewSessions
         layout = previewLayout
+        notifiesUser = false
         tileOrder = []
         selectedID = previewSessions.first?.id
         recent = previewSessions.map(\.id)
@@ -132,16 +153,17 @@ final class SessionStore: ObservableObject {
         case .focus:
             return selectedID.map { [$0] } ?? []
         case .split:
-            let minimized = Set(sessions.filter(\.isMinimized).map(\.id))
-            let pair = Set(recent.filter { !minimized.contains($0) }.prefix(2))
+            let hidden = Set(sessions.filter { $0.isMinimized || $0.isOrganizer || $0.isDetached }.map(\.id))
+            let pair = Set(recent.filter { !hidden.contains($0) }.prefix(2))
             return arranged(sessions.filter { pair.contains($0.id) }).map(\.id)
         case .grid:
             // Servers live in the strip below the canvas unless pinned or selected; minimized
-            // sessions wait on the shelf.
+            // sessions wait on the shelf. The organizer answers in the sidebar's box instead, and
+            // detached sessions in their own windows.
             return arranged(sessions.filter { session in
                 (session.kind != .server || session.pinnedToGrid || session.id == selectedID)
                     && (!isExited(session) || session.id == selectedID)
-                    && !session.isMinimized
+                    && !session.isMinimized && !session.isOrganizer && !session.isDetached
             }).map(\.id)
         }
     }
@@ -231,7 +253,7 @@ final class SessionStore: ObservableObject {
     var projects: [(name: String, agents: [TerminalSession])] {
         var order: [String] = []
         var groups: [String: [TerminalSession]] = [:]
-        for session in sessions where session.kind.isAgent {
+        for session in sessions where session.kind.isAgent && !session.isOrganizer {
             let name = session.git?.project ?? "Scratch"
             if groups[name] == nil { order.append(name) }
             groups[name, default: []].append(session)
@@ -246,8 +268,9 @@ final class SessionStore: ObservableObject {
         sessions.filter { $0.kind == .browser && $0.spec.owner == agent.id }
     }
 
+    /// The organizer has no sidebar row, so its browsers are loose too.
     var looseBrowsers: [TerminalSession] {
-        let agents = Set(sessions.filter(\.kind.isAgent).map(\.id))
+        let agents = Set(sessions.filter { $0.kind.isAgent && !$0.isOrganizer }.map(\.id))
         return sessions.filter { $0.kind == .browser && !($0.spec.owner.map(agents.contains) ?? false) }
     }
 
@@ -276,7 +299,7 @@ final class SessionStore: ObservableObject {
 
     @discardableResult
     func create(_ spec: LaunchSpec, resume: Bool = false, select: Bool = true, worktree: Bool = false, task: String? = nil) -> TerminalSession {
-        let spec = labeled(spec, task: task)
+        let spec = labeled(spec)
         let prepared = SessionLaunchPreparation.synchronous(spec, resume: resume, worktree: worktree)
         return finishLaunch(prepared, resume: resume, select: select, task: task)
     }
@@ -286,7 +309,7 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func launch(_ spec: LaunchSpec, resume: Bool = false, select: Bool = true, worktree: Bool = false,
                 isolateIfPossible: Bool = false, task: String? = nil) async -> TerminalSession {
-        var spec = labeled(spec, task: task)
+        var spec = labeled(spec)
         spec.label = launchLabels.reserve(spec.label, for: spec.id, occupied: Set(sessions.map(\.label)))
         launchingCount += 1
         defer {
@@ -298,9 +321,15 @@ final class SessionStore: ObservableObject {
         return finishLaunch(prepared, resume: resume, select: select, task: task)
     }
 
-    private func labeled(_ original: LaunchSpec, task: String?) -> LaunchSpec {
+    private func labeled(_ original: LaunchSpec) -> LaunchSpec {
         var spec = original
-        if spec.label.isEmpty, let task, !task.isEmpty { spec.label = labelFromTask(task) }
+        // Unnamed agents, shells and browsers get a short name (alpha, bravo…) that stays put, so
+        // it's quick to refer to; the task shows as the summary instead.
+        if spec.label.isEmpty, spec.kind != .server {
+            spec.label = nextPhoneticLabel(excluding: spec.id)
+            spec.labelSource = .user
+            return spec
+        }
         spec.label = uniqueLabel(spec.label.isEmpty ? defaultLabel(for: spec) : spec.label, excluding: spec.id)
         return spec
     }
@@ -315,8 +344,18 @@ final class SessionStore: ObservableObject {
             let preferred = AccountStore.shared.preferredID(for: spec.kind)
             if preferred != AgentAccount.defaultID { spec.account = preferred }
         }
+        if spec.kind.isAgent, spec.worktreeBranch != nil || spec.worktreeName != nil {
+            spec.portSlot = PortSlots.assign(current: spec.portSlot, taken: Set(sessions.compactMap(\.spec.portSlot)))
+        }
         if spec.kind.isAgent, spec.port == nil, let config = prepared.config {
-            spec.port = Ports.allocate(config: config, taken: Set(sessions.compactMap(\.spec.port)))
+            // Other agents' port ranges are theirs, so a dev server port never lands in one.
+            let ranges = sessions.compactMap(\.spec.portSlot).flatMap(PortSlots.range)
+            spec.port = Ports.allocate(config: config, taken: Set(sessions.compactMap(\.spec.port) + ranges))
+        }
+        // The first task is what the session was for; a resumed one keeps it.
+        if let task, !task.isEmpty, spec.memory?.task == nil {
+            spec.memory = spec.memory ?? SessionMemory()
+            spec.memory?.task = sanitizeMessage(task)
         }
         let session = TerminalSession(spec: spec, resume: resume, task: task.map(sanitizeMessage))
         if let task, !task.isEmpty { session.record(.prompt, task) }
@@ -329,9 +368,14 @@ final class SessionStore: ObservableObject {
         if select { self.select(session) }
         persist()
         if !resume { startDevServerIfConfigured(for: session, config: prepared.config) } else { loadTurns(session) }
-        // Codex has no prompt hook, and an agent started with a task never rests before its first
-        // turn, so that turn's start is recorded here.
-        if spec.kind == .codex, !resume, let task, !task.isEmpty { checkpoint(session, phase: .start, prompt: task) }
+        // Claude copies `.worktreeinclude` files into its own worktrees.
+        if !resume, spec.kind != .claude, spec.worktreeBranch != nil { warmWorktree(session) }
+        // Without a prompt hook (Codex), an agent started with a task never rests before its
+        // first turn, so that turn's start is recorded here.
+        if spec.kind.adapter?.reportsPrompts == false, !resume, let task, !task.isEmpty {
+            checkpoint(session, phase: .start, prompt: task)
+            session.turnOpenedByGuess = true
+        }
         return session
     }
 
@@ -363,17 +407,35 @@ final class SessionStore: ObservableObject {
         if session.spec.labelSource == .user || session.spec.labelSource == nil {
             reservedLabels[session.label] = Date()
         }
+        // Its events stop with the process, so a watch or handoff ends here, told to the organizer.
+        let organizerHears = organizer.map { $0.id != session.id && !$0.isExitedProcess } ?? false
+        if organizerWatches.removeValue(forKey: session.id) != nil, organizerHears {
+            addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .exited))
+        }
+        if session.delegation != nil {
+            session.delegation = nil
+            if organizerHears { addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .stoppedHandling("it was closed"))) }
+        }
         session.terminate()
         sessions.removeAll { $0.id == session.id }
+        forgetOverlaps(with: session)
         childCancellables[session.id] = nil
         recent.removeAll { $0 == session.id }
         onRemove?(session)
-        if selectedID == session.id { select(sessions.last) }
+        // Next in view, so closing a tile never brings back one the shelf or a window holds.
+        if selectedID == session.id {
+            select(visibleIDs.compactMap { id in sessions.first { $0.id == id } }.last
+                ?? sessions.last { !$0.isOrganizer && !$0.isMinimized && !$0.isDetached })
+        }
         persist()
         notifier.updateBadge(count: attentionCount)
     }
 
     func select(_ session: TerminalSession?) {
+        // The organizer has no tile; choosing it opens its panel.
+        if let session, session.isOrganizer { onShowOrganizer?(); return }
+        // A detached session is chosen by bringing its window forward.
+        if let session, session.isDetached { onShowDetached?(session) }
         if let previous = selected { previous.lastViewedAt = Date() }
         // Choosing a minimized session is asking for it back.
         if let session, session.isMinimized {
@@ -435,8 +497,11 @@ final class SessionStore: ObservableObject {
     func find(_ target: String) -> TerminalSession? {
         if let uuid = UUID(uuidString: target) { return sessions.first { $0.id == uuid } }
         let label = normalizeLabel(target)
+        // A single letter is short for its default name: "b" is @bravo.
+        let spelled = label.count == 1 ? phoneticLabels.first { $0.hasPrefix(label) } : nil
         return sessions.first { $0.label == label }
             ?? sessions.first { ($0.spec.previousLabels ?? []).contains(label) }
+            ?? spelled.flatMap { name in sessions.first { $0.label == name } }
     }
 
     func session(forEnvironmentID id: String?) -> TerminalSession? {
@@ -476,9 +541,14 @@ final class SessionStore: ObservableObject {
     func sessionStateChanged(_ session: TerminalSession, from previous: AgentState) {
         notifier.updateBadge(count: attentionCount)
         onStatusChange?()
+        reportToOrganizer(session, from: previous)
+        delegationStateChanged(session, from: previous)
+        watchOverlaps(session, from: previous)
         let isVisible = visibleIDs.contains(session.id) && NSApp.isActive
         switch session.state {
         case .needsInput(let reason):
+            // Handed to the organizer: it hears instead, and the user only if it doesn't answer.
+            if organizerTakesWait(session, reason: reason) { break }
             if !isVisible { session.unread = true }
             notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: !isVisible)
         case .idle where previous == .working && session.kind.isAgent && raceFinished(session):
@@ -527,7 +597,11 @@ final class SessionStore: ObservableObject {
 
     // MARK: - Persistence
 
-    private var stateFile: URL { ControlPaths.supportDirectory.appendingPathComponent("sessions.json") }
+    private var stateFile: URL { Self.stateFileURL }
+    private static var stateFileURL: URL { ControlPaths.supportDirectory.appendingPathComponent("sessions.json") }
+
+    /// True when an earlier run left session state: an upgrade rather than a fresh install.
+    static var hasSavedState: Bool { FileManager.default.fileExists(atPath: stateFileURL.path) }
 
     func persist() {
         persistWork?.cancel()
@@ -553,9 +627,16 @@ final class SessionStore: ObservableObject {
         specs.map { spec -> LaunchSpec in
             var spec = spec
             if spec.summary == spec.label { spec.summary = nil }
+            // An organizer from before it had its own folder starts fresh there; its notes file
+            // carries what it knew.
+            if spec.organizer == true, spec.cwd != Self.organizerFolder {
+                spec.cwd = Self.organizerFolder
+                spec.agentSessionId = nil
+            }
             return spec
         }.forEach { create($0, resume: true, select: false) }
-        select(sessions.first)
+        // Never the organizer: selecting it opens its panel instead.
+        select(sessions.first { !$0.isOrganizer })
         return true
     }
 
@@ -565,10 +646,17 @@ final class SessionStore: ObservableObject {
         let folder = URL(fileURLWithPath: expandTilde(spec.cwd)).lastPathComponent
         switch spec.kind {
         case .server: return normalizeLabel(folder + "-server")
-        case .browser: return "web"
         case .shell: return normalizeLabel(folder)
         default: return normalizeLabel(folder)
         }
+    }
+
+    /// The first free name in alpha…zulu; after all 26, alpha-2 and so on.
+    func nextPhoneticLabel(excluding id: UUID? = nil) -> String {
+        let taken = Set(sessions.filter { $0.id != id }.map(\.label))
+            .union(launchLabels.occupied(excluding: id ?? UUID()))
+        if let free = phoneticLabels.first(where: { !taken.contains($0) }) { return free }
+        return SessionLabelReservations.available(phoneticLabels[0], taken: taken)
     }
 
     /// Labels are addresses, so they must be unique: api, api-2, api-3.

@@ -8,6 +8,11 @@ struct ProcessSnapshot: Equatable {
     var programs: Set<String> = []
     var claudeStatus: String?
     var claudeSessionId: String?
+    /// Every process in the session's tree, for the steward's resource sampling.
+    var pids: Set<pid_t> = []
+    /// Shells started by a program rather than by the terminal: an agent's background Bash tasks
+    /// and Monitor watchers, which quitting the agent would end.
+    var backgroundShells = 0
 }
 
 /// Who is on the other end of a control-socket connection, decided from kernel facts only.
@@ -28,6 +33,8 @@ enum CallerIdentity: Sendable, Equatable {
 /// Every process a surface spawns inherits HT_SESSION_ID, so the environment of a session's
 /// process tree identifies it without tty or title heuristics.
 final class ProcessInspector: @unchecked Sendable {
+    static let shared = ProcessInspector()
+
     private let queue = DispatchQueue(label: "dev.hyperterm.process-inspector", qos: .utility)
     private var timer: DispatchSourceTimer?
     private let lock = NSLock()
@@ -35,6 +42,14 @@ final class ProcessInspector: @unchecked Sendable {
     private var argvCache: [ArgvKey: [String]] = [:]
     /// Parsed registry files keyed by pid, reused while the file's modification date is unchanged.
     private var registryCache: [pid_t: (modified: Date, entry: RegistryEntry?)] = [:]
+    /// Every process each session started that is still running, including jobs that have left
+    /// the session's tree. Only touched on `queue`.
+    private var recorded: [String: [TrackedProcess]] = [:]
+    /// Each session's terminal devices. Jobs that leave its tree (nohup, a subshell's `&`) keep
+    /// the terminal, and built-in programs like /bin/sleep hide their environment, so this is
+    /// how such orphans are still found. Only touched on `queue`.
+    private var sessionTTYs: [String: Set<dev_t>] = [:]
+    private var ledgerWritten: Set<TrackedProcess> = []
     private let shells: Set<String> = ["login", "zsh", "bash", "sh", "fish", "-zsh", "-bash", "-sh", "-fish", "nu"]
     private let responsibleFor: (@convention(c) (pid_t) -> pid_t)? = {
         guard let symbol = dlsym(dlopen(nil, RTLD_NOW), "responsibility_get_pid_responsible_for_pid") else { return nil }
@@ -117,6 +132,7 @@ final class ProcessInspector: @unchecked Sendable {
         let trees = sessionTrees(children: children)
         pruneArgvCache(alive: Set(processes.map { ArgvKey(pid: $0.pid, start: $0.startSeconds) }))
         let registry = claudeRegistry(pids: Set(trees.values.joined().map(\.pid)))
+        record(trees, processes: processes, children: children)
 
         var result: [String: ProcessSnapshot] = [:]
         for (sessionID, tree) in trees {
@@ -132,6 +148,8 @@ final class ProcessInspector: @unchecked Sendable {
                 if let program = arguments(of: entry)?.first { snapshot.programs.insert(program.lowercased()) }
             }
             snapshot.ports = ports.sorted()
+            snapshot.pids = pids
+            snapshot.backgroundShells = Self.backgroundShellCount(in: tree)
             snapshot.foreground = foregroundCommand(tree)
             if let entry = registry.first(where: { pids.contains($0.pid) }) {
                 snapshot.claudeStatus = entry.status
@@ -149,6 +167,10 @@ final class ProcessInspector: @unchecked Sendable {
         let ppid: pid_t
         let name: String
         let startSeconds: Int
+        /// Microseconds since the epoch, as `SessionReaper.facts` reports it.
+        let start: UInt64
+        /// The controlling terminal, or -1 (NODEV) for none.
+        var tty: dev_t = -1
     }
 
     private func listProcesses() -> [ProcessEntry] {
@@ -165,8 +187,11 @@ final class ProcessInspector: @unchecked Sendable {
             let name = withUnsafeBytes(of: &info.kp_proc.p_comm) { raw in
                 String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
             }
+            let start = proc.kp_proc.p_starttime
             return ProcessEntry(pid: proc.kp_proc.p_pid, ppid: proc.kp_eproc.e_ppid, name: name,
-                                startSeconds: Int(proc.kp_proc.p_starttime.tv_sec))
+                                startSeconds: Int(start.tv_sec),
+                                start: UInt64(start.tv_sec) * 1_000_000 + UInt64(start.tv_usec),
+                                tty: proc.kp_eproc.e_tdev)
         }
     }
 
@@ -205,6 +230,27 @@ final class ProcessInspector: @unchecked Sendable {
         return trees
     }
 
+    private static let terminalChain: Set<String> = ["login", "zsh", "bash", "sh", "fish", "dash", "tcsh"]
+    private static let shells: Set<String> = ["zsh", "bash", "sh", "fish", "dash", "tcsh"]
+
+    /// Shells with something other than the terminal's own login and shell chain above them in
+    /// the tree, such as the agent CLI. The terminal's login shell, and a wrapper script that
+    /// execs the CLI, have only that chain above them, so they don't count.
+    static func backgroundShellCount(in tree: [ProcessEntry]) -> Int {
+        let byPID = Dictionary(tree.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+        return tree.filter { entry in
+            guard shells.contains(entry.name) else { return false }
+            var parent = byPID[entry.ppid]
+            var hops = 0
+            while let current = parent, hops < 64 {
+                if !terminalChain.contains(current.name) { return true }
+                parent = byPID[current.ppid]
+                hops += 1
+            }
+            return false
+        }.count
+    }
+
     private func descendants(of pid: pid_t, children: [pid_t: [ProcessEntry]]) -> [ProcessEntry] {
         var result: [ProcessEntry] = []
         var stack = children[pid] ?? []
@@ -225,6 +271,82 @@ final class ProcessInspector: @unchecked Sendable {
         return ([program] + rest).joined(separator: " ")
     }
 
+    // MARK: - Session trees for stopping
+
+    /// Removes a session from the record and returns everything it started that still runs:
+    /// what earlier polls saw, a fresh walk of its terminal, and orphans carrying its id. Call
+    /// before the surface is destroyed, while the terminal's tree is still attached.
+    func takeProcesses(ofSession id: String) -> [TrackedProcess] {
+        queue.sync {
+            let processes = listProcesses()
+            let children = Dictionary(grouping: processes, by: \.ppid)
+            let byPID = Dictionary(processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+            let fresh = sessionTrees(children: children)[id] ?? []
+            // Double-forked daemons are launchd's children, but macOS still holds Kuronami
+            // responsible for them and they keep the session's environment.
+            let mine = getpid()
+            sessionTTYs[id, default: []].formUnion(fresh.map(\.tty).filter { $0 != -1 })
+            let orphans = processes.filter { entry in
+                entry.ppid == 1 && responsibleFor?(entry.pid) == mine
+                    && processEnvironment(entry.pid)?["HT_SESSION_ID"] == id
+            } + ttyOrphans(of: id, in: processes, mine: mine)
+            sessionTTYs[id] = nil
+            let previous = recorded.removeValue(forKey: id) ?? []
+            return Self.selectTree(session: id, seeds: (fresh + orphans).map(\.pid), recorded: previous,
+                                   byPID: byPID, children: children, mine: mine)
+        }
+    }
+
+    /// The seeds, recorded processes that are still the same process, and everything below
+    /// them. Never Kuronami or its direct children (terminal roots, Chromium helpers), and
+    /// never below them.
+    static func selectTree(session: String, seeds: [pid_t], recorded: [TrackedProcess], byPID: [pid_t: ProcessEntry],
+                           children: [pid_t: [ProcessEntry]], mine: pid_t) -> [TrackedProcess] {
+        var stack = seeds.compactMap { byPID[$0] }
+            + recorded.compactMap { process in byPID[process.pid].flatMap { $0.start == process.start ? $0 : nil } }
+        var seen = Set<pid_t>()
+        var result: [TrackedProcess] = []
+        while let next = stack.popLast() {
+            guard next.pid > 1, next.pid != mine, next.ppid != mine, seen.insert(next.pid).inserted else { continue }
+            result.append(TrackedProcess(pid: next.pid, start: next.start, session: session))
+            stack.append(contentsOf: children[next.pid] ?? [])
+        }
+        return result
+    }
+
+    /// Processes launchd adopted that still hold one of the session's terminals and that macOS
+    /// still holds Kuronami responsible for.
+    private func ttyOrphans(of session: String, in processes: [ProcessEntry], mine: pid_t) -> [ProcessEntry] {
+        guard let ttys = sessionTTYs[session], !ttys.isEmpty else { return [] }
+        return processes.filter { $0.ppid == 1 && ttys.contains($0.tty) && responsibleFor?($0.pid) == mine }
+    }
+
+    /// Keeps each session's processes, including ones that left its tree, and rewrites the
+    /// ledger only when they changed. Runs on `queue`.
+    private func record(_ trees: [String: [ProcessEntry]], processes: [ProcessEntry], children: [pid_t: [ProcessEntry]]) {
+        let byPID = Dictionary(processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+        let mine = getpid()
+        var next: [String: [TrackedProcess]] = [:]
+        for (session, tree) in trees {
+            sessionTTYs[session, default: []].formUnion(tree.map(\.tty).filter { $0 != -1 })
+        }
+        let sessions = Set(trees.keys).union(recorded.keys)
+        sessionTTYs = sessionTTYs.filter { sessions.contains($0.key) }
+        for session in sessions {
+            let orphans = ttyOrphans(of: session, in: processes, mine: mine)
+            let tree = Self.selectTree(session: session, seeds: ((trees[session] ?? []) + orphans).map(\.pid),
+                                       recorded: recorded[session] ?? [], byPID: byPID, children: children, mine: mine)
+            if !tree.isEmpty { next[session] = tree }
+        }
+        recorded = next
+        let all = Set(next.values.joined())
+        guard all != ledgerWritten, let owner = SessionReaper.facts(mine) else { return }
+        ledgerWritten = all
+        let ledger = ProcessLedger(ownerPID: mine, ownerStart: owner.start, processes: Array(all))
+        guard let data = try? JSONEncoder().encode(ledger) else { return }
+        try? data.write(to: ProcessLedger.url, options: .atomic)
+    }
+
     // MARK: - KERN_PROCARGS2
 
     /// argv rarely changes after exec, so it's cached per (pid, start time).
@@ -239,6 +361,11 @@ final class ProcessInspector: @unchecked Sendable {
         argvCache[key] = argv
         lock.unlock()
         return argv
+    }
+
+    /// A process's argv, read fresh.
+    func arguments(_ pid: pid_t) -> [String]? {
+        rawArguments(pid, includeEnvironment: false)?.argv
     }
 
     private func pruneArgvCache(alive: Set<ArgvKey>) {

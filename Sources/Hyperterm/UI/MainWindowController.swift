@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import GhosttyKit
 import SwiftUI
 
 @MainActor
@@ -7,40 +8,68 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let store: SessionStore
     private let terminalArea = TerminalAreaView()
     private var sheetWindow: NSWindow?
-    private lazy var toolbarController = ToolbarController(store: store, actions: actions)
+    private lazy var organizerDock = OrganizerDock(store: store)
+    private let detachedTiles = DetachedTiles()
+    private lazy var projectActionsMenu = ProjectActionsMenu(store: store)
 
+    private var sidebarItem: NSSplitViewItem?
     private var inspectorItem: NSSplitViewItem?
+    /// The sidebar's and inspector's backings, which carry the theme's pane fill.
+    private var paneBackings: [NSView] = []
+    private let canvas = InkCanvas()
+    private var terminalTop: NSLayoutConstraint?
+    private var canvasBarHeight: NSLayoutConstraint?
+    private var canvasSidebarButton: NSView?
+    private var canvasBandShown: Bool?
     private var subscriptions: Set<AnyCancellable> = []
 
     init(store: SessionStore) {
         self.store = store
-        let window = NSWindow(
+        let window = KuronamiWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1360, height: 840),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.title = "Kuronami"
-        window.toolbarStyle = .unifiedCompact
-        // Graphite: one opaque surface that terminals float on as rounded panes. Always dark,
-        // and no live blur behind every tile.
-        window.isOpaque = true
-        window.backgroundColor = Ink.floor
+        // No toolbar: its actions live in the sidebar footer, the traffic lights in the sidebar's
+        // top inset, and the panes run to the window's top edge. Always dark; View › Theme picks
+        // the colours and opacity (applyTheme).
         window.appearance = NSAppearance(named: .darkAqua)
         window.titlebarAppearsTransparent = true
-        // The sidebar and inspector already say what's selected; the toolbar stays uncluttered.
         window.titleVisibility = .hidden
         window.minSize = NSSize(width: 780, height: 520)
         window.tabbingMode = .disallowed
         super.init(window: window)
         window.delegate = self
         window.contentViewController = makeSplitController()
-        window.toolbar = toolbarController.toolbar
         // A restored frame can be stale (screen changes); never come back smaller than usable.
         if !window.setFrameUsingName("HypertermMain") || window.frame.height < 500 || window.frame.width < 900 {
             window.setContentSize(NSSize(width: 1360, height: 840))
             window.center()
         }
         window.setFrameAutosaveName("HypertermMain")
+        window.onFullScreenChange = { [weak self] in self?.updateCanvasBand() }
+        updateCanvasBand()
+        applyTheme()
+        NotificationCenter.default.addObserver(forName: .windowThemeChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyTheme() }
+        }
         bindStore()
+        organizerDock.install(in: window)
+    }
+
+    /// View › Theme's colours and opacity, applied in place: nothing is rebuilt, no session restarts.
+    private func applyTheme() {
+        guard let window else { return }
+        let theme = Theme.window
+        window.isOpaque = !theme.isTranslucent
+        window.backgroundColor = theme.windowFill
+        paneBackings.forEach { $0.layer?.backgroundColor = theme.paneFill.cgColor }
+        canvas.applyTheme()
+        terminalArea.applyTheme()
+        // The user's own Ghostty `background-blur`, if they set one; nothing is added on top.
+        if theme.isTranslucent, let app = GhosttyRuntime.shared.app {
+            ghostty_set_window_background_blur(app, Unmanaged.passUnretained(window).toOpaque())
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
@@ -53,37 +82,69 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             restart: { [weak self] in self?.confirmRestart($0) },
             close: { [weak self] in self?.confirmClose($0) },
             review: { [weak self] in self?.showInspector(for: $0) },
-            dispatch: { [weak self] task, kinds, cwd, options in self?.store.dispatch(task, kinds: kinds, cwd: cwd, options: options) },
             showPlan: { [weak self] in self?.showInspector(for: $0, tab: .plan) },
-            pickWinner: { [weak self] in self?.confirmPickWinner($0) })
+            pickWinner: { [weak self] in self?.confirmPickWinner($0) },
+            dispatch: { [weak self] task, kinds, cwd, options in self?.store.dispatch(task, kinds: kinds, cwd: cwd, options: options) },
+            toggleSidebar: { [weak self] in self?.toggleSidebar() },
+            toggleInspector: { [weak self] in self?.toggleInspector() },
+            showProjectActions: { [weak self] in self?.projectActionsMenu.popUp() })
     }
 
     // MARK: - Layout
 
-    /// Native three-pane layout: opaque sidebar, terminals, and an inspector for review,
-    /// activity, and session info.
+    /// Native three-pane layout: sidebar, terminals, and an inspector for review, activity, and
+    /// session info. All three run to the window's top edge.
     private func makeSplitController() -> NSSplitViewController {
         let split = NSSplitViewController()
         // Hosting controllers must not drive the window size from SwiftUI's ideal size.
         let sidebarHost = NSHostingController(rootView: SidebarView(store: store, actions: actions))
         sidebarHost.sizingOptions = []
-        let sidebarItem = NSSplitViewItem(sidebarWithViewController: Self.solid(sidebarHost, color: Ink.deep))
+        // A plain item, not a sidebar-behavior one: that adds the system's behind-window sidebar
+        // material under it, which tints the sidebar apart from the canvas (and costs a live blur).
+        // It's toggled by `toggleSidebar()` rather than NSSplitViewController's.
+        let sidebarItem = NSSplitViewItem(viewController: backed(sidebarHost))
         sidebarItem.minimumThickness = 280
         sidebarItem.maximumThickness = 460
         sidebarItem.preferredThicknessFraction = 0.24
         sidebarItem.canCollapse = true
-        sidebarItem.allowsFullHeightLayout = true
+        // Like a sidebar: the canvas, not the sidebar, takes up a window resize.
+        sidebarItem.holdingPriority = NSLayoutConstraint.Priority(260)
         split.addSplitViewItem(sidebarItem)
+        self.sidebarItem = sidebarItem
 
         let detail = NSViewController()
-        let container = InkCanvas()
+        let container = canvas
         terminalArea.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(terminalArea)
+        // The canvas's top edge drags the window: a gap-high strip over the space above the tiles,
+        // or the whole titlebar band while the sidebar is hidden (updateCanvasBand).
+        let bar = WindowDragView()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(bar)
+        // It sits in the titlebar band, so it ignores the titlebar's safe area.
+        let button = NSHostingView(rootView: CanvasBandControls(store: store) { [weak self] in
+            self?.toggleSidebar()
+        }.ignoresSafeArea())
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.isHidden = true
+        container.addSubview(button)
+        canvasSidebarButton = button
+        let top = terminalArea.topAnchor.constraint(equalTo: container.topAnchor)
+        let barHeight = bar.heightAnchor.constraint(equalToConstant: LayoutTree.gap)
+        terminalTop = top
+        canvasBarHeight = barHeight
         NSLayoutConstraint.activate([
-            terminalArea.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
+            top,
             terminalArea.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             terminalArea.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             terminalArea.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            bar.topAnchor.constraint(equalTo: container.topAnchor),
+            bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            barHeight,
+            button.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Size.trafficLights),
+            button.centerYAnchor.constraint(equalTo: container.topAnchor, constant: Size.titlebar / 2),
+            button.heightAnchor.constraint(equalToConstant: Size.iconButton),
         ])
         detail.view = container
         let detailItem = NSSplitViewItem(viewController: detail)
@@ -92,7 +153,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         let inspectorHost = NSHostingController(rootView: InspectorView(store: store, actions: actions))
         inspectorHost.sizingOptions = []
-        let inspector = NSSplitViewItem(inspectorWithViewController: Self.solid(inspectorHost, color: Ink.deep))
+        let inspector = NSSplitViewItem(inspectorWithViewController: backed(inspectorHost))
         inspector.minimumThickness = 340
         inspector.maximumThickness = 640
         inspector.canCollapse = true
@@ -102,15 +163,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         split.splitView.autosaveName = "KuronamiWorkspace.v3"
         // The inspector opens on demand (review chip, ⌥⌘R); don't restore it open and empty.
         DispatchQueue.main.async { inspector.isCollapsed = true }
+        NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification, object: split.splitView, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateCanvasBand() }
+        }
         return split
     }
 
-    /// Wraps a view controller's view in a solid backing color.
-    private static func solid(_ child: NSViewController, color: NSColor) -> NSViewController {
+    /// Wraps a view controller's view in a backing that carries the theme's pane fill.
+    private func backed(_ child: NSViewController) -> NSViewController {
         let wrapper = NSViewController()
         let effect = NSView()
         effect.wantsLayer = true
-        effect.layer?.backgroundColor = color.cgColor
+        paneBackings.append(effect)
         wrapper.addChild(child)
         child.view.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(child.view)
@@ -123,6 +187,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         wrapper.view = effect
         return wrapper
     }
+
+    func toggleSidebar() {
+        guard let sidebarItem else { return }
+        if Motion.reduced { sidebarItem.isCollapsed.toggle() }
+        else { sidebarItem.animator().isCollapsed.toggle() }
+    }
+
+    /// With the sidebar hidden the traffic lights sit over the canvas, so the tiles start below a
+    /// titlebar band that holds them and the sidebar's button. Otherwise, and in full screen
+    /// (no traffic lights), the tiles reach the top edge.
+    private func updateCanvasBand() {
+        guard let window = window as? KuronamiWindow, let sidebarItem else { return }
+        let band = sidebarItem.isCollapsed && !window.isFullScreen
+        guard band != canvasBandShown else { return }
+        canvasBandShown = band
+        terminalTop?.constant = band ? Size.titlebar : 0
+        canvasBarHeight?.constant = band ? Size.titlebar : LayoutTree.gap
+        canvasSidebarButton?.isHidden = !band
+    }
+
+    func toggleOrganizer() { organizerDock.toggle() }
 
     func toggleInspector() {
         guard let inspectorItem else { return }
@@ -150,9 +235,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] error in MainActor.assumeIsolated { self?.reportLaunchError(error) } }
             .store(in: &subscriptions)
-        store.onSurfaceChange = { [weak self] session in self?.terminalArea.mount(session) }
-        store.onRemove = { [weak self] session in self?.terminalArea.unmount(session) }
+        // The organizer's terminal lives in its floating panel; every other session gets a tile.
+        // Detached sessions live in their own windows.
+        store.onSurfaceChange = { [weak self] session in
+            if session.isOrganizer { self?.organizerDock.attach(session) }
+            else if session.isDetached { self?.detachedTiles.attachSurface(session) }
+            else { self?.terminalArea.mount(session) }
+        }
+        store.onRemove = { [weak self] session in
+            if session.isOrganizer { self?.organizerDock.detach(session) }
+            else if session.isDetached { self?.detachedTiles.close(session) }
+            else { self?.terminalArea.unmount(session) }
+        }
+        store.onShowOrganizer = { [weak self] in self?.organizerDock.open() }
+        store.onShowDetached = { [weak self] session in self?.detachedTiles.show(session) }
+        store.onDetach = { [weak self] session in self?.detach(session) }
+        store.onReattach = { [weak self] session in self?.reattach(session) }
+        detachedTiles.onReturn = { [weak self] session in self?.reattach(session) }
+        detachedTiles.onFocus = { [weak self] session in
+            guard let self, self.store.selectedID != session.id else { return }
+            self.store.select(session)
+        }
         store.onArrangementChange = { [weak self] in self?.arrange(takeFocus: true) }
+        store.onArrangeTiles = { [weak self] root in self?.terminalArea.setTree(root, for: .grid) }
         store.onStatusChange = { [weak self] in self?.arrange(takeFocus: false) }
         store.confirmHandler = { [weak self] title, message, completion in
             guard let window = self?.window else { completion(false); return }
@@ -173,15 +278,49 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
             self.store.setMinimized(session, true)
         }
+        terminalArea.onDetachTile = { [weak self] id in
+            guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
+            self.detach(session)
+        }
         terminalArea.onCloseTile = { [weak self] id in
             guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
             self.confirmClose(session)
         }
         terminalArea.onReorder = { [weak self] order in self?.store.setTileOrder(order) }
+        store.onMentionRequest = { [weak self] session in self?.showMentionPicker(for: session) }
         store.onSearchUpdate = { [weak self] session, total, selected, start in
-            if start { self?.terminalArea.showSearch(for: session.id) }
-            self?.terminalArea.searchResults(for: session.id, total: total, selected: selected)
+            guard let self else { return }
+            if let tile = self.detachedTiles.tile(for: session.id) {
+                if start { tile.showSearch() }
+                if let total { tile.search.total = total }
+                if let selected { tile.search.selected = selected }
+                return
+            }
+            if start { self.terminalArea.showSearch(for: session.id) }
+            self.terminalArea.searchResults(for: session.id, total: total, selected: selected)
         }
+    }
+
+    // MARK: - Detached tiles
+
+    /// Pops a tile out of the canvas into its own window, opening where the tile was.
+    func detach(_ session: TerminalSession) {
+        guard !session.isDetached, !session.isOrganizer else { return }
+        let frame = terminalArea.screenFrame(of: session.id)
+        session.isDetached = true
+        terminalArea.unmount(session)
+        detachedTiles.open(session, at: frame)
+        arrange(takeFocus: false)
+    }
+
+    /// Puts a detached tile back in the canvas, focused.
+    func reattach(_ session: TerminalSession) {
+        guard session.isDetached else { return }
+        detachedTiles.close(session)
+        session.isDetached = false
+        terminalArea.mount(session)
+        window?.makeKeyAndOrderFront(nil)
+        store.select(session)
     }
 
     private func arrange(takeFocus: Bool) {
@@ -201,10 +340,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // Setting these relayouts the titlebar even when unchanged.
         if window?.title != title { window?.title = title }
         if window?.subtitle != subtitle { window?.subtitle = subtitle }
-        toolbarController.refresh()
+        detachedTiles.refresh()
     }
 
-    func showSearch() { terminalArea.showSearch(for: store.selectedID) }
+    func showSearch() {
+        if let id = store.selectedID, let tile = detachedTiles.tile(for: id) { tile.showSearch() }
+        else { terminalArea.showSearch(for: store.selectedID) }
+    }
 
     func presentWorktreeCleanup() {
         guard let window, sheetWindow == nil else { return }
@@ -241,6 +383,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.addChildWindow(panel, ordered: .above)
         panel.makeKeyAndOrderFront(nil)
         switcher = panel
+    }
+
+    // MARK: - Mention picker
+
+    private var mentionPicker: SwitcherPanel?
+
+    /// Opens under the terminal's cursor; the picked session's name is typed where @@ was.
+    func showMentionPicker(for session: TerminalSession) {
+        mentionPicker?.close()
+        guard let window else { return }
+        let panel = SwitcherPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                                  backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .floating
+        panel.appearance = NSAppearance(named: .darkAqua)
+        let surface = session.surface
+        let close = { [weak panel] in
+            panel?.close()
+            surface.window?.makeFirstResponder(surface)
+        }
+        let view = MentionPickerView(store: store, origin: session,
+                                     pick: { picked in close(); surface.sendText(picked.label + " ") },
+                                     dismiss: close)
+        let host = NSHostingView(rootView: view)
+        host.frame.size = host.fittingSize
+        panel.contentView = host
+        panel.setContentSize(host.fittingSize)
+        let cursor = (surface as? TerminalSurfaceView)?.firstRect(forCharacterRange: NSRange(), actualRange: nil)
+        let anchor = cursor.flatMap { $0 == .zero ? nil : NSPoint(x: $0.minX, y: $0.minY - 4) }
+            ?? NSPoint(x: window.frame.midX - host.fittingSize.width / 2, y: window.frame.midY)
+        panel.setFrameTopLeftPoint(anchor)
+        window.addChildWindow(panel, ordered: .above)
+        panel.makeKeyAndOrderFront(nil)
+        mentionPicker = panel
     }
 
     // MARK: - Quick Ask
@@ -284,7 +462,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             $0.kind.isAgent && $0.git.map(GitInfo.mainRoot) == currentRoot
         }
         let recents = Array(NSOrderedSet(array: store.sessions.map(\.spec.cwd).reversed()).array as? [String] ?? [])
-        let view = NewSessionView(draft: draft, recentDirectories: recents,
+        let view = NewSessionView(draft: draft, recentDirectories: recents, defaultName: store.nextPhoneticLabel(),
             onCreate: { [weak self] draft in
                 self?.dismissSheet()
                 self?.createSession(from: draft)
@@ -407,13 +585,84 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - NSWindowDelegate
 
+    /// The red button hides the window like any Mac app; sessions keep running, the Dock icon
+    /// brings it back, and ⌘Q quits.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        NSApp.terminate(nil)
+        sender.orderOut(nil)
         return false
     }
 
+    /// Native full screen (Original): the content runs edge to edge and the titlebar only slides
+    /// in with the menu bar. AppKit draws that titlebar in its own window with an opaque
+    /// background, a gray band over the sidebar and canvas; clear it so the content shows
+    /// through, as it does in a normal window.
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        updateCanvasBand()
+        guard let toolbarWindow = window?.standardWindowButton(.closeButton)?.window,
+              toolbarWindow !== window, let root = toolbarWindow.contentView?.superview else { return }
+        toolbarWindow.isOpaque = false
+        toolbarWindow.backgroundColor = .clear
+        func clear(_ view: NSView) {
+            if view is NSVisualEffectView || String(describing: type(of: view)).contains("TitlebarBackground") {
+                view.isHidden = true
+            }
+            view.subviews.forEach(clear)
+        }
+        clear(root)
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) { updateCanvasBand() }
+
+    func windowDidResize(_ notification: Notification) { organizerDock.reposition() }
+
     func windowDidBecomeKey(_ notification: Notification) {
+        // Hiding the window drops its child windows; bring the organizer's button back with it.
+        if let window { organizerDock.install(in: window) }
         guard let window, window.firstResponder == nil || window.firstResponder === window else { return }
-        if let session = store.selected { window.makeFirstResponder(session.surface) }
+        if let session = store.selected, session.surface.window === window { window.makeFirstResponder(session.surface) }
+    }
+}
+
+/// Night goes full screen in place, like Ghostty's `macos-non-native-fullscreen`: native full
+/// screen moves the window to its own Space with a black backdrop, so there'd be nothing to see
+/// through to. In place, the window covers the screen with the menu bar and Dock hidden and no
+/// traffic lights, so the panes run edge to edge. Original uses native full screen.
+final class KuronamiWindow: NSWindow {
+    private var restoreFrame: NSRect?
+    /// Entered or left full screen in place (native full screen reports through the delegate).
+    var onFullScreenChange: (() -> Void)?
+
+    var isFullScreen: Bool { restoreFrame != nil || styleMask.contains(.fullScreen) }
+
+    override func toggleFullScreen(_ sender: Any?) {
+        // Leaving goes the way it came in, even if the theme changed meanwhile.
+        guard restoreFrame != nil || (Theme.isTranslucent && !styleMask.contains(.fullScreen)) else {
+            return super.toggleFullScreen(sender)
+        }
+        if let restoreFrame {
+            self.restoreFrame = nil
+            NSApp.presentationOptions = []
+            setTrafficLightsHidden(false)
+            isMovable = true
+            setFrame(restoreFrame, display: true, animate: true)
+        } else if let screen {
+            restoreFrame = frame
+            NSApp.presentationOptions = [.autoHideMenuBar, .autoHideDock]
+            setTrafficLightsHidden(true)
+            isMovable = false
+            setFrame(screen.frame, display: true, animate: true)
+        }
+        onFullScreenChange?()
+    }
+
+    private func setTrafficLightsHidden(_ hidden: Bool) {
+        for kind: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
+            standardWindowButton(kind)?.isHidden = hidden
+        }
+    }
+
+    // Titled windows are kept below the menu bar; in-place full screen covers it.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        restoreFrame == nil ? super.constrainFrameRect(frameRect, to: screen) : frameRect
     }
 }

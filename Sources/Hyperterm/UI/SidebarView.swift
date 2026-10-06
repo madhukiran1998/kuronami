@@ -11,9 +11,9 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            SidebarTopBar(toggle: actions.toggleSidebar)
             Composer(store: store, actions: actions)
                 .padding(.horizontal, Space.m)
-                .padding(.top, Space.s)
                 .padding(.bottom, Space.m)
             Hairline()
             ScrollViewReader { proxy in
@@ -57,7 +57,8 @@ struct SidebarView: View {
             }
             SidebarFooter(store: store, actions: actions)
         }
-        .background(Tone.deep.ignoresSafeArea())
+        // The top bar takes the titlebar band itself; the fill is the AppKit backing's (the theme's).
+        .ignoresSafeArea(.container, edges: .top)
         .foregroundStyle(Tone.text)
         .tint(Palette.accent)
     }
@@ -85,7 +86,8 @@ struct SidebarView: View {
             .padding(.top, Space.l)
             .padding(.bottom, Space.xs)
             if showsClosed {
-                ForEach(store.recentlyClosed) { spec in
+                // The sidebar shows the latest few; the organizer can reach the rest.
+                ForEach(store.recentlyClosed.prefix(15)) { spec in
                     ClosedRow(spec: spec) { store.reopen(spec) }
                 }
                 Button("Clear List") { store.forgetClosed() }
@@ -96,140 +98,6 @@ struct SidebarView: View {
                     .padding(.top, Space.xs)
             }
         }
-    }
-}
-
-// MARK: - Composer
-
-/// Type a task, press Return: a new agent starts on it in its own worktree. Pick several agents
-/// to have them race on the same task.
-private struct Composer: View {
-    @ObservedObject var store: SessionStore
-    let actions: SessionActions
-    @State private var text = ""
-    @State private var claude = 1
-    @State private var codex = 0
-    @State private var mode: PermissionMode? = AppSettings.defaultMode
-    @State private var folder: String?
-    @FocusState private var focused: Bool
-
-    private var targetFolder: String {
-        folder ?? store.selected.map { $0.git?.mainRoot ?? $0.spec.cwd } ?? NSHomeDirectory()
-    }
-
-    private var folders: [String] {
-        let roots = store.sessions.map { $0.git?.mainRoot ?? $0.spec.cwd }
-        return Array(NSOrderedSet(array: roots).array as? [String] ?? [])
-    }
-
-    private var kinds: [SessionKind] {
-        Array(repeating: SessionKind.claude, count: claude) + Array(repeating: SessionKind.codex, count: codex)
-    }
-
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !kinds.isEmpty }
-
-    private var agentTitle: String {
-        switch (claude, codex) {
-        case (1, 0): return "Claude"
-        case (0, 1): return "Codex"
-        case (_, 0): return "\(claude) × Claude"
-        case (0, _): return "\(codex) × Codex"
-        default: return "Claude + Codex"
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Space.s) {
-            TextField(store.launchingCount > 0 ? "Starting…" : "Ask a new agent…", text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(Typeface.body)
-                .lineLimit(1...6)
-                .focused($focused)
-                .onSubmit(submit)
-                .accessibilityLabel("Task for a new agent")
-            HStack(spacing: Space.xs) {
-                Menu {
-                    Button("Claude Code") { claude = 1; codex = 0 }
-                    Button("Codex") { claude = 0; codex = 1 }
-                    Button("Claude and Codex, Side by Side") { claude = 1; codex = 1 }
-                    Divider()
-                    Picker("Claude Agents", selection: $claude) {
-                        ForEach(0...4, id: \.self) { Text($0 == 0 ? "None" : "\($0)").tag($0) }
-                    }
-                    Picker("Codex Agents", selection: $codex) {
-                        ForEach(0...4, id: \.self) { Text($0 == 0 ? "None" : "\($0)").tag($0) }
-                    }
-                } label: {
-                    Text(agentTitle).foregroundStyle(kinds.count == 1 ? kinds[0].tint : Tone.text)
-                }
-                .tint(kinds.count == 1 ? kinds[0].tint : Tone.text)
-                .fixedSize()
-                .help("Which agents take the task. Several agents each get their own worktree.")
-                Menu {
-                    Picker("Permissions", selection: $mode) {
-                        Text("As Configured").tag(PermissionMode?.none)
-                        ForEach(PermissionMode.allCases) { Label($0.title, systemImage: $0.symbol).tag(PermissionMode?.some($0)) }
-                    }
-                    .pickerStyle(.inline)
-                } label: {
-                    Image(systemName: mode?.symbol ?? "hand.raised")
-                        .foregroundStyle(mode == nil ? Tone.faint : Tone.text)
-                }
-                .tint(mode == nil ? Tone.faint : Tone.text)
-                .fixedSize()
-                .help(mode.map { "\($0.title): \($0.detail)" } ?? "Permissions: as configured in the agent")
-                Menu {
-                    ForEach(folders, id: \.self) { dir in Button(abbreviateHome(dir)) { folder = dir } }
-                    if !folders.isEmpty { Divider() }
-                    Button("Choose Folder…") { chooseFolder() }
-                } label: {
-                    Text(URL(fileURLWithPath: targetFolder).lastPathComponent)
-                        .foregroundStyle(Tone.muted)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .tint(Tone.muted)
-                .fixedSize()
-                .help("Project: " + abbreviateHome(targetFolder))
-                Spacer(minLength: 0)
-                if store.launchingCount > 0 { ProgressView().controlSize(.mini) }
-                Button(action: submit) {
-                    Image(systemName: "arrow.up")
-                        .font(Typeface.caption.weight(.bold))
-                        .foregroundStyle(canSend ? Tone.floor : Tone.faint)
-                        .frame(width: Size.iconButton, height: Size.iconButton)
-                        .background(canSend ? Palette.accent : Tone.raised, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .help("Start (Return)")
-                .accessibilityLabel("Start agent")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .font(Typeface.caption.weight(.medium))
-        }
-        .padding(Space.m)
-        .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.pane, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous)
-            .strokeBorder(focused ? Tone.focus : Color.clear))
-        .acceptsAttachments($text)
-        .help("Drop files or images to attach them")
-    }
-
-    private func submit() {
-        let task = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !task.isEmpty, !kinds.isEmpty else { return }
-        actions.dispatch(task, kinds, targetFolder, mode.map { AgentOptions(mode: $0) })
-        text = ""
-    }
-
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.directoryURL = URL(fileURLWithPath: expandTilde(targetFolder))
-        if panel.runModal() == .OK, let url = panel.url { folder = url.path }
     }
 }
 
@@ -315,7 +183,7 @@ struct AgentRow: View {
         switch session.state {
         case .failed(let reason): return (reason, false, Palette.failed)
         case .exited: return ("Agent exited · shell open", false, Tone.faint)
-        case .starting: return ("Starting…", false, Tone.faint)
+        case .starting: return (session.isWaking ? "Waking…" : "Starting…", false, Tone.faint)
         case .working:
             if let activity = session.activity { return (activity, true, Tone.muted) }
         default: break
@@ -333,8 +201,17 @@ struct AgentRow: View {
         let stat: DiffStat? = session.diffStat
         let review: DiffStat? = session.readyForReview && (stat?.files ?? 0) > 0 ? stat : nil
         let racing = store.raceSiblings(of: session).count
-        if review != nil || queued > 0 || racing > 0 {
+        let overlap = session.overlapBadge
+        let delegation = session.delegation
+        let subagents = session.runningSubagents.count
+        if review != nil || queued > 0 || racing > 0 || overlap != nil || delegation != nil || subagents > 0 {
             HStack(spacing: Space.xs) {
+                if let delegation {
+                    Tag(text: "Organizer", tint: Palette.accent).help(delegation.help)
+                }
+                if let overlap {
+                    Tag(text: overlap.title, tint: Palette.attention).help(overlap.detail)
+                }
                 if racing > 0 {
                     Tag(text: "Racing \(racing + 1)", tint: Palette.accent)
                         .help("Started with \(racing) other agent\(racing == 1 ? "" : "s") on the same task. Right-click → Pick This One to keep its work.")
@@ -353,6 +230,10 @@ struct AgentRow: View {
                     }
                     .buttonStyle(.plain)
                     .help("Review \(review.files) changed file\(review.files == 1 ? "" : "s") (⌥⌘R)")
+                }
+                if subagents > 0 {
+                    Tag(text: "\(subagents) subagent\(subagents == 1 ? "" : "s")")
+                        .help("Still running, even after its own turn ends. It stays awake until they finish.")
                 }
                 if queued > 0 { Tag(text: "\(queued) queued") }
             }
@@ -377,7 +258,9 @@ struct StateLabel: View {
     var body: some View {
         // Only the clock ticks; the rest of the row re-renders when the session changes.
         TimelineView(.periodic(from: .now, by: session.state == .working ? 15 : 60)) { context in
-            Text(text(now: context.date))
+            // Two Texts joined, so the symbol stays a symbol (interpolating it into a String prints
+            // the Image's description).
+            ((session.isAsleep ? Text(Image(systemName: "moon.zzz")) + Text(" ") : Text(verbatim: "")) + Text(text(now: context.date)))
             .font(Typeface.caption.weight(session.state.needsAttention ? .semibold : .regular).monospacedDigit())
             .foregroundStyle(color)
             .lineLimit(1)
@@ -526,7 +409,7 @@ private struct ClosedRow: View {
             AgentAvatar(kind: spec.kind, dimmed: true)
             VStack(alignment: .leading, spacing: 0) {
                 Text(spec.label).font(Typeface.body).foregroundStyle(Tone.muted).lineLimit(1)
-                if let summary = spec.summary {
+                if let summary = spec.summary ?? spec.memory?.task {
                     Text(summary).font(Typeface.caption).foregroundStyle(Tone.faint).lineLimit(1)
                 }
             }
@@ -534,7 +417,160 @@ private struct ClosedRow: View {
             Text("Reopen").font(Typeface.caption.weight(.medium)).foregroundStyle(Palette.accent)
         }
         .modifier(RowChrome(selected: false, action: reopen))
-        .help("Reopen @\(spec.label) and resume its conversation")
+        .help(spec.canResume ? "Reopen @\(spec.label) and resume its conversation"
+                             : "Reopen @\(spec.label) as a new conversation in its folder")
+    }
+}
+
+// MARK: - Top bar
+
+/// The sidebar's top inset: room for the traffic lights, the sidebar toggle beside them, and
+/// somewhere to drag the window by.
+private struct SidebarTopBar: View {
+    let toggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            IconButton(symbol: "sidebar.left", help: "Hide the sidebar (⌃⌘S)", action: toggle)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, Size.trafficLights)
+        .frame(height: Size.titlebar)
+        .background(WindowDragArea())
+    }
+}
+
+// MARK: - Composer
+
+/// Types a task straight to new agents, no organizer in between. Several agents on one task race,
+/// each in its own worktree.
+private struct Composer: View {
+    @ObservedObject var store: SessionStore
+    let actions: SessionActions
+    @State private var text = ""
+    @State private var claude = 1
+    @State private var codex = 0
+    @State private var mode: PermissionMode? = AppSettings.defaultMode
+    @State private var folder: String?
+    @FocusState private var focused: Bool
+
+    private var targetFolder: String {
+        folder ?? store.selected.map { $0.git?.mainRoot ?? $0.spec.cwd } ?? NSHomeDirectory()
+    }
+
+    private var folders: [String] {
+        let roots = store.sessions.map { $0.git?.mainRoot ?? $0.spec.cwd }
+        return Array(NSOrderedSet(array: roots).array as? [String] ?? [])
+    }
+
+    private var kinds: [SessionKind] {
+        Array(repeating: SessionKind.claude, count: claude) + Array(repeating: SessionKind.codex, count: codex)
+    }
+
+    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !kinds.isEmpty }
+
+    private var agentTitle: String {
+        switch (claude, codex) {
+        case (1, 0): return "Claude"
+        case (0, 1): return "Codex"
+        case (_, 0): return "\(claude) × Claude"
+        case (0, _): return "\(codex) × Codex"
+        default: return "Claude + Codex"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            TextField(store.launchingCount > 0 ? "Starting…" : "Ask a new agent…", text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(Typeface.body)
+                .lineLimit(1...6)
+                .focused($focused)
+                .onSubmit(submit)
+                .accessibilityLabel("Task for a new agent")
+            HStack(spacing: Space.xs) {
+                Menu {
+                    Button("Claude Code") { claude = 1; codex = 0 }
+                    Button("Codex") { claude = 0; codex = 1 }
+                    Button("Claude and Codex, Side by Side") { claude = 1; codex = 1 }
+                    Divider()
+                    Picker("Claude Agents", selection: $claude) {
+                        ForEach(0...4, id: \.self) { Text($0 == 0 ? "None" : "\($0)").tag($0) }
+                    }
+                    Picker("Codex Agents", selection: $codex) {
+                        ForEach(0...4, id: \.self) { Text($0 == 0 ? "None" : "\($0)").tag($0) }
+                    }
+                } label: {
+                    Text(agentTitle).foregroundStyle(kinds.count == 1 ? kinds[0].tint : Tone.text)
+                }
+                .tint(kinds.count == 1 ? kinds[0].tint : Tone.text)
+                .fixedSize()
+                .help("Which agents take the task. Several agents each get their own worktree.")
+                Menu {
+                    Picker("Permissions", selection: $mode) {
+                        Text("As Configured").tag(PermissionMode?.none)
+                        ForEach(PermissionMode.allCases) { Label($0.title, systemImage: $0.symbol).tag(PermissionMode?.some($0)) }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Image(systemName: mode?.symbol ?? "hand.raised")
+                        .foregroundStyle(mode == nil ? Tone.faint : Tone.text)
+                }
+                .tint(mode == nil ? Tone.faint : Tone.text)
+                .fixedSize()
+                .help(mode.map { "\($0.title): \($0.detail)" } ?? "Permissions: as configured in the agent")
+                Menu {
+                    ForEach(folders, id: \.self) { dir in Button(abbreviateHome(dir)) { folder = dir } }
+                    if !folders.isEmpty { Divider() }
+                    Button("Choose Folder…") { chooseFolder() }
+                } label: {
+                    Text(URL(fileURLWithPath: targetFolder).lastPathComponent)
+                        .foregroundStyle(Tone.muted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .tint(Tone.muted)
+                .fixedSize()
+                .help("Project: " + abbreviateHome(targetFolder))
+                Spacer(minLength: 0)
+                if store.launchingCount > 0 { ProgressView().controlSize(.mini) }
+                Button(action: submit) {
+                    Image(systemName: "arrow.up")
+                        .font(Typeface.caption.weight(.bold))
+                        .foregroundStyle(canSend ? Tone.floor : Tone.faint)
+                        .frame(width: Size.iconButton, height: Size.iconButton)
+                        .background(canSend ? Palette.accent : Tone.raised, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+                .help("Start (Return)")
+                .accessibilityLabel("Start agent")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .font(Typeface.caption.weight(.medium))
+        }
+        .padding(Space.m)
+        .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.pane, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.pane, style: .continuous)
+            .strokeBorder(focused ? Tone.focus : Color.clear))
+        .acceptsAttachments($text)
+        .help("Drop files or images to attach them")
+    }
+
+    private func submit() {
+        let task = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty, !kinds.isEmpty else { return }
+        actions.dispatch(task, kinds, targetFolder, mode.map { AgentOptions(mode: $0) })
+        text = ""
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.directoryURL = URL(fileURLWithPath: expandTilde(targetFolder))
+        if panel.runModal() == .OK, let url = panel.url { folder = url.path }
     }
 }
 
@@ -547,35 +583,153 @@ private struct SidebarFooter: View {
     var body: some View {
         VStack(spacing: Space.s) {
             Hairline()
-            HStack(spacing: Space.s) {
-                // Both meters stack when Claude and Codex are both in use; each is labeled then.
-                VStack(alignment: .leading, spacing: Space.xs) {
-                    let both = store.rateLimits != nil && store.codexRateLimits != nil
-                    if let limits = store.rateLimits { UsageMeter(limits: limits, label: both ? "Claude" : nil) }
-                    if let limits = store.codexRateLimits { UsageMeter(limits: limits, label: both || store.rateLimits == nil ? "Codex" : nil) }
-                }
-                Spacer(minLength: 0)
-                Menu {
-                    Button("New Terminal…", action: actions.newSession)
-                    Divider()
-                    ForEach(SessionKind.allCases) { kind in
-                        Button { NSApp.sendAction(#selector(AppDelegate.newSessionOfKind(_:)), to: nil, from: KindSender(kind: kind)) } label: {
-                            Label("New \(kind.displayName)", systemImage: kind.symbol)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "plus").font(Typeface.body.weight(.medium)).foregroundStyle(Tone.muted)
-                } primaryAction: {
-                    actions.newSession()
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("New terminal (⌘N)")
+            WindowControls(store: store, actions: actions)
+                .padding(.horizontal, Space.m)
+            // Both meters stack when Claude and Codex are both in use; each is labeled then.
+            VStack(alignment: .leading, spacing: Space.s) {
+                let both = store.rateLimits != nil && store.codexRateLimits != nil
+                if let limits = store.rateLimits { UsageMeter(limits: limits, label: both ? "Claude" : nil) }
+                if let limits = store.codexRateLimits { UsageMeter(limits: limits, label: both || store.rateLimits == nil ? "Codex" : nil) }
             }
-            .padding(.horizontal, Space.m)
-            .padding(.bottom, Space.s)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // The organizer's mark floats in this corner (OrganizerDock), so the row starts past it
+            // and is as tall as its button.
+            .frame(minHeight: buttonSize)
+            .padding(.leading, Space.m + buttonSize + Space.s)
+            .padding(.trailing, Space.m)
+            .padding(.bottom, Space.m)
         }
+    }
+
+    private var buttonSize: CGFloat { OrganizerDock.markSize(for: NSScreen.main) + Space.s }
+}
+
+/// The window's actions (there is no toolbar): search, run, editor, layout, inspector, and new.
+/// Every one also has its menu item and shortcut.
+private struct WindowControls: View {
+    @ObservedObject var store: SessionStore
+    let actions: SessionActions
+    /// Looked up once: finding installed editors asks Launch Services about each.
+    @State private var editorName = Editors.preferred?.name ?? "your editor"
+
+    var body: some View {
+        HStack(spacing: Space.xs) {
+            IconButton(symbol: "magnifyingglass", help: "Search sessions and run commands (⌘P)") {
+                NSApp.sendAction(#selector(AppDelegate.showSwitcher(_:)), to: nil, from: nil)
+            }
+            IconButton(symbol: "play", help: "Run a project action: tests, dev server, build", action: actions.showProjectActions)
+            IconButton(symbol: "chevron.left.forwardslash.chevron.right", help: "Open in \(editorName) (⌥⌘O)") {
+                NSApp.sendAction(#selector(AppDelegate.openInEditor(_:)), to: nil, from: nil)
+            }
+            LayoutPicker(selection: store.layout, choose: store.setLayout)
+            IconButton(symbol: "sidebar.right", help: "Show or hide the inspector (⌥⌘I)", action: actions.toggleInspector)
+            Spacer(minLength: Space.xs)
+            let waiting = store.attentionCount
+            if waiting > 0 { WaitingBadge(count: waiting, action: store.selectNextNeedingAttention) }
+            Menu {
+                Button("New Terminal…", action: actions.newSession)
+                Divider()
+                ForEach(SessionKind.allCases) { kind in
+                    Button { NSApp.sendAction(#selector(AppDelegate.newSessionOfKind(_:)), to: nil, from: KindSender(kind: kind)) } label: {
+                        Label("New \(kind.displayName)", systemImage: kind.symbol)
+                    }
+                }
+            } label: {
+                Image(systemName: "plus").font(Typeface.body.weight(.medium)).foregroundStyle(Tone.muted)
+            } primaryAction: {
+                actions.newSession()
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("New terminal (⌘N)")
+        }
+        .frame(height: Size.iconButton)
+    }
+}
+
+/// Focus, split, grid: three small icons in one pill.
+private struct LayoutPicker: View {
+    let selection: LayoutMode
+    let choose: (LayoutMode) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(LayoutMode.allCases.enumerated()), id: \.element) { index, mode in
+                let selected = mode == selection
+                Button { choose(mode) } label: {
+                    Image(systemName: mode.symbol)
+                        .font(Typeface.caption.weight(.semibold))
+                        .foregroundStyle(selected ? Tone.text : Tone.muted)
+                        .frame(width: Size.iconButton, height: Size.iconButton - Space.xs)
+                        .background(selected ? Tone.raised : .clear, in: RoundedRectangle(cornerRadius: Radius.control - 1, style: .continuous))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("\(mode.title) (⌥⌘\(index + 1))")
+                .accessibilityLabel(mode.title)
+                .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+            }
+        }
+        .padding(Space.xxs)
+        .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.control + 1, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Terminal layout")
+    }
+}
+
+/// Shown only while sessions need you; takes you to the one that has waited longest.
+private struct WaitingBadge: View {
+    let count: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Space.xs) {
+                Circle().fill(Palette.attention).frame(width: 6, height: 6)
+                Text(String(count)).monospacedDigit()
+            }
+            .font(Typeface.caption.weight(.semibold))
+            .foregroundStyle(Palette.attention)
+            .padding(.horizontal, Space.s)
+            .frame(height: Size.iconButton)
+            .background(Palette.attention.opacity(0.12), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help((count == 1 ? "1 needs you" : "\(count) need you") + " · go to the one that has waited longest (⌘J)")
+        .accessibilityLabel(count == 1 ? "1 session needs you" : "\(count) sessions need you")
+    }
+}
+
+/// What the hidden sidebar leaves on the canvas: the button to bring it back and, when anything
+/// is waiting, the worded "N needs you" pill, so the waiting count never disappears with it.
+struct CanvasBandControls: View {
+    @ObservedObject var store: SessionStore
+    let showSidebar: () -> Void
+
+    var body: some View {
+        HStack(spacing: Space.s) {
+            IconButton(symbol: "sidebar.left", help: "Show the sidebar (⌃⌘S)", action: showSidebar)
+            let waiting = store.attentionCount
+            if waiting > 0 {
+                Button(action: store.selectNextNeedingAttention) {
+                    HStack(spacing: Space.xs + 2) {
+                        Circle().fill(Palette.attention).frame(width: 6, height: 6)
+                        Text(waiting == 1 ? "1 needs you" : "\(waiting) need you")
+                        KeyboardHint(keys: "⌘J")
+                    }
+                    .font(Typeface.callout.weight(.semibold))
+                    .foregroundStyle(Palette.attention)
+                    .padding(.horizontal, Space.s)
+                    .frame(height: Size.iconButton)
+                    .background(Palette.attention.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Go to the session that has waited longest (⌘J)")
+                .accessibilityLabel(waiting == 1 ? "1 session needs you" : "\(waiting) sessions need you")
+            }
+        }
+        .fixedSize()
     }
 }
 
@@ -584,11 +738,14 @@ struct UsageMeter: View {
     let limits: RateLimits
     var label: String?
 
+    /// Wide enough for "Week" and "100%" in the micro face, so the bars line up.
+    private static let titleWidth: CGFloat = 30
+    private static let percentWidth: CGFloat = 32
+
     var body: some View {
-        HStack(spacing: Space.m) {
+        VStack(alignment: .leading, spacing: Space.xxs) {
             if let label {
-                Text(label).font(Typeface.micro.weight(.medium)).foregroundStyle(Tone.muted)
-                    .frame(width: 38, alignment: .leading)
+                Text(label).font(Typeface.micro.weight(.medium)).foregroundStyle(Tone.muted).lineLimit(1)
             }
             gauge("5h", limits.fiveHourPercent, limits.fiveHourResets)
             gauge("Week", limits.sevenDayPercent, limits.sevenDayResets)
@@ -598,17 +755,23 @@ struct UsageMeter: View {
     @ViewBuilder private func gauge(_ title: String, _ percent: Double?, _ reset: Date?) -> some View {
         if let percent {
             let high = percent > 80
-            HStack(spacing: Space.xs) {
+            let fraction = max(0, min(percent, 100)) / 100
+            HStack(spacing: Space.s) {
                 Text(title).foregroundStyle(Tone.faint)
+                    .frame(width: Self.titleWidth, alignment: .leading)
                 Capsule().fill(Tone.raised)
-                    .frame(width: 36, height: 3)
+                    .frame(height: 3)
                     .overlay(alignment: .leading) {
-                        Capsule().fill(high ? Palette.attention : Tone.muted)
-                            .frame(width: 36 * max(0, min(percent, 100)) / 100, height: 3)
+                        GeometryReader { bar in
+                            Capsule().fill(high ? Palette.attention : Tone.muted)
+                                .frame(width: bar.size.width * fraction)
+                        }
                     }
                 Text("\(Int(percent))%").monospacedDigit().foregroundStyle(high ? Palette.attention : Tone.faint)
+                    .frame(width: Self.percentWidth, alignment: .trailing)
             }
             .font(Typeface.micro)
+            .lineLimit(1)
             .help("\(title == "5h" ? "5-hour" : "Weekly") usage" + (reset.map { " · resets \($0.formatted(date: .abbreviated, time: .shortened))" } ?? ""))
         }
     }
@@ -681,6 +844,13 @@ struct SessionMenu: View {
             Button("Let Agent Name It") { actions.releaseLabel(session) }
         }
         Button("Restart") { actions.restart(session) }
+        if session.isAsleep {
+            Button("Wake") { session.store?.wake(session) }
+        } else if session.kind.isAgent, !session.isOrganizer {
+            Button("Sleep") { session.store?.sleep(session) }
+                .disabled(session.store?.canSleep(session) != true)
+                .help("Quit the agent to free its memory; its next message resumes the conversation")
+        }
         if session.kind.isAgent, AccountStore.shared.accounts(for: session.kind).count > 1 {
             Menu("Move to Account") {
                 ForEach(AccountStore.shared.accounts(for: session.kind)) { account in
@@ -718,12 +888,17 @@ struct SessionActions {
     var restart: (TerminalSession) -> Void
     var close: (TerminalSession) -> Void
     var review: (TerminalSession) -> Void
-    /// Task, agents (one per entry), folder, launch options.
-    var dispatch: (String, [SessionKind], String, AgentOptions?) -> Void
     /// Opens the inspector on the agent's pending plan.
     var showPlan: (TerminalSession) -> Void = { _ in }
     /// Keeps one racing agent's work and closes the others, after confirming.
     var pickWinner: (TerminalSession) -> Void = { _ in }
+    /// Starts agents on a task from the sidebar composer: (task, kinds, folder, options).
+    var dispatch: (String, [SessionKind], String, AgentOptions?) -> Void = { _, _, _, _ in }
+    /// The sidebar footer's and top bar's window controls.
+    var toggleSidebar: () -> Void = {}
+    var toggleInspector: () -> Void = {}
+    /// Pops up the selected session's project actions under the pointer.
+    var showProjectActions: () -> Void = {}
 }
 
 /// Wraps children onto new lines like text.

@@ -25,7 +25,7 @@ extension SessionStore {
     /// Opens a terminal that signs an account in with the CLI's own login flow.
     func signIn(_ account: AgentAccount) {
         var spec = LaunchSpec(label: "\(account.kind.rawValue)-\(account.id)-login", kind: .shell,
-                              cwd: NSHomeDirectory(), command: account.kind == .codex ? "codex login" : "claude")
+                              cwd: NSHomeDirectory(), command: account.kind.adapter?.signInCommand)
         spec.labelSource = .auto
         spec.account = account.isDefault ? nil : account.id
         spec.accountKind = account.kind

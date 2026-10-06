@@ -29,11 +29,17 @@ enum Review {
             files += 1
         }
         let untracked = untrackedFiles(at: path)
-        for file in untracked {
-            files += 1
-            added += lineCount((path as NSString).appendingPathComponent(file))
-        }
+        files += untracked.count
+        added += untrackedLines(untracked, at: path)
         return DiffStat(added: added, removed: removed, files: files)
+    }
+
+    /// Lines in new files, for the ~10 s poll: only the first `maxFiles` files under `maxBytes`
+    /// are read; the rest still count as added files, with 0 lines.
+    static func untrackedLines(_ files: [String], at path: String, maxFiles: Int = 50, maxBytes: Int = 256 * 1024) -> Int {
+        files.prefix(maxFiles).reduce(0) { total, file in
+            total + lineCount((path as NSString).appendingPathComponent(file), maxBytes: maxBytes)
+        }
     }
 
     /// What a diff is measured against.
@@ -220,8 +226,9 @@ enum Review {
         (runGit(["-C", path, "ls-files", "--others", "--exclude-standard"]) ?? "").split(separator: "\n").map(String.init)
     }
 
-    private static func lineCount(_ file: String) -> Int {
-        guard let data = FileManager.default.contents(atPath: file), data.count < 2_000_000, !data.isEmpty else { return 0 }
+    private static func lineCount(_ file: String, maxBytes: Int) -> Int {
+        let size = (try? FileManager.default.attributesOfItem(atPath: file))?[.size] as? Int ?? 0
+        guard size > 0, size <= maxBytes, let data = FileManager.default.contents(atPath: file), !data.isEmpty else { return 0 }
         let newlines = data.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 }
         return data.last == 0x0A ? newlines : newlines + 1
     }

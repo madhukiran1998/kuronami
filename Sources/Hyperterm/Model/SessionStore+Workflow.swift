@@ -10,7 +10,7 @@ extension SessionStore {
     func checkpointQueue(for session: TerminalSession) -> DispatchQueue {
         let key = session.git?.mainRoot ?? session.spec.workPath
         if let queue = checkpointQueues[key] { return queue }
-        let queue = DispatchQueue(label: "dev.hyperterm.checkpoints." + key, qos: .userInitiated)
+        let queue = DispatchQueue(label: "dev.hyperterm.checkpoints." + key, qos: .utility)
         checkpointQueues[key] = queue
         return queue
     }
@@ -106,16 +106,7 @@ extension SessionStore {
     /// Starts one agent per entry in `kinds` on the same task, each in its own worktree, so their
     /// results can be compared side by side and the best one merged.
     func dispatch(_ task: String, kinds: [SessionKind], cwd: String, options: AgentOptions?) {
-        let base = labelFromTask(task)
-        let mixed = Set(kinds).count > 1
-        let race = kinds.count > 1 ? UUID() : nil
-        for (index, kind) in kinds.enumerated() {
-            var label = base
-            if mixed { label += "-" + kind.rawValue } else if kinds.count > 1 { label += "-\(index + 1)" }
-            var spec = LaunchSpec(label: label, kind: kind, cwd: cwd)
-            spec.labelSource = .auto
-            spec.options = options
-            spec.race = race
+        for (index, spec) in dispatchSpecs(task, kinds: kinds, cwd: cwd, options: options).enumerated() {
             let select = index == 0
             Task { @MainActor [weak self, spec] in
                 guard let self else { return }
@@ -123,6 +114,22 @@ extension SessionStore {
             }
         }
         if kinds.count > 1, layout == .focus { setLayout(.grid) }
+    }
+
+    /// The agents `dispatch` starts: named from the task, and sharing one race when there are several.
+    func dispatchSpecs(_ task: String, kinds: [SessionKind], cwd: String, options: AgentOptions?) -> [LaunchSpec] {
+        let base = labelFromTask(task)
+        let mixed = Set(kinds).count > 1
+        let race = kinds.count > 1 ? UUID() : nil
+        return kinds.enumerated().map { index, kind in
+            var label = base
+            if mixed { label += "-" + kind.rawValue } else if kinds.count > 1 { label += "-\(index + 1)" }
+            var spec = LaunchSpec(label: label, kind: kind, cwd: cwd)
+            spec.labelSource = .auto
+            spec.options = options
+            spec.race = race
+            return spec
+        }
     }
 
     // MARK: - Races
@@ -190,35 +197,47 @@ extension SessionStore {
         return (try? decoder.decode([LaunchSpec].self, from: data)) ?? []
     }
 
-    /// Agents with a conversation to resume are kept for reopening.
+    /// Every agent but the organizer is kept for reopening, with what it did and how it ended.
     func rememberClosed(_ session: TerminalSession) {
-        guard session.kind.isAgent, session.spec.agentSessionId != nil else { return }
+        guard session.kind.isAgent, !session.isOrganizer else { return }
         var spec = session.spec
         spec.minimized = nil
+        spec.asleep = nil
+        var memory = spec.memory ?? SessionMemory()
+        memory.closedAt = Date()
+        memory.lastActiveAt = session.stateChangedAt
+        memory.finalState = session.state.detail.map { "\(session.state.phrase): \($0)" } ?? session.state.phrase
+        let events = session.timeline.suffix(8).map {
+            $0.text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
+        }
+        memory.events = events.isEmpty ? nil : events
+        spec.memory = memory
         recentlyClosed.removeAll { $0.id == spec.id }
         recentlyClosed.insert(spec, at: 0)
-        if recentlyClosed.count > 15 {
+        if recentlyClosed.count > 50 {
             // Out of reach for good: its checkpoints can go too.
-            let dropped = recentlyClosed.suffix(from: 15)
-            recentlyClosed.removeLast(recentlyClosed.count - 15)
+            let dropped = recentlyClosed.suffix(from: 50)
+            recentlyClosed.removeLast(recentlyClosed.count - 50)
             let targets = dropped.map { (path: $0.workPath, id: $0.id.uuidString) }
             pruneQueue.async { for target in targets { Checkpoints.prune(at: target.path, session: target.id) } }
         }
         saveRecentlyClosed()
     }
 
-    func reopen(_ spec: LaunchSpec) {
+    /// Resumes the conversation when there is one; otherwise starts a fresh agent in its folder.
+    @discardableResult
+    func reopen(_ spec: LaunchSpec) -> TerminalSession? {
         recentlyClosed.removeAll { $0.id == spec.id }
         saveRecentlyClosed()
         // A conversation lives with its folder; once the worktree is archived it can't resume.
         guard FileManager.default.fileExists(atPath: spec.workPath) else {
             let branch = spec.worktreeBranch.map { " Its work is on branch \($0)." } ?? ""
-            lastError = "@\(spec.label)'s worktree was archived, so its conversation can't be resumed.\(branch)"
-            return
+            lastError = "@\(spec.label)'s worktree was archived, so it can't be reopened.\(branch)"
+            return nil
         }
         var spec = spec
         spec.label = sessions.contains { $0.label == spec.label } ? "" : spec.label
-        create(spec, resume: true)
+        return create(spec, resume: spec.canResume)
     }
 
     func forgetClosed() {

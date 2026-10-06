@@ -5,7 +5,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SessionStore()
     private var windowController: MainWindowController?
     private var controlServer: ControlServer?
-    private let inspector = ProcessInspector()
+    private var hookServer: HookServer?
+    private let inspector = ProcessInspector.shared
     private let gitInspector = GitInspector()
     private var statusBar: StatusBarController?
     private var pollCount = 0
@@ -32,7 +33,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         Theme.load(from: GhosttyRuntime.shared.config)
+        AppSettings.settleAutoSleepDefault(existingInstall: SessionStore.hasSavedState)
+        SessionReaper.sweepLeftovers()
         TerminalSessionFactory.store = store
+        startHookServer()
         AgentIntegration.install()
         NSApp.mainMenu = MainMenu.build(target: self)
 
@@ -42,9 +46,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusBar = StatusBarController(store: store)
         startControlServer()
+        Steward.shared.start(store: store)
+        Steward.shared.onEscalation = { [weak store] in store?.reportToOrganizer($0) }
+        Steward.shared.onSleepCandidate = { [weak store] in
+            if AppSettings.autoSleepEnabled { store?.sleep($0) }
+        }
         startInspector()
         store.notifier.onActivate = { [weak self] id in
             guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
+            self.windowController?.showWindow(nil)
             self.store.select(session)
         }
         store.notifier.onApprovalAction = { [weak self] id, answer in
@@ -63,21 +73,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard windowController != nil else { return .terminateNow }
+        confirmQuit() ? .terminateNow : .terminateCancel
+    }
+
+    private var quitConfirmed = false
+    private var closingBrowsersToQuit = false
+
+    /// Asked once per quit, before anything shuts down.
+    private func confirmQuit() -> Bool {
+        guard windowController != nil, !quitConfirmed else { return true }
         let busy = store.sessions.filter { $0.state == .working || $0.state.needsAttention }
-        guard !busy.isEmpty else { return .terminateNow }
-        let alert = NSAlert()
-        alert.messageText = "Quit Kuronami?"
-        alert.informativeText = "\(busy.map { "@" + $0.label }.joined(separator: ", ")) \(busy.count == 1 ? "is" : "are") still working. Agent conversations resume the next time you open Kuronami."
-        alert.addButton(withTitle: "Quit")
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+        if !busy.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "Quit Kuronami?"
+            alert.informativeText = "\(busy.map { "@" + $0.label }.joined(separator: ", ")) \(busy.count == 1 ? "is" : "are") still working. Agent conversations resume the next time you open Kuronami."
+            alert.addButton(withTitle: "Quit")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+        }
+        quitConfirmed = true
+        return true
+    }
+
+    /// Quit while Chromium runs. CefSwift's own handler waits for every page to close itself,
+    /// which can stall the quit forever; instead close the browsers outright and quit a moment
+    /// later. Returns true when the quit may go ahead now.
+    func terminateWithBrowsers() -> Bool {
+        if closingBrowsersToQuit { return true }
+        guard confirmQuit() else { return false }
+        closingBrowsersToQuit = true
+        for session in store.sessions where session.kind == .browser { session.terminate() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { NSApp.terminate(nil) }
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         guard windowController != nil else { return }
         store.persist()
         controlServer?.stop()
+        hookServer?.stop()
         // Give the debounced persist a moment to land.
         Thread.sleep(forTimeInterval: 0.4)
     }
@@ -102,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let store = self.store
         let inspector = self.inspector
         let server = ControlServer(path: ControlPaths.socketPath, identify: { inspector.identify(pid: $0) }) { request, caller, reply in
+            if request.cmd == .heavy { Steward.shared.handleHeavy(request, reply: reply); return }
             ControlHandler(store: store, caller: caller).handle(request, reply: reply)
         }
         do {
@@ -109,6 +144,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controlServer = server
         } catch {
             NSLog("hyperterm: control socket failed: %@", String(describing: error))
+        }
+    }
+
+    private func startHookServer() {
+        let store = self.store
+        let server = HookServer { source, sessionID, body, sentAt in
+            store.receiveHook(source: source, sessionID: sessionID, payload: body, sentAt: sentAt)
+        }
+        do {
+            try server.start()
+            hookServer = server
+            AgentIntegration.hookPort = server.port
+        } catch {
+            NSLog("hyperterm: hook listener failed: %@", String(describing: error))
         }
     }
 
@@ -135,17 +184,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func apply(_ snapshots: [String: ProcessSnapshot]) {
         pollCount += 1
+        Steward.shared.update(snapshots)
         refreshGit()
         // Working agents and the one on screen every ~10s; everything else once a minute (idle
         // agents also refresh on their Stop hook).
         if pollCount % 4 == 0 { refreshDiffStats(all: pollCount % 24 == 0) }
         for session in store.sessions {
             correctStaleWorking(session)
+            // Before the queue, so a message is never typed into the trust prompt.
+            session.checkTrustPrompt()
             session.retryPendingMessages()
             if session.kind.isAgent { trackAgentProcess(session, snapshots[session.id.uuidString]) }
             guard let snapshot = snapshots[session.id.uuidString] else { continue }
             if session.ports != snapshot.ports { session.ports = snapshot.ports }
             if session.foregroundProcess != snapshot.foreground { session.foregroundProcess = snapshot.foreground }
+            session.backgroundShells = snapshot.backgroundShells
             if session.kind == .claude {
                 if let status = snapshot.claudeStatus {
                     lastRegistryStatus[session.id] = status
@@ -220,14 +273,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Agents run inside a shell, so "the agent quit" shows up as its process disappearing while
     /// the shell stays. Hooks report this for Claude; this covers Codex and crashes.
     private func trackAgentProcess(_ session: TerminalSession, _ snapshot: ProcessSnapshot?) {
-        let name = session.kind == .claude ? "claude" : "codex"
+        guard let adapter = session.kind.adapter else { return }
+        let name = adapter.command
         let alive = snapshot?.programs.contains { $0.contains(name) } ?? false
+        if session.isAsleep {
+            if alive, let since = session.fellAsleepAt, Date().timeIntervalSince(since) > 8 { session.abortSleep() }
+            return
+        }
         if alive {
             session.agentProcessSeen = true
             if case .exited = session.state { session.apply(.processStarted, source: "process", force: .idle) }
             // Codex reports nothing until its first turn ends: once it's running, it's at rest,
             // or already at work on the task it was started with.
-            if session.kind == .codex, session.state == .starting {
+            if !adapter.reportsStart, session.state == .starting {
                 let hasTask = session.timeline.contains { $0.kind == .prompt }
                 session.apply(.processStarted, source: "process", force: hasTask ? .working : .idle)
             }
@@ -282,9 +340,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sender.state = enabling ? .on : .off
         }
     }
-    @objc func enableCodexApprovals(_ sender: Any?) { AgentIntegration.installCodexApprovalHook() }
     @objc func cleanUpWorktrees(_ sender: Any?) { windowController?.presentWorktreeCleanup() }
     @objc func toggleInspectorPane(_ sender: Any?) { windowController?.toggleInspector() }
+    @objc func toggleSidebarPane(_ sender: Any?) { windowController?.toggleSidebar() }
+    @objc func toggleOrganizer(_ sender: Any?) { windowController?.toggleOrganizer() }
     @objc func newBrowser(_ sender: Any?) { store.openBrowser() }
     @objc func minimizeTile(_ sender: Any?) {
         guard let session = store.selected else { NSSound.beep(); return }
@@ -296,6 +355,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentBrowser.agentsMayUseOutsideChrome.toggle()
         sender.state = AgentBrowser.agentsMayUseOutsideChrome ? .on : .off
         AgentIntegration.install()
+    }
+    /// View › Theme: applies to the window at once, and to every launch after.
+    @objc func chooseWindowTheme(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let theme = WindowTheme(rawValue: raw) else { return }
+        Theme.setWindow(theme)
+        sender.menu?.items.forEach { $0.state = $0 === sender ? .on : .off }
     }
     @objc func reviewSelected(_ sender: Any?) {
         if let session = store.selected { windowController?.showInspector(for: session) }

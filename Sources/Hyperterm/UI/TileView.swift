@@ -10,7 +10,7 @@ import SwiftUI
 final class TileView: NSView {
     let session: TerminalSession
     private let content = NSView()
-    private let header: NSHostingView<TileHeader>
+    private let header: TileHeaderHost
     private let model: TileHeaderModel
     private let border = CALayer()
     private let headerRule = CALayer()
@@ -54,13 +54,14 @@ final class TileView: NSView {
     init(session: TerminalSession, actions: TileActions) {
         self.session = session
         self.model = TileHeaderModel(session: session)
-        self.header = NSHostingView(rootView: TileHeader(model: model, actions: actions))
+        self.header = TileHeaderHost(rootView: TileHeader(model: model, actions: actions))
         super.init(frame: .zero)
         wantsLayer = true
         layer?.masksToBounds = false
         header.sizingOptions = []
         content.wantsLayer = true
-        content.layer?.backgroundColor = Theme.terminalBackground.cgColor
+        header.wantsLayer = true
+        applyTheme()
         content.layer?.cornerCurve = .continuous
         content.layer?.masksToBounds = true
         addSubview(content)
@@ -162,6 +163,13 @@ final class TileView: NSView {
     }
 
     // MARK: - Chrome
+
+    /// The theme's fills; called again when View › Theme changes.
+    func applyTheme() {
+        let fill = Theme.window.tileFill(terminal: Theme.terminalBackground).cgColor
+        content.layer?.backgroundColor = fill
+        header.layer?.backgroundColor = fill
+    }
 
     private func updateChrome() {
         let chrome = Chrome(header: showsHeader, focused: isFocusedTile,
@@ -291,14 +299,21 @@ struct TileHeaderSnapshot: Equatable {
     let statusWord: String
     let ports: [Int]
     let summary: String?
+    let overlap: OverlapBadge?
+    let asleep: Bool
+    /// The organizer handles its waits; the tag's tooltip.
+    let delegation: String?
 
     @MainActor init(session: TerminalSession) {
+        overlap = session.overlapBadge
+        delegation = session.delegation?.help
         label = session.label
         kind = session.kind
         state = session.state
         stateChangedAt = session.stateChangedAt
         statusWord = session.statusWord
         ports = session.ports
+        asleep = session.isAsleep
         if case .needsInput(let reason) = session.state {
             summary = session.pendingRequest ?? reason
         } else {
@@ -313,10 +328,19 @@ struct TileActions {
     var select: () -> Void
     var zoom: () -> Void
     var minimize: () -> Void
+    /// Pop the tile out into its own window.
+    var detach: () -> Void
     var close: () -> Void
+    var wake: () -> Void
     /// Header drag in progress: translation from where it started (SwiftUI, y down).
     var drag: (CGSize) -> Void
     var dragEnded: () -> Void
+}
+
+/// Tiles reach the window's top edge, under the titlebar band: a press on the header drags the
+/// tile, never the window.
+final class TileHeaderHost: NSHostingView<TileHeader> {
+    override var mouseDownCanMoveWindow: Bool { false }
 }
 
 struct TileHeader: View {
@@ -349,11 +373,19 @@ struct TileHeader: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: Space.xs)
+            if let overlap = snapshot.overlap, !compact {
+                Tag(text: overlap.title, tint: Palette.attention).help(overlap.detail)
+            }
+            if let delegation = snapshot.delegation, !compact {
+                Tag(text: "Organizer", tint: Palette.accent).help(delegation)
+            }
             if !snapshot.ports.isEmpty, !compact { PortChips(ports: snapshot.ports, compact: true) }
             if snapshot.kind == .browser {
                 BrowserDriverBadge(label: snapshot.label)
             } else if hovering || compact {
                 controls(compact: compact)
+            } else if snapshot.asleep {
+                AsleepMark().help("Asleep · type or send a message to wake it")
             } else {
                 StatusDot(state: snapshot.state, size: 6)
                     .help(snapshot.statusWord)
@@ -362,7 +394,7 @@ struct TileHeader: View {
         .padding(.leading, Space.m)
         .padding(.trailing, Space.xs)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: Theme.terminalBackground))
+        // The fill is the host's layer (TileView.applyTheme), so a theme change needs no re-render.
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(count: 2, perform: actions.zoom)
@@ -375,6 +407,8 @@ struct TileHeader: View {
             Button("Focus", action: actions.select)
             Button("Zoom", action: actions.zoom)
             Button("Minimize to Shelf", action: actions.minimize)
+            Button("Detach", action: actions.detach)
+            if snapshot.asleep { Button("Wake", action: actions.wake) }
             Divider()
             Button("Close", action: actions.close)
         }
@@ -388,6 +422,7 @@ struct TileHeader: View {
             Menu {
                 Button("Zoom", action: actions.zoom)
                 Button("Minimize to Shelf", action: actions.minimize)
+                Button("Detach", action: actions.detach)
                 Divider()
                 Button("Close", action: actions.close)
             } label: {

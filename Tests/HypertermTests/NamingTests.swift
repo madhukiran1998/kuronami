@@ -2,6 +2,24 @@ import XCTest
 @testable import Hyperterm
 
 final class NamingTests: XCTestCase {
+    @MainActor
+    func testTheTaskBoxNamesAgentsFromTheTaskAndRacesSeveral() {
+        let store = SessionStore(previewSessions: [], previewLayout: .grid)
+        let race = store.dispatchSpecs("fix the flaky auth test", kinds: [.claude, .codex], cwd: "/tmp", options: nil)
+        XCTAssertEqual(race.count, 2)
+        XCTAssertNotNil(race[0].race, "several agents on one task race")
+        XCTAssertEqual(race[0].race, race[1].race)
+        XCTAssertEqual(race.map(\.kind), [.claude, .codex])
+        XCTAssertTrue(race[0].label.hasSuffix("-claude") && race[1].label.hasSuffix("-codex"), "\(race.map(\.label))")
+        XCTAssertTrue(race.allSatisfy { $0.labelSource == .auto }, "named from the task, so agents may rename")
+
+        let pair = store.dispatchSpecs("tidy docs", kinds: [.claude, .claude], cwd: "/tmp", options: nil)
+        XCTAssertTrue(pair[0].label.hasSuffix("-1") && pair[1].label.hasSuffix("-2"))
+
+        let single = store.dispatchSpecs("tidy docs", kinds: [.codex], cwd: "/tmp", options: nil)
+        XCTAssertNil(single[0].race, "one agent is not a race")
+    }
+
     func testUnnamedTerminalsAreAgentRenamable() {
         let spec = LaunchSpec(label: "", kind: .claude, cwd: "~")
         XCTAssertEqual(spec.labelSource, .auto)
@@ -24,6 +42,17 @@ final class NamingTests: XCTestCase {
         let spec = try decoder.decode(LaunchSpec.self, from: Data(legacy.utf8))
         XCTAssertNil(spec.labelSource)
         XCTAssertFalse(spec.agentMayRename)
+    }
+
+    @MainActor
+    func testFirstDefaultNameIsAlpha() {
+        XCTAssertEqual(SessionStore().nextPhoneticLabel(), "alpha")
+    }
+
+    func testEachLetterNamesOneDefault() {
+        // "b" finds @bravo only if every default starts with a different letter.
+        XCTAssertEqual(phoneticLabels.map(\.first), Array("abcdefghijklmnopqrstuvwxyz").map(Optional.some))
+        XCTAssertEqual(phoneticLabels.map(normalizeLabel), phoneticLabels)
     }
 
     func testLaunchReservationsProtectAddressesBeforeSessionsExist() {

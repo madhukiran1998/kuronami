@@ -7,9 +7,16 @@ extension SessionStore {
     func registerApproval(for session: TerminalSession, source: String, payload: String, reply: @escaping ControlServer.Reply) {
         let json = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any] ?? [:]
         let tool = json["tool_name"] as? String ?? "tool"
-        let summary = AgentText.describeTool(name: tool, input: json["tool_input"] as? [String: Any] ?? [:], cwd: json["cwd"] as? String)
+        if session.isOrganizer, Self.organizerTools.contains(tool) {
+            let approval = PendingApproval(source: source, toolName: tool, summary: tool, suggestions: nil, reply: reply)
+            reply(ControlResponse.success(text: decisionJSON(approval, .approve, reason: nil)))
+            return
+        }
+        let input = json["tool_input"] as? [String: Any] ?? [:]
+        let summary = AgentText.describeTool(name: tool, input: input, cwd: json["cwd"] as? String)
         dropApproval(for: session)
         let approval = PendingApproval(source: source, toolName: tool, summary: summary,
+                                       request: RiskyRequest.text(tool: tool, input: input),
                                        suggestions: json["permission_suggestions"], reply: reply)
         approvals[session.id] = approval
         session.hasHookApproval = true
@@ -19,7 +26,10 @@ extension SessionStore {
         session.record(.approval, "Asked to run \(summary)")
         session.apply(.claudeHook(event: "Notification", notificationType: "permission_prompt", message: summary),
                       source: "permission hook", force: .needsInput(summary))
-        notifier.postApproval(session: session, request: summary, alwaysRule: alwaysRuleText(approval))
+        // The organizer was told instead; the user gets this banner if it doesn't answer.
+        if session.delegation?.toldAt == nil {
+            notifier.postApproval(session: session, request: summary, alwaysRule: alwaysRuleText(approval))
+        }
         // Leave headroom under the hook's 600 s timeout so the CLI's own prompt takes over cleanly.
         let id = approval.id
         DispatchQueue.main.asyncAfter(deadline: .now() + 540) { [weak self, weak session] in

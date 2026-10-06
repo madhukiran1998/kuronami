@@ -35,8 +35,8 @@ enum Checkpoints {
     // MARK: - Capture
 
     /// Snapshots the working tree (tracked and untracked, minus ignored files) as a commit whose
-    /// parent is HEAD. Returns its hash, or nil outside a repository.
-    static func snapshot(at path: String, message: String, environment extra: [String: String] = [:]) -> String? {
+    /// parent is HEAD. Returns its hash, or nil outside a repository. `excluding` adds pathspecs.
+    static func snapshot(at path: String, message: String, environment extra: [String: String] = [:], excluding: [String] = []) -> String? {
         guard let gitDir = Git.run(["rev-parse", "--absolute-git-dir"], at: path) else { return nil }
         let index = (gitDir as NSString).appendingPathComponent("kuronami-index-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(atPath: index) }
@@ -47,7 +47,7 @@ enum Checkpoints {
         let realIndex = (gitDir as NSString).appendingPathComponent("index")
         let seeded = (try? FileManager.default.copyItem(atPath: realIndex, toPath: index)) != nil
         if !seeded, head != nil { _ = Git.run(["read-tree", "HEAD"], at: path, environment: environment) }
-        guard Git.run(["add", "-A", "--", ":/"], at: path, environment: environment) != nil,
+        guard Git.run(["add", "-A", "--", ":/"] + excluding, at: path, environment: environment) != nil,
               let tree = Git.run(["write-tree"], at: path, environment: environment) else { return nil }
         var args = ["commit-tree", tree, "-m", message.isEmpty ? "Kuronami checkpoint" : message]
         if let head { args += ["-p", head] }
@@ -258,6 +258,7 @@ enum Git {
                     trim: Bool = true, timeout: TimeInterval = 30) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
+        process.qualityOfService = .utility
         // No hooks or fsmonitor: snapshots must never run repository code.
         process.arguments = ["-C", path, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
                              "-c", "commit.gpgsign=false"] + arguments

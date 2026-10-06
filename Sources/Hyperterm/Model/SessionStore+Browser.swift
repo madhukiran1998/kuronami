@@ -1,13 +1,12 @@
 import AppKit
 
-/// Browsers are sessions: each agent gets its own on its first browser action, labeled after it
-/// (@api → @api-web), and the user can open more.
+/// Browsers are sessions: each agent gets its own on its first browser action, and the user can
+/// open more. Like terminals they get the next short name (@charlie); the owner is recorded.
 extension SessionStore {
     /// The agent's browser, created (in the background) the first time it's needed.
     func browser(for agent: TerminalSession) -> TerminalSession {
         if let existing = browsers(ownedBy: agent).first { return existing }
-        var spec = LaunchSpec(label: "\(agent.label)-web", kind: .browser, cwd: agent.spec.cwd)
-        spec.labelSource = .auto
+        var spec = LaunchSpec(label: "", kind: .browser, cwd: agent.spec.cwd)
         spec.owner = agent.id
         let browser = create(spec, select: false)
         agent.record(.note, "Opened browser @\(browser.label)")
@@ -22,7 +21,6 @@ extension SessionStore {
         var spec = LaunchSpec(label: "", kind: .browser, cwd: current?.spec.cwd ?? NSHomeDirectory())
         spec.url = (url ?? port.flatMap { URL(string: "http://localhost:\($0)") })?.absoluteString
         if let agent = current, agent.kind.isAgent, browsers(ownedBy: agent).isEmpty {
-            spec.label = "\(agent.label)-web"
             spec.owner = agent.id
         }
         return create(spec)
