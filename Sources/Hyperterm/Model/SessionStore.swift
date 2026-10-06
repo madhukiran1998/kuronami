@@ -73,6 +73,8 @@ final class SessionStore: ObservableObject {
     /// Usage windows per account ("claude/work", "codex/default"), so the Accounts window can
     /// show which account still has room.
     @Published var accountLimits: [String: RateLimits] = [:]
+    /// Set while Phone Mode is on (SessionStore+PhoneMode). Never persisted: quitting turns it off.
+    @Published var phoneModeSince: Date?
     /// Labels of closed user-named terminals, kept from agents for an hour so messages meant for
     /// them can't be captured by a rename.
     private var reservedLabels: [String: Date] = [:]
@@ -542,6 +544,7 @@ final class SessionStore: ObservableObject {
         notifier.updateBadge(count: attentionCount)
         onStatusChange?()
         reportToOrganizer(session, from: previous)
+        adoptIntoPhoneMode(session)
         delegationStateChanged(session, from: previous)
         watchOverlaps(session, from: previous)
         let isVisible = visibleIDs.contains(session.id) && NSApp.isActive

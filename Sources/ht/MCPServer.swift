@@ -190,7 +190,10 @@ waiting only when the user asks, with the scope they gave, through handle_waitin
 take it back). When Kuronami tells you a handled session is waiting, read_terminal it and answer in the \
 spirit of the user's note and the agent's task: send_message for a question, answer_prompt approve or deny \
 for a permission prompt. Never approve anything you aren't sure the user would; if unsure, leave it: the \
-user is notified after 90 s. Tell the user briefly what you answered on their behalf. Keep notes in \
+user is notified after 90 s. Tell the user briefly what you answered on their behalf. When the user says they're \
+leaving or are on their phone ("phone mode on"), call phone_mode on; when they're back, phone_mode off. While \
+it's on, every agent's waits come to you: tell the user what's waiting, and approve a risky request only after \
+they say yes to that exact request, with answer_prompt user_approved true. Keep notes in \
 \(ControlPaths.organizerNotes): the user's preferences, project folders and open threads. Read it at the start \
 of a task when it may help, update it when you learn something durable, keep it under about 200 lines, and \
 never store secrets there. Start only the agents the user asked for. Keep replies short: say what you did in \
@@ -345,15 +348,25 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "answer_prompt",
-        "description": "Approve or deny the permission request a session you handle (handle_waiting) is waiting on. Only for permission prompts: when it asked a question in chat, answer with send_message. Risky requests (deletes, pushes, deploys, secrets, sudo…) are left for the user.",
+        "description": "Approve or deny the permission request a session you handle (handle_waiting) is waiting on. Only for permission prompts: when it asked a question in chat, answer with send_message. Risky requests (deletes, pushes, deploys, secrets, sudo…) are left for the user; in Phone Mode, ask them on their phone and pass user_approved true once they say yes.",
         "inputSchema": [
             "type": "object",
             "properties": [
                 "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
                 "answer": ["type": "string", "enum": ["approve", "deny"]],
                 "text": ["type": "string", "description": "With deny: why, which the agent sees"],
+                "user_approved": ["type": "boolean", "description": "Phone Mode only: the user said yes to this exact risky request on their phone"],
             ],
             "required": ["terminal", "answer"],
+        ],
+    ],
+    [
+        "name": "phone_mode",
+        "description": "Turn Phone Mode on when the user says they're away or on their phone, and off when they're back. While it's on, Kuronami approves agents' ordinary requests itself, every agent's questions and risky requests come to you, and starting or closing terminals needs no confirmation on the Mac.",
+        "inputSchema": [
+            "type": "object",
+            "properties": ["on": ["type": "boolean", "description": "true to turn on, false to turn off"]],
+            "required": ["on"],
         ],
     ],
     [
@@ -478,6 +491,10 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req.target = arguments["terminal"] as? String
         req.text = arguments["answer"] as? String
         req.label = arguments["text"] as? String
+        req.userApproved = arguments["user_approved"] as? Bool
+    case "phone_mode":
+        req = ControlRequest(cmd: .phoneMode)
+        req.text = (arguments["on"] as? Bool) == true ? "on" : "off"
     case "start_server":
         req = ControlRequest(cmd: .new)
         req.kind = "server"

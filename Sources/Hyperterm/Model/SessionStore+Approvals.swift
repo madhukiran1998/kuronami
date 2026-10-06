@@ -18,6 +18,11 @@ extension SessionStore {
         let approval = PendingApproval(source: source, toolName: tool, summary: summary,
                                        request: RiskyRequest.text(tool: tool, input: input),
                                        suggestions: json["permission_suggestions"], reply: reply)
+        if approvesInPhoneMode(session, approval) {
+            reply(ControlResponse.success(text: decisionJSON(approval, .approve, reason: nil)))
+            session.record(.approval, "Allowed \(summary) (Phone Mode)")
+            return
+        }
         approvals[session.id] = approval
         session.hasHookApproval = true
         // Plan mode ends by asking to exit it; the plan is the request.

@@ -249,12 +249,22 @@ private struct OrganizerButton: View {
                 .overlay(alignment: .bottomTrailing) {
                     if let kind { CLIBadge(kind: kind) }
                 }
+                // Phone Mode: the organizer is answering for the user.
+                .overlay {
+                    if store.isPhoneModeOn {
+                        Circle().strokeBorder(Palette.attention, lineWidth: Size.hairline * 2)
+                    }
+                }
+                .overlay(alignment: .bottomLeading) {
+                    if store.isPhoneModeOn { PhoneBadge() }
+                }
                 .frame(width: dock.markSize + Space.s, height: dock.markSize + Space.s)
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(dock.isOpen ? "Hide the organizer (⌃⌘O)" : "Organizer\(kind.map { " (\($0.displayName))" } ?? ""): start agents, arrange the window, close sessions (⌃⌘O)")
+        .help((store.isPhoneModeOn ? "Phone Mode on: the organizer answers agents for you. " : "")
+              + (dock.isOpen ? "Hide the organizer (⌃⌘O)" : "Organizer\(kind.map { " (\($0.displayName))" } ?? ""): start agents, arrange the window, close sessions (⌃⌘O)"))
         .accessibilityLabel(dock.isOpen ? "Hide the organizer" : "Open the organizer")
     }
 }
@@ -270,6 +280,18 @@ private struct CLIBadge: View {
             .background(Tone.deep, in: Circle())
             .overlay(Circle().strokeBorder(Tone.hairline, lineWidth: Size.hairline))
             .accessibilityHidden(true)
+    }
+}
+
+/// Phone Mode is on: a phone in gold, in the corner opposite the CLI badge.
+private struct PhoneBadge: View {
+    var body: some View {
+        Image(systemName: "iphone")
+            .font(Typeface.micro.weight(.bold))
+            .foregroundStyle(Tone.deep)
+            .frame(width: Size.markBadge, height: Size.markBadge)
+            .background(Palette.attention, in: Circle())
+            .accessibilityLabel("Phone Mode on")
     }
 }
 
