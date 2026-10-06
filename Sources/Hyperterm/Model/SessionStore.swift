@@ -597,7 +597,11 @@ final class SessionStore: ObservableObject {
 
     // MARK: - Persistence
 
-    private var stateFile: URL { ControlPaths.supportDirectory.appendingPathComponent("sessions.json") }
+    private var stateFile: URL { Self.stateFileURL }
+    private static var stateFileURL: URL { ControlPaths.supportDirectory.appendingPathComponent("sessions.json") }
+
+    /// True when an earlier run left session state: an upgrade rather than a fresh install.
+    static var hasSavedState: Bool { FileManager.default.fileExists(atPath: stateFileURL.path) }
 
     func persist() {
         persistWork?.cancel()

@@ -17,6 +17,19 @@ enum AppSettings {
         set { defaults.set(newValue, forKey: "checkpointsEnabled") }
     }
 
+    /// The steward quits idle agents' CLIs to free memory, resuming them on the next message.
+    /// On for new installs; off for people upgrading, so agents they left idle aren't quit unasked.
+    static var autoSleepEnabled: Bool {
+        get { defaults.object(forKey: "autoSleepEnabled") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "autoSleepEnabled") }
+    }
+
+    /// Fixes the auto-sleep default once, before the first launch writes any session state.
+    static func settleAutoSleepDefault(existingInstall: Bool) {
+        guard defaults.object(forKey: "autoSleepEnabled") == nil else { return }
+        defaults.set(!existingInstall, forKey: "autoSleepEnabled")
+    }
+
     /// The permission mode new agents start with; nil leaves each CLI's own setting in charge.
     static var defaultMode: PermissionMode? {
         get { defaults.string(forKey: "defaultPermissionMode").flatMap(PermissionMode.init(rawValue:)) }
@@ -72,6 +85,7 @@ struct SettingsView: View {
 private struct GeneralSettings: View {
     @State private var quickAsk = AppSettings.quickAskEnabled
     @State private var checkpoints = AppSettings.checkpointsEnabled
+    @State private var autoSleep = AppSettings.autoSleepEnabled
     @State private var mode = AppSettings.defaultMode
     @State private var editor = Editors.preferred?.id ?? ""
     @AppStorage(SessionStore.organizerKindKey, store: SessionStore.organizerDefaults) private var organizerRaw: String?
@@ -131,6 +145,10 @@ private struct GeneralSettings: View {
             setting("Checkpoint every turn", detail: "Hidden Git snapshots power per-turn diffs and reverting files. Your index, branches and stash are never touched.") {
                 Toggle("", isOn: $checkpoints).labelsHidden()
                     .onChange(of: checkpoints) { AppSettings.checkpointsEnabled = checkpoints }
+            }
+            setting("Put idle agents to sleep", detail: "After 10 quiet minutes an agent's CLI quits to free memory; the next message wakes it in the same conversation. Agents with background tasks stay awake.") {
+                Toggle("", isOn: $autoSleep).labelsHidden()
+                    .onChange(of: autoSleep) { AppSettings.autoSleepEnabled = autoSleep }
             }
         }
         .toggleStyle(.switch)

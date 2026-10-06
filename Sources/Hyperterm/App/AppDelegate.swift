@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         Theme.load(from: GhosttyRuntime.shared.config)
+        AppSettings.settleAutoSleepDefault(existingInstall: SessionStore.hasSavedState)
         SessionReaper.sweepLeftovers()
         TerminalSessionFactory.store = store
         startHookServer()
@@ -47,7 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startControlServer()
         Steward.shared.start(store: store)
         Steward.shared.onEscalation = { [weak store] in store?.reportToOrganizer($0) }
-        Steward.shared.onSleepCandidate = { [weak store] in store?.sleep($0) }
+        Steward.shared.onSleepCandidate = { [weak store] in
+            if AppSettings.autoSleepEnabled { store?.sleep($0) }
+        }
         startInspector()
         store.notifier.onActivate = { [weak self] id in
             guard let self, let session = self.store.sessions.first(where: { $0.id == id }) else { return }
@@ -195,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let snapshot = snapshots[session.id.uuidString] else { continue }
             if session.ports != snapshot.ports { session.ports = snapshot.ports }
             if session.foregroundProcess != snapshot.foreground { session.foregroundProcess = snapshot.foreground }
+            session.backgroundShells = snapshot.backgroundShells
             if session.kind == .claude {
                 if let status = snapshot.claudeStatus {
                     lastRegistryStatus[session.id] = status

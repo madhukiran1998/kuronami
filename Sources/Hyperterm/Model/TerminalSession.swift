@@ -20,6 +20,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     private(set) var title: String = ""
     @Published var ports: [Int] = []
     @Published var foregroundProcess: String?
+    /// Background shells under the agent CLI, from the last process snapshot (see `canSleep`).
+    var backgroundShells = 0
     @Published var unread = false
     /// What the agent is doing this moment ("Bash: pnpm test"), from tool-use hooks.
     @Published var activity: String?

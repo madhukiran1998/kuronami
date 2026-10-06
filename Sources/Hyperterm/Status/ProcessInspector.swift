@@ -10,6 +10,9 @@ struct ProcessSnapshot: Equatable {
     var claudeSessionId: String?
     /// Every process in the session's tree, for the steward's resource sampling.
     var pids: Set<pid_t> = []
+    /// Shells started by a program rather than by the terminal: an agent's background Bash tasks
+    /// and Monitor watchers, which quitting the agent would end.
+    var backgroundShells = 0
 }
 
 /// Who is on the other end of a control-socket connection, decided from kernel facts only.
@@ -146,6 +149,7 @@ final class ProcessInspector: @unchecked Sendable {
             }
             snapshot.ports = ports.sorted()
             snapshot.pids = pids
+            snapshot.backgroundShells = Self.backgroundShellCount(in: tree)
             snapshot.foreground = foregroundCommand(tree)
             if let entry = registry.first(where: { pids.contains($0.pid) }) {
                 snapshot.claudeStatus = entry.status
@@ -224,6 +228,27 @@ final class ProcessInspector: @unchecked Sendable {
         rootCache = rootCache.filter { alive.contains($0.key) }
         lock.unlock()
         return trees
+    }
+
+    private static let terminalChain: Set<String> = ["login", "zsh", "bash", "sh", "fish", "dash", "tcsh"]
+    private static let shells: Set<String> = ["zsh", "bash", "sh", "fish", "dash", "tcsh"]
+
+    /// Shells with something other than the terminal's own login and shell chain above them in
+    /// the tree, such as the agent CLI. The terminal's login shell, and a wrapper script that
+    /// execs the CLI, have only that chain above them, so they don't count.
+    static func backgroundShellCount(in tree: [ProcessEntry]) -> Int {
+        let byPID = Dictionary(tree.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+        return tree.filter { entry in
+            guard shells.contains(entry.name) else { return false }
+            var parent = byPID[entry.ppid]
+            var hops = 0
+            while let current = parent, hops < 64 {
+                if !terminalChain.contains(current.name) { return true }
+                parent = byPID[current.ppid]
+                hops += 1
+            }
+            return false
+        }.count
     }
 
     private func descendants(of pid: pid_t, children: [pid_t: [ProcessEntry]]) -> [ProcessEntry] {

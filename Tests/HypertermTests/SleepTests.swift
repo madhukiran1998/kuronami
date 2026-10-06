@@ -28,6 +28,33 @@ final class SleepTests: XCTestCase {
         XCTAssertTrue(api.runningSubagents.isEmpty, "a relaunched CLI has none")
     }
 
+    func testAnAgentWithBackgroundShellsStaysAwake() {
+        let store = SessionStore(previewSessions: [], previewLayout: .grid)
+        let api = agent("api")
+        api.backgroundShells = 1
+        XCTAssertFalse(store.canSleep(api), "quitting would end its background Bash task or Monitor")
+        api.backgroundShells = 0
+        XCTAssertTrue(store.canSleep(api))
+    }
+
+    func testBackgroundShellsAreShellsTheAgentStarted() {
+        typealias Entry = ProcessInspector.ProcessEntry
+        func entry(_ pid: pid_t, _ ppid: pid_t, _ name: String) -> Entry {
+            Entry(pid: pid, ppid: ppid, name: name, startSeconds: 0, start: 0)
+        }
+        // login (outside the tree) → zsh → claude → MCP servers: nothing in the background.
+        let idle = [entry(10, 1, "zsh"), entry(11, 10, "claude"), entry(12, 11, "node"), entry(13, 11, "ht")]
+        XCTAssertEqual(ProcessInspector.backgroundShellCount(in: idle), 0)
+        // A wrapper script that runs the CLI as a child is still the terminal's chain.
+        let wrapped = [entry(10, 1, "zsh"), entry(11, 10, "sh"), entry(12, 11, "claude")]
+        XCTAssertEqual(ProcessInspector.backgroundShellCount(in: wrapped), 0)
+        // A run_in_background dev server: zsh -c under the CLI, with its own children.
+        let busy = idle + [entry(20, 11, "zsh"), entry(21, 20, "node")]
+        XCTAssertEqual(ProcessInspector.backgroundShellCount(in: busy), 1)
+        // A shell a dev server spawned also counts: it sits under a program, not the terminal.
+        XCTAssertEqual(ProcessInspector.backgroundShellCount(in: busy + [entry(22, 21, "sh")]), 2)
+    }
+
     func testAsleepAgentIgnoresItsExitAndReportsAsleep() {
         let session = agent("api")
         session.fallAsleep()
