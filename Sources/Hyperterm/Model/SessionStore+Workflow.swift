@@ -106,16 +106,7 @@ extension SessionStore {
     /// Starts one agent per entry in `kinds` on the same task, each in its own worktree, so their
     /// results can be compared side by side and the best one merged.
     func dispatch(_ task: String, kinds: [SessionKind], cwd: String, options: AgentOptions?) {
-        let base = labelFromTask(task)
-        let mixed = Set(kinds).count > 1
-        let race = kinds.count > 1 ? UUID() : nil
-        for (index, kind) in kinds.enumerated() {
-            var label = base
-            if mixed { label += "-" + kind.rawValue } else if kinds.count > 1 { label += "-\(index + 1)" }
-            var spec = LaunchSpec(label: label, kind: kind, cwd: cwd)
-            spec.labelSource = .auto
-            spec.options = options
-            spec.race = race
+        for (index, spec) in dispatchSpecs(task, kinds: kinds, cwd: cwd, options: options).enumerated() {
             let select = index == 0
             Task { @MainActor [weak self, spec] in
                 guard let self else { return }
@@ -123,6 +114,22 @@ extension SessionStore {
             }
         }
         if kinds.count > 1, layout == .focus { setLayout(.grid) }
+    }
+
+    /// The agents `dispatch` starts: named from the task, and sharing one race when there are several.
+    func dispatchSpecs(_ task: String, kinds: [SessionKind], cwd: String, options: AgentOptions?) -> [LaunchSpec] {
+        let base = labelFromTask(task)
+        let mixed = Set(kinds).count > 1
+        let race = kinds.count > 1 ? UUID() : nil
+        return kinds.enumerated().map { index, kind in
+            var label = base
+            if mixed { label += "-" + kind.rawValue } else if kinds.count > 1 { label += "-\(index + 1)" }
+            var spec = LaunchSpec(label: label, kind: kind, cwd: cwd)
+            spec.labelSource = .auto
+            spec.options = options
+            spec.race = race
+            return spec
+        }
     }
 
     // MARK: - Races
