@@ -243,7 +243,9 @@ struct StateLabel: View {
     var body: some View {
         // Only the clock ticks; the rest of the row re-renders when the session changes.
         TimelineView(.periodic(from: .now, by: session.state == .working ? 15 : 60)) { context in
-            Text(session.isAsleep ? "\(Image(systemName: "moon.zzz")) \(text(now: context.date))" : text(now: context.date))
+            // Two Texts joined, so the symbol stays a symbol (interpolating it into a String prints
+            // the Image's description).
+            ((session.isAsleep ? Text(Image(systemName: "moon.zzz")) + Text(" ") : Text(verbatim: "")) + Text(text(now: context.date)))
             .font(Typeface.caption.weight(session.state.needsAttention ? .semibold : .regular).monospacedDigit())
             .foregroundStyle(color)
             .lineLimit(1)
