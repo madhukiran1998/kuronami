@@ -83,7 +83,7 @@ extension SessionStore {
             session.apply(.codexTurnComplete, source: "codex notify")
             checkpoint(session, phase: .end, prompt: "")
             refreshReview(session)
-            refreshCodexUsage(session)
+            refreshUsage(session)
         default:
             break
         }
@@ -255,17 +255,15 @@ extension SessionStore {
         }
     }
 
-    // MARK: - Codex usage
+    // MARK: - Usage from the session log
 
-    /// Reads the turn's usage from the Codex session log, off the main thread.
-    func refreshCodexUsage(_ session: TerminalSession) {
-        guard session.kind == .codex, let thread = session.spec.agentSessionId else { return }
-        let root = (AccountStore.shared.account(session.spec.account, kind: .codex)
-            ?? AgentAccount(id: AgentAccount.defaultID, kind: .codex, name: "Default")).homeDirectory
+    /// Reads the turn's usage from the CLI's session log (Codex), off the main thread.
+    func refreshUsage(_ session: TerminalSession) {
+        guard let adapter = session.kind.adapter, let thread = session.spec.agentSessionId else { return }
+        let root = (AccountStore.shared.account(session.spec.account, kind: session.kind)
+            ?? AgentAccount(id: AgentAccount.defaultID, kind: session.kind, name: "Default")).homeDirectory
         Self.parseQueue.async {
-            let reading = CodexUsage.logFile(thread: thread, in: root)
-                .flatMap { CodexUsage.tail(of: $0) }
-                .flatMap { CodexUsage.latest(in: $0) }
+            let reading = adapter.usage(id: thread, root: root)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { [weak self, weak session] in
                     guard let self, let session, let reading else { return }

@@ -99,7 +99,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         self.summary = spec.summary.flatMap { $0.hasPrefix("~") || $0.count < 3 ? nil : $0 }
         if !spec.kind.isAgent { state = .running }
         // A known id makes resume independent of hooks reporting it.
-        if spec.kind == .claude, spec.agentSessionId == nil, spec.forkOf == nil {
+        if spec.kind.adapter?.assignsSessionID == true, spec.agentSessionId == nil, spec.forkOf == nil {
             self.spec.agentSessionId = UUID().uuidString.lowercased()
         }
         if spec.asleep == true, spec.kind.isAgent {
@@ -196,7 +196,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         fellAsleepAt = Date()
         spec.asleep = true
         record(.note, "Asleep: the agent quit to free memory; its conversation resumes on the next message")
-        type(kind == .codex ? "/quit" : "/exit", submit: true, countsAsWork: false)
+        type(kind.adapter?.exitCommand ?? "/exit", submit: true, countsAsWork: false)
     }
 
     /// Resumes the conversation in the same shell, which is back at its prompt.
@@ -292,9 +292,9 @@ final class TerminalSession: ObservableObject, Identifiable {
         stateSource = source
         stateChangedAt = Date()
         if isWaking, next != .starting { finishWaking() }
-        // Codex has no prompt hook: a turn starts when work starts from rest. Claude's turns
-        // come from its UserPromptSubmit and Stop hooks instead.
-        if kind == .codex, next == .working, previous == .idle || previous == .starting,
+        // Without a prompt hook a turn starts when work starts from rest. Claude's turns come
+        // from its UserPromptSubmit and Stop hooks instead.
+        if kind.adapter?.reportsPrompts == false, next == .working, previous == .idle || previous == .starting,
            source != "approval", source != "process" {
             store?.checkpoint(self, phase: .start, prompt: lastPrompt ?? "Turn")
         }
@@ -441,7 +441,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// at rest with an empty prompt; false when it couldn't be.
     func startFreshConversation() -> Bool {
         guard kind.isAgent, atRest, inputIsEmpty, !dialogOnScreen else { return false }
-        type(kind == .codex ? "/new" : "/clear", submit: true, countsAsWork: false)
+        guard let command = kind.adapter?.newConversationCommand else { return false }
+        type(command, submit: true, countsAsWork: false)
         usage.contextPercent = nil
         return true
     }
@@ -692,20 +693,15 @@ enum PromptScreen {
         return asks && options(screen).count >= 2
     }
 
-    /// Claude Code's "Quick safety check" and Codex's trust prompt (old and new wording).
+    /// Any agent CLI's folder-trust prompt.
     static func hasTrustDialog(_ screen: String) -> Bool {
         let lower = screen.lowercased()
-        return trustMarkers.contains(where: lower.contains)
+        return SessionKind.agentAdapters.contains { $0.trustMarkers.contains(where: lower.contains) }
     }
-
-    private static let trustMarkers = [
-        "yes, i trust this folder", "a project you created or one you trust", "do you trust the files in this folder",
-        "allow codex to work in this folder", "codex can read, edit, and run files here",
-    ]
 
     static func inputIsEmpty(_ screen: String, kind: SessionKind) -> Bool {
         let lines = screen.split(separator: "\n", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
-        let marker = kind == .codex ? "›" : "❯"
+        let marker = kind.adapter?.promptMarker ?? "❯"
         guard let prompt = lines.last(where: { $0.hasPrefix(marker) }) else { return true }
         let rest = prompt.dropFirst(marker.count).trimmingCharacters(in: .whitespaces)
         // Claude shows a dim placeholder ("Try …") when empty; it can't be told from typed text
@@ -716,7 +712,7 @@ enum PromptScreen {
     /// Keys that choose `answer` in the dialog on screen, or nil when there is no dialog.
     static func keys(for answer: PromptAnswer, screen: String, kind: SessionKind) -> [String]? {
         let options = options(screen)
-        guard hasDialog(screen) || kind == .codex, !options.isEmpty else { return nil }
+        guard hasDialog(screen) || kind.adapter?.optionsAloneMakeDialog == true, !options.isEmpty else { return nil }
         func pick(_ predicate: (String) -> Bool) -> [String]? {
             options.first { predicate($0.text.lowercased()) }.map { [String($0.number)] }
         }

@@ -70,15 +70,15 @@ final class SleepTests: XCTestCase {
         spec.agentSessionId = "0f8fad5b-d9cb-469f-a165-70867728950e"
         let fresh = AgentIntegration.initialInput(for: spec, resume: false) ?? ""
         XCTAssertTrue(fresh.contains("--session-id '0f8fad5b-d9cb-469f-a165-70867728950e'"), fresh)
-        let saved = AgentIntegration.claudeConversationExists
-        defer { AgentIntegration.claudeConversationExists = saved }
-        AgentIntegration.claudeConversationExists = { _, _ in true }
+        let saved = ClaudeAdapter.conversationExists
+        defer { ClaudeAdapter.conversationExists = saved }
+        ClaudeAdapter.conversationExists = { _, _ in true }
         let resumed = AgentIntegration.initialInput(for: spec, resume: true) ?? ""
         XCTAssertTrue(resumed.contains("--resume '0f8fad5b-d9cb-469f-a165-70867728950e'"))
         XCTAssertFalse(resumed.contains("--session-id"))
         // Quit before its first message (say at the folder-trust prompt): nothing to resume, so it
         // starts fresh under the same id rather than failing with "No conversation found".
-        AgentIntegration.claudeConversationExists = { _, _ in false }
+        ClaudeAdapter.conversationExists = { _, _ in false }
         let neverSpoke = AgentIntegration.initialInput(for: spec, resume: true) ?? ""
         XCTAssertTrue(neverSpoke.contains("--session-id '0f8fad5b-d9cb-469f-a165-70867728950e'"), neverSpoke)
         XCTAssertFalse(neverSpoke.contains("--resume"))

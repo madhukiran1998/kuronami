@@ -269,7 +269,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Agents run inside a shell, so "the agent quit" shows up as its process disappearing while
     /// the shell stays. Hooks report this for Claude; this covers Codex and crashes.
     private func trackAgentProcess(_ session: TerminalSession, _ snapshot: ProcessSnapshot?) {
-        let name = session.kind == .claude ? "claude" : "codex"
+        guard let adapter = session.kind.adapter else { return }
+        let name = adapter.command
         let alive = snapshot?.programs.contains { $0.contains(name) } ?? false
         if session.isAsleep {
             if alive, let since = session.fellAsleepAt, Date().timeIntervalSince(since) > 8 { session.abortSleep() }
@@ -280,7 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if case .exited = session.state { session.apply(.processStarted, source: "process", force: .idle) }
             // Codex reports nothing until its first turn ends: once it's running, it's at rest,
             // or already at work on the task it was started with.
-            if session.kind == .codex, session.state == .starting {
+            if !adapter.reportsStart, session.state == .starting {
                 let hasTask = session.timeline.contains { $0.kind == .prompt }
                 session.apply(.processStarted, source: "process", force: hasTask ? .working : .idle)
             }
@@ -335,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sender.state = enabling ? .on : .off
         }
     }
-    @objc func enableCodexApprovals(_ sender: Any?) { AgentIntegration.installCodexApprovalHook() }
+    @objc func enableCodexApprovals(_ sender: Any?) { CodexAdapter.installApprovalHook() }
     @objc func cleanUpWorktrees(_ sender: Any?) { windowController?.presentWorktreeCleanup() }
     @objc func toggleInspectorPane(_ sender: Any?) { windowController?.toggleInspector() }
     @objc func newBrowser(_ sender: Any?) { store.openBrowser() }

@@ -21,13 +21,13 @@ struct AgentAccount: Codable, Identifiable, Hashable, Sendable {
     /// The CLI's own root, where the default account and shared settings live.
     var homeDirectory: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        return directory ?? home.appendingPathComponent(kind == .codex ? ".codex" : ".claude", isDirectory: true)
+        return directory ?? home.appendingPathComponent(kind.adapter?.homeFolder ?? ".claude", isDirectory: true)
     }
 
     /// Environment an agent on this account runs with.
     var environment: [String: String] {
-        guard let directory else { return [:] }
-        return [kind == .codex ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR": directory.path]
+        guard let directory, let adapter = kind.adapter else { return [:] }
+        return [adapter.homeVariable: directory.path]
     }
 }
 
@@ -105,22 +105,10 @@ final class AccountStore: ObservableObject {
     private static func seed(_ account: AgentAccount) {
         guard let directory = account.directory else { return }
         let home = AgentAccount(id: AgentAccount.defaultID, kind: account.kind, name: "Default").homeDirectory
-        switch account.kind {
-        case .codex:
-            // Copied rather than linked: Codex rewrites config.toml (trust, notices).
-            let config = home.appendingPathComponent("config.toml")
-            var text = (try? String(contentsOf: config, encoding: .utf8)) ?? ""
-            if !text.contains("cli_auth_credentials_store") { text = "cli_auth_credentials_store = \"file\"\n" + text }
-            try? text.write(to: directory.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
-            for shared in ["AGENTS.md", "prompts", "skills", "rules"] { link(shared, from: home, into: directory) }
-        default:
-            for shared in ["settings.json", "CLAUDE.md", "agents", "commands", "skills", "plugins", "output-styles"] {
-                link(shared, from: home, into: directory)
-            }
-        }
+        account.kind.adapter?.seed(directory, from: home)
     }
 
-    private static func link(_ name: String, from source: URL, into directory: URL) {
+    nonisolated static func link(_ name: String, from source: URL, into directory: URL) {
         let target = source.appendingPathComponent(name)
         guard FileManager.default.fileExists(atPath: target.path) else { return }
         try? FileManager.default.createSymbolicLink(at: directory.appendingPathComponent(name), withDestinationURL: target)
@@ -130,26 +118,10 @@ final class AccountStore: ObservableObject {
 
     /// The email an account is signed in as, read from the CLI's own files; nil when signed out.
     nonisolated static func signedInEmail(_ account: AgentAccount) -> String? {
-        let home = account.homeDirectory
-        switch account.kind {
-        case .codex:
-            guard let data = try? Data(contentsOf: home.appendingPathComponent("auth.json")),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-            if let token = (json["tokens"] as? [String: Any])?["id_token"] as? String, let email = jwtEmail(token) { return email }
-            return json["OPENAI_API_KEY"] is String ? "API key" : nil
-        default:
-            // The default account keeps its state in ~/.claude.json; others in <dir>/.claude.json.
-            let file = account.isDefault
-                ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
-                : home.appendingPathComponent(".claude.json")
-            guard let data = try? Data(contentsOf: file),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let oauth = json["oauthAccount"] as? [String: Any] else { return nil }
-            return oauth["emailAddress"] as? String
-        }
+        account.kind.adapter?.signedInEmail(home: account.homeDirectory, isDefault: account.isDefault)
     }
 
-    private nonisolated static func jwtEmail(_ token: String) -> String? {
+    nonisolated static func jwtEmail(_ token: String) -> String? {
         let parts = token.split(separator: ".")
         guard parts.count > 1 else { return nil }
         var payload = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
@@ -164,7 +136,7 @@ final class AccountStore: ObservableObject {
     /// Copies one conversation from one account's history into another's, so an agent can move
     /// to a different account (say, after a rate limit) and resume where it was.
     nonisolated static func copyConversation(_ sessionID: String, from source: AgentAccount, to destination: AgentAccount) -> Bool {
-        let history = source.kind == .codex ? "sessions" : "projects"
+        let history = source.kind.adapter?.historyFolder ?? "projects"
         return copyConversation(sessionID, from: source.homeDirectory.appendingPathComponent(history),
                                 to: destination.homeDirectory.appendingPathComponent(history))
     }
