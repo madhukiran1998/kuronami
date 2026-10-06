@@ -267,7 +267,9 @@ extension SessionStore {
         guard let note = organizerWatches[session.id] else { return nil }
         let kind: OrganizerEvent.Kind
         switch session.state {
-        case .idle where previous == .working: kind = .finished(session.summary ?? "turn complete")
+        // Background subagents outlive the turn; their last SubagentStop reports it instead.
+        case .idle where previous == .working && session.runningSubagents.isEmpty:
+            kind = .finished(session.summary ?? "turn complete")
         case .failed(let reason): kind = .failed(reason)
         case .exited: kind = .exited
         default: return nil

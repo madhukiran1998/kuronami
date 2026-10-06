@@ -143,7 +143,7 @@ final class Steward: ObservableObject {
             let isLowered = prioritize(session.id, lower: StewardRules.shouldLower(band, thermal: thermal))
             next[session.id] = Sample(footprint: footprint, cpuPercent: cpu, band: band, lowered: isLowered)
 
-            let agentIdle = session.kind.isAgent && session.state == .idle
+            let agentIdle = session.kind.isAgent && session.state == .idle && session.runningSubagents.isEmpty
             for escalation in escalationTracker.update(sessionID: key, label: session.label, footprint: footprint,
                                                        cpu: cpu, agentIdle: agentIdle, now: now) {
                 onEscalation?(escalation)

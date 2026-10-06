@@ -18,7 +18,7 @@ struct ClaudeAdapter: AgentAdapter {
     static func settings(hookPort: UInt16?) -> String {
         let htPath = AgentIntegration.htPath
         let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification",
-                      "Stop", "StopFailure", "SessionEnd", "TaskCreated", "TaskCompleted", "SubagentStart"]
+                      "Stop", "StopFailure", "SessionEnd", "TaskCreated", "TaskCompleted", "SubagentStart", "SubagentStop"]
         let command: [String: Any] = ["type": "command", "command": "\(htPath) hook claude", "timeout": 5]
         func hook(_ event: String) -> [String: Any] {
             guard let hookPort, event != "SessionStart" else { return command }

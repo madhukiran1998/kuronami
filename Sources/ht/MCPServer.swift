@@ -173,7 +173,9 @@ reopen_session: it resumes their own conversations. A conversation Kuronami neve
 resumes the same way with reopen_session's conversation and folder; never run claude or codex through start_server. \
 Never start new agents to read old transcripts. \
 Arrange the window with arrange_view; pop terminals into their own windows (or back) with detach_terminals. Close finished terminals with close_terminal; the user confirms each. \
-Check on agents with list_terminals and read_terminal, and pass instructions on with send_message. When you \
+Check on agents with list_terminals and read_terminal, and pass instructions on with send_message. A session \
+with subagents running (list_terminals shows them) is still working even when idle: don't close it or chain the \
+next step yet. Its subagents can't be messaged directly; send_message the session and it relays. When you \
 relay an agent's result, quote its own words from read_terminal instead of paraphrasing. Kuronami's steward \
 keeps the Mac responsive: it lowers hidden idle agents, may put them to sleep (they wake when messaged), and \
 queues new agents when memory is short. machine_status shows what it sees. A message may carry its warnings (an \
@@ -503,6 +505,7 @@ private func describe(_ sessions: [SessionInfo], selfID: String?) -> String {
         var line = "@\(info.label) [\(info.kind)] \(info.state)"
         if info.id == selfID, info.labelSource != "user" { line += " (auto-named: rename_terminal to describe your work)" }
         if let detail = info.stateDetail { line += " (\(detail))" }
+        if let count = info.subagents { line += " (\(count) subagent\(count == 1 ? "" : "s") running)" }
         if let handling = info.delegation { line += " (organizer handling: \(handling))" }
         if info.detached == true { line += " (in its own window)" }
         if info.id == selfID { line += " ← you" }

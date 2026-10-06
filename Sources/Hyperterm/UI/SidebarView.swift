@@ -199,7 +199,8 @@ struct AgentRow: View {
         let racing = store.raceSiblings(of: session).count
         let overlap = session.overlapBadge
         let delegation = session.delegation
-        if review != nil || queued > 0 || racing > 0 || overlap != nil || delegation != nil {
+        let subagents = session.runningSubagents.count
+        if review != nil || queued > 0 || racing > 0 || overlap != nil || delegation != nil || subagents > 0 {
             HStack(spacing: Space.xs) {
                 if let delegation {
                     Tag(text: "Organizer", tint: Palette.accent).help(delegation.help)
@@ -225,6 +226,10 @@ struct AgentRow: View {
                     }
                     .buttonStyle(.plain)
                     .help("Review \(review.files) changed file\(review.files == 1 ? "" : "s") (⌥⌘R)")
+                }
+                if subagents > 0 {
+                    Tag(text: "\(subagents) subagent\(subagents == 1 ? "" : "s")")
+                        .help("Still running, even after its own turn ends. It stays awake until they finish.")
                 }
                 if queued > 0 { Tag(text: "\(queued) queued") }
             }

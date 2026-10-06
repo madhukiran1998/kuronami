@@ -109,6 +109,8 @@ struct SessionInfo: Codable, Equatable {
     var delegation: String? = nil
     /// Shown in its own window instead of the canvas.
     var detached: Bool? = nil
+    /// Claude subagents still running, which may outlast the session's own turn.
+    var subagents: Int? = nil
 }
 
 struct ControlResponse: Codable {
