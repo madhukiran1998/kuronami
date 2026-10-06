@@ -78,7 +78,7 @@ final class SessionReaperTests: XCTestCase {
         let out = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
         defer { try? FileManager.default.removeItem(atPath: out) }
         let script = "sleep 300 & a=$!; trap '' TERM; sleep 301 & echo $a $! > \"$0\""
-        let argv: [UnsafeMutablePointer<CChar>?] = ["/bin/sh", "-c", script, out].map { strdup($0) } + [nil]
+        let argv: [UnsafeMutablePointer<CChar>?] = (["/bin/sh", "-c", script, out] as [String]).map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         var shell: pid_t = 0
         XCTAssertEqual(posix_spawn(&shell, "/bin/sh", &actions, &attributes, argv, environ), 0)
