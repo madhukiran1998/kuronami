@@ -701,6 +701,38 @@ private struct WaitingBadge: View {
     }
 }
 
+/// What the hidden sidebar leaves on the canvas: the button to bring it back and, when anything
+/// is waiting, the worded "N needs you" pill, so the waiting count never disappears with it.
+struct CanvasBandControls: View {
+    @ObservedObject var store: SessionStore
+    let showSidebar: () -> Void
+
+    var body: some View {
+        HStack(spacing: Space.s) {
+            IconButton(symbol: "sidebar.left", help: "Show the sidebar (⌃⌘S)", action: showSidebar)
+            let waiting = store.attentionCount
+            if waiting > 0 {
+                Button(action: store.selectNextNeedingAttention) {
+                    HStack(spacing: Space.xs + 2) {
+                        Circle().fill(Palette.attention).frame(width: 6, height: 6)
+                        Text(waiting == 1 ? "1 needs you" : "\(waiting) need you")
+                        KeyboardHint(keys: "⌘J")
+                    }
+                    .font(Typeface.callout.weight(.semibold))
+                    .foregroundStyle(Palette.attention)
+                    .padding(.horizontal, Space.s)
+                    .frame(height: Size.iconButton)
+                    .background(Palette.attention.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Go to the session that has waited longest (⌘J)")
+                .accessibilityLabel(waiting == 1 ? "1 session needs you" : "\(waiting) sessions need you")
+            }
+        }
+        .fixedSize()
+    }
+}
+
 /// Account usage windows shared by every agent: the thing that actually caps parallelism.
 struct UsageMeter: View {
     let limits: RateLimits

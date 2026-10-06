@@ -122,7 +122,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         bar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(bar)
         // It sits in the titlebar band, so it ignores the titlebar's safe area.
-        let button = NSHostingView(rootView: IconButton(symbol: "sidebar.left", help: "Show the sidebar (⌃⌘S)") { [weak self] in
+        let button = NSHostingView(rootView: CanvasBandControls(store: store) { [weak self] in
             self?.toggleSidebar()
         }.ignoresSafeArea())
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -144,7 +144,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             barHeight,
             button.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Size.trafficLights),
             button.centerYAnchor.constraint(equalTo: container.topAnchor, constant: Size.titlebar / 2),
-            button.widthAnchor.constraint(equalToConstant: Size.iconButton),
             button.heightAnchor.constraint(equalToConstant: Size.iconButton),
         ])
         detail.view = container
