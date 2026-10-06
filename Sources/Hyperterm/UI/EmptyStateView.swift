@@ -9,7 +9,7 @@ struct EmptyStateView: View {
                     VStack(spacing: Space.m) {
                         WaveMark().frame(width: 76, height: 76)
                         Text("Start an agent").font(Typeface.title)
-                        Text("Type a task in the sidebar, or pick what to open.")
+                        Text("Pick what to open, or ask the organizer in the corner.")
                             .font(Typeface.body)
                             .foregroundStyle(Tone.muted)
                             .multilineTextAlignment(.center)
