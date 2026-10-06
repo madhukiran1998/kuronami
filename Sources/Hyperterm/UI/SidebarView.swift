@@ -24,7 +24,6 @@ struct SidebarView: View {
                             ForEach(project.agents) { session in
                                 AgentRow(session: session, store: store, actions: actions)
                                     .id(session.id)
-                                SubagentRows(session: session, store: store)
                                 ForEach(store.browsers(ownedBy: session)) { browser in
                                     UtilityRow(session: browser, store: store, actions: actions, nested: true).id(browser.id)
                                 }
@@ -405,38 +404,6 @@ private struct ApprovalStrip: View {
         case .failure(let failure):
             error = failure.description
             store.select(session)
-        }
-    }
-}
-
-/// A session's running Claude subagents, one line each under it, oldest first. Clicking one
-/// selects its session: subagents have no terminal of their own.
-private struct SubagentRows: View {
-    @ObservedObject var session: TerminalSession
-    let store: SessionStore
-
-    var body: some View {
-        ForEach(session.runningSubagents.sorted { $0.value.startedAt < $1.value.startedAt }, id: \.key) { _, subagent in
-            HStack(spacing: Space.s) {
-                StatusDot(state: .working, size: 6)
-                    .frame(width: Size.avatar)
-                Text(subagent.type.isEmpty ? "Subagent" : subagent.type)
-                    .font(Typeface.callout)
-                    .foregroundStyle(Tone.muted)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: Space.xs)
-                TimelineView(.periodic(from: .now, by: 15)) { context in
-                    Text(elapsed(since: subagent.startedAt, now: context.date))
-                        .font(Typeface.caption.monospacedDigit())
-                        .foregroundStyle(Tone.faint)
-                }
-            }
-            .padding(.leading, Size.avatar + Space.s)
-            .modifier(RowChrome(selected: false) { store.select(session) })
-            .help("Subagent of @\(session.label). It keeps running after the session's own turn ends, and the session stays awake until it finishes.")
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(subagent.type) subagent of \(session.label), running")
         }
     }
 }
