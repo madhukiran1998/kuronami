@@ -19,7 +19,10 @@ final class OrganizerDock {
     private let button: NSPanel
     private let panel: OrganizerPanel
     private let container = SurfaceContainer()
-    private var chooser: NSView!
+    private var chooser: ChooserHostingView<OrganizerChooser>!
+    private let chooserState = OrganizerChooserState()
+    private var installedWatch: AnyCancellable?
+    private var startWatch: Task<Void, Never>?
     private weak var session: TerminalSession?
     private var choiceWatch: AnyCancellable?
     /// Windows whose clicks leave the organizer open (popped-out tiles, the switcher, the mention picker).
@@ -64,8 +67,10 @@ final class OrganizerDock {
         header.sizingOptions = []
         header.translatesAutoresizingMaskIntoConstraints = false
         container.translatesAutoresizingMaskIntoConstraints = false
-        chooser = NSHostingView(rootView: OrganizerChooser(choose: { [weak self] in self?.choose($0) },
-                                                           chooseModel: { [weak self] in self?.chooseModel($0) }))
+        chooser = ChooserHostingView(rootView: OrganizerChooser(state: chooserState,
+                                                                pick: { [weak self] in self?.pick($0) },
+                                                                back: { [weak self] in self?.goBack() }))
+        chooser.onKey = { [weak self] in self?.handleKey($0) ?? false }
         chooser.translatesAutoresizingMaskIntoConstraints = false
         chooser.isHidden = true
         frame.addSubview(container)
@@ -90,6 +95,9 @@ final class OrganizerDock {
         // asks for a model.
         choiceWatch = store.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.syncChooser() }
+        }
+        installedWatch = InstalledAgents.shared.$kinds.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.skipCLIStepIfSole() }
         }
         // Clicking anywhere else in Tako folds it away, like a popover. Only a click: the
         // organizer's own work (a confirm sheet, a popped-out tile, an app it opens) also takes
@@ -131,7 +139,7 @@ final class OrganizerDock {
         self.session = session
         container.show(session.surface)
         session.surface.setOccluded(!state.isOpen)
-        if state.isOpen { panel.makeFirstResponder(session.surface) }
+        if state.isOpen, chooser.isHidden { panel.makeFirstResponder(session.surface) }
     }
 
     func detach(_ session: TerminalSession) {
@@ -154,9 +162,16 @@ final class OrganizerDock {
         close(restoreFocus: false)
     }
 
-    /// A click anywhere on the panel (its frame and header too) leaves the keyboard in the terminal.
+    /// A click anywhere on the panel (its frame and header too) leaves the keyboard in the terminal,
+    /// or in the chooser while it shows.
     private func focusOnClickIn(_ event: NSEvent) {
-        guard state.isOpen, event.window === panel, chooser.isHidden, let session else { return }
+        guard state.isOpen, event.window === panel else { return }
+        if !chooser.isHidden {
+            if !panel.isKeyWindow { panel.makeKey() }
+            if panel.firstResponder !== chooser, !(panel.firstResponder is NSText) { panel.makeFirstResponder(chooser) }
+            return
+        }
+        guard let session else { return }
         if !panel.isKeyWindow { panel.makeKey() }
         if panel.firstResponder !== session.surface, !(panel.firstResponder is NSText) { panel.makeFirstResponder(session.surface) }
     }
@@ -171,7 +186,9 @@ final class OrganizerDock {
         if panel.parent !== window { window.addChildWindow(panel, ordered: .above) }
         reposition()
         panel.makeKeyAndOrderFront(nil)
-        if let session {
+        if !chooser.isHidden {
+            panel.makeFirstResponder(chooser)
+        } else if let session {
             session.surface.setOccluded(false)
             panel.makeFirstResponder(session.surface)
         }
@@ -189,24 +206,134 @@ final class OrganizerDock {
 
     /// The first time, the panel asks which CLI and model to run instead of starting one.
     private func startIfNeeded() {
-        chooser.isHidden = !store.organizerNeedsChoice
-        guard chooser.isHidden else { return }
-        store.startOrganizer()
+        guard store.organizerNeedsChoice else {
+            chooser.isHidden = true
+            store.startOrganizer()
+            return
+        }
+        showChooser()
+    }
+
+    /// Shows the chooser on its first step (or a model step, when there is nothing to choose
+    /// between CLIs) and makes it the keyboard's target. A pending failure note stays as it is.
+    private func showChooser() {
+        InstalledAgents.shared.refresh()
+        if chooserState.model.notice == nil {
+            let installed = InstalledAgents.shared
+            if let kind = SessionStore.chosenOrganizerKind ?? OrganizerOnboarding.soleCLI(installed: installed.kinds) {
+                SessionStore.organizerKind = kind
+                chooserState.model = .models(for: kind)
+            } else {
+                chooserState.model = .clis(isEnabled: installed.isInstalled)
+            }
+        }
+        chooser.isHidden = false
+        if state.isOpen { panel.makeFirstResponder(chooser) }
+    }
+
+    /// Installed CLIs just became known: with only one, its model step replaces the CLI step.
+    private func skipCLIStepIfSole() {
+        guard !chooser.isHidden, chooserState.model.step == nil,
+              let kind = OrganizerOnboarding.soleCLI(installed: InstalledAgents.shared.kinds) else { return }
+        choose(kind)
+    }
+
+    private var rows: (count: Int, isEnabled: (Int) -> Bool) {
+        if let kind = chooserState.model.step { return (SessionStore.organizerModels(for: kind).count, { _ in true }) }
+        let choices = SessionStore.organizerChoices
+        return (choices.count, { InstalledAgents.shared.isInstalled(choices[$0]) })
+    }
+
+    private func handleKey(_ key: OrganizerChooserKey) -> Bool {
+        let rows = rows
+        switch chooserState.model.handle(key, count: rows.count, isEnabled: rows.isEnabled) {
+        case .pick(let index): pick(index)
+        case .back: goBack()
+        case .none: break
+        }
+        return true
+    }
+
+    private func pick(_ index: Int) {
+        if let kind = chooserState.model.step {
+            let models = SessionStore.organizerModels(for: kind)
+            if models.indices.contains(index) { chooseModel(models[index].name, of: kind) }
+        } else {
+            let choices = SessionStore.organizerChoices
+            if choices.indices.contains(index) { choose(choices[index]) }
+        }
+    }
+
+    /// One step back; on the first step (or with no CLI to go back to), folds the panel away.
+    private func goBack() {
+        if chooserState.model.step != nil, OrganizerOnboarding.soleCLI(installed: InstalledAgents.shared.kinds) == nil {
+            chooserState.model = .clis(isEnabled: InstalledAgents.shared.isInstalled)
+        } else {
+            close()
+        }
     }
 
     private func choose(_ kind: SessionKind) {
         store.chooseOrganizer(kind)
+        chooserState.model = .models(for: kind)
         syncChooser()
     }
 
-    private func chooseModel(_ name: String?) {
+    private func chooseModel(_ name: String?, of kind: SessionKind) {
+        chooserState.model.notice = nil
         chooser.isHidden = true
         store.chooseOrganizerModel(name)
+        watchStart(kind: kind, name: name)
+    }
+
+    /// A model the CLI won't run, or a CLI that isn't there, would otherwise leave "Not running".
+    /// Within a few seconds of a choice, an organizer that is gone or has exited sends the user
+    /// back to the model step with a note.
+    private func watchStart(kind: SessionKind, name: String?) {
+        startWatch?.cancel()
+        let began = Date()
+        startWatch = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard let self, !Task.isCancelled else { return }
+                // The user switched CLI or model since: another watch or no watch applies.
+                guard SessionStore.organizerKind == kind, SessionStore.chosenOrganizerModel(for: kind) == (name ?? "") else { return }
+                let organizer = store.organizer
+                let exited = organizer.map { $0.isExitedProcess || { if case .failed = $0.state { return true } else { return false } }($0) }
+                switch OrganizerOnboarding.startVerdict(exited: exited, launching: store.organizerStarting || store.launchingCount > 0,
+                                                        elapsed: Date().timeIntervalSince(began)) {
+                case .waiting: continue
+                case .started: return
+                case .failed:
+                    if let organizer { store.close(organizer) }
+                    SessionStore.forgetOrganizerModel(for: kind)
+                    let title = SessionStore.organizerModels(for: kind).first { $0.name == name }?.title ?? name ?? "its default model"
+                    chooserState.model = .models(for: kind, notice: OrganizerOnboarding.failureMessage(kind: kind, modelTitle: title), avoiding: name)
+                    showChooser()
+                    return
+                }
+            }
+        }
     }
 
     private func syncChooser() {
         let hidden = !store.organizerNeedsChoice
-        if chooser.isHidden != hidden { chooser.isHidden = hidden }
+        guard chooser.isHidden != hidden else { return }
+        if hidden { chooser.isHidden = true } else { showChooser() }
+    }
+}
+
+/// Takes the keyboard while the chooser shows, so keys never reach a terminal surface behind it.
+private final class ChooserHostingView<Content: View>: NSHostingView<Content> {
+    var onKey: ((OrganizerChooserKey) -> Bool)?
+
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+              let key = OrganizerChooserKey.from(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers),
+              onKey?(key) == true else { return super.keyDown(with: event) }
     }
 }
 
@@ -348,7 +475,7 @@ private struct OrganizerHeader: View {
                 OrganizerTitle(session: organizer)
             } else {
                 Text("Organizer").font(Typeface.headline).foregroundStyle(Tone.text)
-                Text(store.launchingCount > 0 ? "Starting…" : "Not running").font(Typeface.caption).foregroundStyle(Tone.faint)
+                Text(choosing ? "Setup" : store.launchingCount > 0 ? "Starting…" : "Not running").font(Typeface.caption).foregroundStyle(Tone.faint)
                 if store.launchingCount == 0 && !choosing {
                     Button("Start", action: start).buttonStyle(.plain).font(Typeface.caption.weight(.medium)).foregroundStyle(Tone.text)
                 }
@@ -418,32 +545,47 @@ private struct OrganizerTitle: View {
     }
 }
 
+@MainActor
+final class OrganizerChooserState: ObservableObject {
+    @Published var model = OrganizerChooserModel()
+}
+
 /// The first time the panel opens: which CLI runs the organizer, then which of its models. Ones
-/// not on the PATH show, greyed.
+/// not on the PATH show, greyed. Keys drive it (see OrganizerChooserKey); the selected row has a ring.
 private struct OrganizerChooser: View {
-    let choose: (SessionKind) -> Void
-    let chooseModel: (String?) -> Void
+    @ObservedObject var state: OrganizerChooserState
+    let pick: (Int) -> Void
+    let back: () -> Void
     @ObservedObject private var installed = InstalledAgents.shared
-    @AppStorage(SessionStore.organizerKindKey, store: SessionStore.organizerDefaults) private var chosen: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
-            if let kind = SessionStore.chosenOrganizerKind {
+            if let notice = state.model.notice {
+                Text(notice).font(Typeface.caption.weight(.medium)).foregroundStyle(Palette.attention)
+                    .frame(width: 300, alignment: .leading)
+            }
+            if let kind = state.model.step {
                 models(kind)
             } else {
                 clis
             }
+            Spacer(minLength: 0)
+            Text(hint).font(Typeface.caption).foregroundStyle(Tone.faint)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(Space.m)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Tone.deep)
-        .onAppear { installed.refresh() }
+    }
+
+    private var hint: String {
+        state.model.step == nil ? "↑↓ choose · ↩ select · esc close" : "↑↓ choose · ↩ start · esc back"
     }
 
     @ViewBuilder private var clis: some View {
         Text("Run the organizer with").font(Typeface.headline).foregroundStyle(Tone.text)
-        ForEach(SessionStore.organizerChoices) { kind in
+        ForEach(Array(SessionStore.organizerChoices.enumerated()), id: \.element) { index, kind in
             let available = installed.isInstalled(kind)
-            Button { choose(kind) } label: {
+            Button { pick(index) } label: {
                 HStack(spacing: Space.s) {
                     AgentAvatar(kind: kind, dimmed: !available)
                     VStack(alignment: .leading, spacing: Space.xxs) {
@@ -451,46 +593,69 @@ private struct OrganizerChooser: View {
                         Text(available ? kind.organizerNote : "not installed").font(Typeface.caption).foregroundStyle(Tone.faint)
                     }
                     Spacer(minLength: 0)
+                    Text("\(index + 1)").font(Typeface.caption).foregroundStyle(Tone.faint)
                 }
-                .modifier(ChoiceRow())
+                .modifier(ChoiceRow(selected: state.model.selection == index && available))
             }
             .buttonStyle(.plain)
             .disabled(!available)
+            .onHover { if $0, available { state.model.selection = index } }
         }
         Text("You can change it later in the header or in Settings.").font(Typeface.caption).foregroundStyle(Tone.faint)
     }
 
     /// The second step: a small model is recommended, since the organizer wakes on every update.
     @ViewBuilder private func models(_ kind: SessionKind) -> some View {
+        let models = SessionStore.organizerModels(for: kind)
         Text("Pick \(kind.displayName)'s model").font(Typeface.headline).foregroundStyle(Tone.text)
         Text("It wakes on every update it watches, so a smaller model saves the most tokens.")
             .font(Typeface.caption).foregroundStyle(Tone.faint).frame(width: 300, alignment: .leading)
-        ForEach(SessionStore.organizerModels(for: kind)) { model in
-            Button { chooseModel(model.name) } label: {
+        ForEach(Array(models.enumerated()), id: \.element.id) { index, model in
+            Button { pick(index) } label: {
                 VStack(alignment: .leading, spacing: Space.xxs) {
                     HStack(spacing: Space.s) {
                         Text(model.title).font(Typeface.body.weight(.medium)).foregroundStyle(Tone.text)
                         if model.recommended { Tag(text: "Recommended", tint: Palette.accent) }
+                        Spacer(minLength: 0)
+                        Text("\(index + 1)").font(Typeface.caption).foregroundStyle(Tone.faint)
                     }
                     Text(model.detail).font(Typeface.caption).foregroundStyle(Tone.faint).fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .modifier(ChoiceRow())
+                .modifier(ChoiceRow(selected: state.model.selection == index))
+            }
+            .buttonStyle(.plain)
+            .onHover { if $0 { state.model.selection = index } }
+        }
+        if models.indices.contains(state.model.selection) {
+            Button { pick(state.model.selection) } label: {
+                Text("Start with \(models[state.model.selection].title)")
+                    .font(Typeface.body.weight(.medium)).foregroundStyle(Tone.text)
+                    .frame(width: 300)
+                    .padding(.vertical, Space.s)
+                    .background(Palette.accent, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
             }
             .buttonStyle(.plain)
         }
-        Button("Choose another CLI") { chosen = nil }
-            .buttonStyle(.plain).font(Typeface.caption).foregroundStyle(Tone.muted)
+        if OrganizerOnboarding.soleCLI(installed: installed.kinds) == nil {
+            Button("Choose another CLI", action: back)
+                .buttonStyle(.plain).font(Typeface.caption).foregroundStyle(Tone.muted)
+        }
     }
 }
 
-/// One choice on the chooser: a fixed-width card.
+/// One choice on the chooser: a fixed-width card, ringed while selected.
 private struct ChoiceRow: ViewModifier {
+    let selected: Bool
+
     func body(content: Content) -> some View {
         content
             .padding(Space.s)
             .frame(width: 300)
-            .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+            .background(selected ? Tone.surface.opacity(1) : Tone.surface.opacity(0.6),
+                        in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous)
+                .strokeBorder(selected ? Palette.accent : Color.clear, lineWidth: Size.hairline * 2))
             .contentShape(RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
     }
 }

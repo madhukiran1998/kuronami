@@ -95,6 +95,11 @@ extension SessionStore {
         organizerDefaults.set(name ?? "", forKey: organizerModelKey(kind))
     }
 
+    /// A model that didn't start: forgotten, so the panel asks again.
+    static func forgetOrganizerModel(for kind: SessionKind) {
+        organizerDefaults.removeObject(forKey: organizerModelKey(kind))
+    }
+
     /// What the organizer is launched with: nil for the CLI's default.
     static func organizerModel(for kind: SessionKind) -> String? {
         chosenOrganizerModel(for: kind).flatMap { $0.isEmpty ? nil : $0 }
