@@ -24,8 +24,8 @@ struct ServerStrip: View {
             .frame(maxHeight: .infinity)
         }
         .scrollIndicators(.never)
+        // No fill of its own: it sits on the canvas, which carries the theme.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Tone.floor)
     }
 }
 
@@ -154,43 +154,5 @@ private struct ServerChip: View {
 
     private func open(_ port: Int) {
         if let url = URL(string: "http://localhost:\(port)") { NSWorkspace.shared.open(url) }
-    }
-}
-
-/// Toolbar center: how many agents are working, and how many need you. Approvals are answered
-/// on the agent's own card (or ⌥⌘Y / ⌥⌘N); this only takes you there.
-struct AttentionQueue: View {
-    @ObservedObject var store: SessionStore
-
-    var body: some View {
-        let waiting = store.attentionCount
-        let working = store.sessions.filter { $0.state == .working || $0.state == .starting }.count
-        if waiting > 0 {
-            Button { store.selectNextNeedingAttention() } label: {
-                HStack(spacing: Space.xs + 2) {
-                    Circle().fill(Palette.attention).frame(width: 6, height: 6)
-                    Text(waiting == 1 ? "1 needs you" : "\(waiting) need you")
-                    KeyboardHint(keys: "⌘J")
-                }
-                .font(Typeface.callout.weight(.semibold))
-                .foregroundStyle(Palette.attention)
-                .padding(.leading, Space.s + 2)
-                .padding(.trailing, Space.xs)
-                .frame(height: 24)
-                .background(Palette.attention.opacity(0.12), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .help("Go to the agent that has waited longest (⌘J)")
-        } else if working > 0 {
-            HStack(spacing: Space.xs + 2) {
-                Circle().fill(Palette.working).frame(width: 6, height: 6)
-                Text("\(working) working")
-            }
-            .font(Typeface.callout)
-            .foregroundStyle(Tone.muted)
-            .frame(height: 24)
-        } else {
-            Color.clear.frame(width: 1, height: 1)
-        }
     }
 }

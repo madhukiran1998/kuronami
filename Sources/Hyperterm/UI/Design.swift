@@ -65,6 +65,10 @@ enum Size {
     static let statusDot: CGFloat = 7
     static let avatar: CGFloat = 22
     static let hairline: CGFloat = 1
+    /// The window's titlebar band (there is no toolbar): the traffic lights sit in it.
+    static let titlebar: CGFloat = 28
+    /// How far the traffic lights reach into that band from the window's leading edge.
+    static let trafficLights: CGFloat = 72
 }
 
 // MARK: - Color
@@ -80,6 +84,9 @@ enum Ink {
     /// Hover and selection.
     static let raised = NSColor(srgbRed: 0.137, green: 0.131, blue: 0.125, alpha: 1)
     static let hairline = NSColor(srgbRed: 0.165, green: 0.158, blue: 0.150, alpha: 1)
+    /// Night's chrome: near-black, see-through. Sidebar, inspector and canvas all take it, so
+    /// they read as one sheet; tile headers sit on the canvas and show it.
+    static let night = NSColor(srgbRed: 0.031, green: 0.031, blue: 0.031, alpha: 0.72)
     /// Bone, the paper of the icon's print.
     static let text = NSColor(srgbRed: 0.929, green: 0.910, blue: 0.867, alpha: 1)
     static let muted = NSColor(srgbRed: 0.620, green: 0.600, blue: 0.565, alpha: 1)
@@ -98,8 +105,6 @@ enum Tone {
     static let surface = Color(nsColor: Ink.surface)
     static let raised = Color(nsColor: Ink.raised)
     static let hairline = Color(nsColor: Ink.hairline)
-    /// Sidebar and inspector fill. Clear when translucent: their AppKit backing already takes the opacity.
-    @MainActor static var pane: Color { Theme.isTranslucent ? .clear : deep }
     static let text = Color(nsColor: Ink.text)
     static let muted = Color(nsColor: Ink.muted)
     static let faint = Color(nsColor: Ink.faint)
@@ -134,26 +139,61 @@ enum Palette {
     }
 }
 
+/// The window's two looks. The layout is the same in both; only colours, opacity and how the
+/// window goes full screen differ.
+enum WindowTheme: String, CaseIterable {
+    /// Near-black chrome the desktop shows faintly through (with Ghostty's own `background-blur`
+    /// if the user set one); full screen in place.
+    case night
+    /// Opaque sumi panels and native full screen.
+    case original
+
+    static let defaultsKey = "windowTheme"
+
+    var title: String { self == .night ? "Night" : "Original" }
+
+    /// See-through window, full screen in place (native full screen would put it on a black Space).
+    var isTranslucent: Bool { self == .night }
+
+    /// Sidebar and inspector.
+    var paneFill: NSColor { self == .night ? Ink.night : Ink.deep }
+    /// The canvas the tiles float on.
+    var canvasFill: NSColor { self == .night ? Ink.night : Ink.floor }
+    /// Tile headers and the backing under a terminal. Clear at night: the canvas shows through,
+    /// so headers match the sidebar, and each terminal paints its own see-through background.
+    func tileFill(terminal: NSColor) -> NSColor { self == .night ? .clear : terminal }
+    /// Nearly clear rather than clear at night, so the window server still applies a blur.
+    var windowFill: NSColor { self == .night ? .white.withAlphaComponent(0.001) : Ink.floor }
+
+    static func load(from defaults: UserDefaults) -> WindowTheme {
+        defaults.string(forKey: defaultsKey).flatMap(WindowTheme.init(rawValue:)) ?? .night
+    }
+
+    func save(to defaults: UserDefaults) { defaults.set(rawValue, forKey: Self.defaultsKey) }
+}
+
 /// The terminal's own colors, from the user's Ghostty theme, for surfaces that show terminal
-/// content (diffs, previews) so they read as part of the terminal.
+/// content (diffs, previews) so they read as part of the terminal; and the window's theme.
 @MainActor
 enum Theme {
     static private(set) var terminalBackground = NSColor(srgbRed: 0.07, green: 0.07, blue: 0.08, alpha: 1)
     static private(set) var terminalForeground = NSColor(white: 0.9, alpha: 1)
-    /// The user's Ghostty `background-opacity`. Below 1 the window turns see-through like Ghostty's.
-    static private(set) var backgroundOpacity: CGFloat = 1
+    /// View › Theme. Changing it posts `.windowThemeChanged`; windows restyle in place.
+    static private(set) var window = AppSettings.windowTheme
 
-    static var isTranslucent: Bool { backgroundOpacity < 1 }
+    static var isTranslucent: Bool { window.isTranslucent }
+
+    static func setWindow(_ theme: WindowTheme) {
+        guard theme != window else { return }
+        window = theme
+        AppSettings.windowTheme = theme
+        NotificationCenter.default.post(name: .windowThemeChanged, object: nil)
+    }
 
     static func load(from config: ghostty_config_t?) {
         guard let config else { return }
         if let bg = color(config, "background") { terminalBackground = bg }
         if let fg = color(config, "foreground") { terminalForeground = fg }
-        var opacity: Double = 1
-        let key = "background-opacity"
-        if ghostty_config_get(config, &opacity, key, UInt(key.utf8.count)) {
-            backgroundOpacity = CGFloat(min(1, max(0, opacity)))
-        }
     }
 
     private static func color(_ config: ghostty_config_t, _ key: String) -> NSColor? {
@@ -627,16 +667,43 @@ func elapsed(since date: Date, now: Date = Date()) -> String {
     return "\(seconds / 86_400)d"
 }
 
+extension Notification.Name {
+    static let windowThemeChanged = Notification.Name("KuronamiWindowThemeChanged")
+}
+
 /// The canvas terminals float on: flat graphite.
 final class InkCanvas: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        // Translucent: the window's blur shows through and each terminal tints itself, as in Ghostty.
-        layer?.backgroundColor = Theme.isTranslucent ? NSColor.clear.cgColor : Ink.floor.cgColor
+        applyTheme()
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
+
+    @MainActor func applyTheme() { layer?.backgroundColor = Theme.window.canvasFill.cgColor }
+}
+
+/// Empty chrome the window is dragged by: the sidebar's top inset, the canvas's top edge.
+/// Double-click zooms or minimizes, as the system setting says.
+final class WindowDragView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window, window.isMovable else { return }
+        guard event.clickCount == 2 else { window.performDrag(with: event); return }
+        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+        case "Minimize": window.performMiniaturize(nil)
+        case "None": break
+        default: window.performZoom(nil)
+        }
+    }
+}
+
+/// `WindowDragView` behind SwiftUI content.
+struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> WindowDragView { WindowDragView() }
+    func updateNSView(_ view: WindowDragView, context: Context) {}
 }
 
 // MARK: - Organizer

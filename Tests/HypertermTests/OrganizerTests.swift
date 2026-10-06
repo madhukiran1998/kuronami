@@ -17,6 +17,20 @@ final class OrganizerTests: XCTestCase {
         XCTAssertNil(api.info().organizer)
     }
 
+    func testOrganizersBrowsersAreListedWithTheLooseOnes() {
+        let api = agent("api"), organizer = agent("organizer", organizer: true)
+        func browser(_ label: String, owner: TerminalSession?) -> TerminalSession {
+            var spec = LaunchSpec(label: label, kind: .browser, cwd: "/workspace/atlas")
+            spec.owner = owner?.id
+            return TerminalSession(spec: spec, resume: false)
+        }
+        let mine = browser("docs", owner: api), its = browser("alpha", owner: organizer), loose = browser("web", owner: nil)
+        let store = SessionStore(previewSessions: [api, organizer, mine, its, loose], previewLayout: .grid)
+
+        XCTAssertEqual(store.browsers(ownedBy: api).map(\.id), [mine.id])
+        XCTAssertEqual(store.looseBrowsers.map(\.id), [its.id, loose.id])
+    }
+
     func testChoosingTheOrganizerOpensItsPanelInsteadOfATile() {
         let api = agent("api"), organizer = agent("organizer", organizer: true)
         let store = SessionStore(previewSessions: [api, organizer], previewLayout: .focus)

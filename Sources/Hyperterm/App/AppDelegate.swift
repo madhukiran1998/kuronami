@@ -338,6 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func enableCodexApprovals(_ sender: Any?) { AgentIntegration.installCodexApprovalHook() }
     @objc func cleanUpWorktrees(_ sender: Any?) { windowController?.presentWorktreeCleanup() }
     @objc func toggleInspectorPane(_ sender: Any?) { windowController?.toggleInspector() }
+    @objc func toggleSidebarPane(_ sender: Any?) { windowController?.toggleSidebar() }
     @objc func newBrowser(_ sender: Any?) { store.openBrowser() }
     @objc func minimizeTile(_ sender: Any?) {
         guard let session = store.selected else { NSSound.beep(); return }
@@ -349,6 +350,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentBrowser.agentsMayUseOutsideChrome.toggle()
         sender.state = AgentBrowser.agentsMayUseOutsideChrome ? .on : .off
         AgentIntegration.install()
+    }
+    /// View › Theme: applies to the window at once, and to every launch after.
+    @objc func chooseWindowTheme(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let theme = WindowTheme(rawValue: raw) else { return }
+        Theme.setWindow(theme)
+        sender.menu?.items.forEach { $0.state = $0 === sender ? .on : .off }
     }
     @objc func reviewSelected(_ sender: Any?) {
         if let session = store.selected { windowController?.showInspector(for: session) }
