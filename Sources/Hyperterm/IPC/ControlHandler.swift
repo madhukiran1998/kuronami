@@ -359,15 +359,15 @@ struct ControlHandler {
                 spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
                 let child = await store.launch(spec, select: false, isolateIfPossible: isolate, task: task)
                 child.record(.note, "Started by the organizer")
-                batch.started.append(child)
-                guard batch.started.count == count else { return }
-                // The user asked for them, so they show: one is selected, several land side by side
-                // like a project window opened for them.
-                store.showOpenedByOrganizer(batch.started)
-                guard !batch.replied else { return }
-                let labels = batch.started.map { "@" + $0.label }.joined(separator: ", ")
+                batch.started[index] = child
+                // The user asked for them, so each shows as soon as it's up: one is selected, several
+                // starting together land side by side like a project window opened for them.
+                store.showOpenedByOrganizer([child])
+                guard batch.started.count == count, !batch.replied else { return }
+                let ordered = batch.started.sorted { $0.key < $1.key }.map(\.value)
+                let labels = ordered.map { "@" + $0.label }.joined(separator: ", ")
                 var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))")
-                response.session = batch.started.first?.info()
+                response.session = ordered.first?.info()
                 reply(response)
             } }
         }
@@ -381,7 +381,7 @@ struct ControlHandler {
 
     /// The agents of one organizer start request; the reply waits for the last to be up.
     @MainActor private final class LaunchBatch {
-        var started: [TerminalSession] = []
+        var started: [Int: TerminalSession] = [:]
         var replied = false
     }
 
@@ -596,7 +596,7 @@ struct ControlHandler {
         switch request.text {
         case "on":
             store.setPhoneMode(true)
-            return .success(text: "Phone Mode on: Kuronami approves agents' ordinary requests; every agent's questions and risky requests come to you.")
+            return .success(text: "Phone Mode on: Tako approves agents' ordinary requests; every agent's questions and risky requests come to you.")
         case "off":
             store.setPhoneMode(false)
             return .success(text: "Phone Mode off: agents' waits go to the user again.")

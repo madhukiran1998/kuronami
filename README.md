@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://nikshepsvn.com/tako/">Website</a> ·
   <a href="#install">Install</a> ·
-  <a href="#why-kuronami">Why</a> ·
+  <a href="#why-tako">Why</a> ·
   <a href="#how-it-compares">Compare</a> ·
   <a href="#everything-it-does">Features</a>
 </p>

@@ -24,6 +24,14 @@ final class PhoneModeTests: XCTestCase {
         XCTAssertEqual(store.organizerDigest.events.last?.kind, .phoneMode(false))
     }
 
+    func testStartingWithTheOrganizerUpOpensRemoteControlAtOnce() {
+        let (store, _, organizer) = fixture()
+        store.startPhoneMode()
+        XCTAssertTrue(store.isPhoneModeOn)
+        XCTAssertFalse(store.remoteControlWhenOrganizerUp)
+        XCTAssertEqual(organizer.pendingMessages.last, "/remote-control")
+    }
+
     func testPhoneModeScopeNeverRunsOut() {
         var delegation = Delegation(scope: .phoneMode)
         delegation.handled = 500

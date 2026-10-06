@@ -25,8 +25,10 @@ for OLD in /Applications/Tako.app /Applications/Kuronami.app; do
     exit 1
   fi
 done
-# Also stops copies installed under the old names (Kuronami.app, Hyperterm.app), which share this app's data.
-PIDS=$(pgrep -f "^/Applications/(Tako|Kuronami|Hyperterm)\.app/Contents/MacOS/(Tako|Kuronami|Hyperterm)$" || true)
+# Stops every running copy, wherever it lives (/Applications, ~/Applications, build/DerivedData, a worktree) and under the
+# old names (Kuronami.app, Hyperterm.app), which share this app's data; otherwise the new app hands off to it and quits.
+# Matches only the app's own executable as the command (args allowed), not the ht helper or an editor with the path in args.
+PIDS=$(pgrep -f "^/([^ ]*/)?(Tako|Kuronami|Hyperterm)\.app/Contents/MacOS/(Tako|Kuronami|Hyperterm)( |\$)" || true)
 for PID in $PIDS; do kill "$PID"; done
 # Wait for them to really exit (Chromium makes shutdown take a few seconds): a new copy that
 # finds the old one still answering its socket hands off to it and quits.

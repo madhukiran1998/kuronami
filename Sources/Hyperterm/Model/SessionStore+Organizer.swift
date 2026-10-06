@@ -122,6 +122,10 @@ extension SessionStore {
         Task { @MainActor [spec] in
             await self.launch(spec, select: false, task: task)
             self.organizerStarting = false
+            if self.remoteControlWhenOrganizerUp, let organizer = self.organizer {
+                self.remoteControlWhenOrganizerUp = false
+                if self.isPhoneModeOn { organizer.openRemoteControl() }
+            }
             // The CLI was switched while this one was starting.
             if let organizer = self.organizer, organizer.kind != Self.organizerKind { self.switchOrganizer(to: Self.organizerKind) }
         }
