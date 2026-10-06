@@ -200,11 +200,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// With the sidebar hidden the traffic lights sit over the canvas, so the tiles start below a
-    /// titlebar band that holds them and the sidebar's button. Otherwise, and in full screen
-    /// (no traffic lights), the tiles reach the top edge.
+    /// titlebar band that holds them and the sidebar's button and "N needs you" pill. Full screen
+    /// keeps the band too (the pill must stay reachable), just without the traffic lights.
+    /// Otherwise the tiles reach the top edge.
     private func updateCanvasBand() {
-        guard let window = window as? KuronamiWindow, let sidebarItem else { return }
-        let band = sidebarItem.isCollapsed && !window.isFullScreen
+        guard let sidebarItem else { return }
+        let band = sidebarItem.isCollapsed
         guard band != canvasBandShown else { return }
         canvasBandShown = band
         terminalTop?.constant = band ? Size.titlebar : 0

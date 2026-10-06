@@ -4,7 +4,7 @@ import AppKit
 extension SessionStore {
     /// Payloads can be large (PostToolUse carries whole tool output), so they're parsed on a
     /// serial background queue and applied on main in arrival order.
-    private static let parseQueue = DispatchQueue(label: "dev.hyperterm.hook-parse", qos: .userInitiated)
+    private nonisolated static let parseQueue = DispatchQueue(label: "dev.hyperterm.hook-parse", qos: .userInitiated)
 
     private func parseOffMain(_ payload: String, then apply: @escaping @MainActor ([String: Any]) -> Void) {
         Self.parseQueue.async {

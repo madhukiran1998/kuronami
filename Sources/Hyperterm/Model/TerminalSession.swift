@@ -382,7 +382,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         }
     }
 
-    static let trustReason = "Trust this folder?"
+    nonisolated static let trustReason = "Trust this folder?"
 
     /// Waits only the user can answer: trusting a folder, signing in.
     static func isUsersOwn(_ reason: String) -> Bool {
