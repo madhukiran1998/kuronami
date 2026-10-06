@@ -98,6 +98,19 @@ final class PhoneModeTests: XCTestCase {
         XCTAssertTrue(api.hasHookApproval)
     }
 
+    func testPopoverCopyAndRules() {
+        let since = Date(timeIntervalSince1970: 0)
+        let text = PhoneModePopover.detail(since: since)
+        XCTAssertTrue(text.hasPrefix("Remote Control since \(since.formatted(date: .omitted, time: .shortened))."))
+        XCTAssertTrue(text.hasSuffix("Ordinary requests are allowed; questions and risky ones come to you."))
+
+        let (store, _, _) = fixture()
+        store.startPhoneMode()
+        XCTAssertTrue(store.phoneModeAvailable, "the button shows while Claude runs the organizer")
+        store.switchOrganizer(to: .codex)
+        XCTAssertFalse(store.isPhoneModeOn, "switching to another CLI turns Phone Mode off")
+    }
+
     // MARK: - Fixtures
 
     private func fixture(extra: String? = nil) -> (SessionStore, TerminalSession, TerminalSession) {
