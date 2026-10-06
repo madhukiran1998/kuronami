@@ -178,6 +178,8 @@ ht ls
 - **Grid, split, or focus.** Every live terminal as a tile (⌘⌥3), the last two side by side (⌘⌥2), or one (⌘⌥1). ⌘⏎ zooms a tile.
 - **Resize anything.** Drag the gap between two tiles to resize them; it snaps to halves and thirds, and double-clicking evens that split out again. ⌥⌘0 evens out every tile. Split and grid each remember their own arrangement across launches.
 - **Arrange it your way.** Drag a tile by its header and drop it on another to trade places. Minimize a tile (⇧⌘M or the – on its header) to park it on the shelf under the canvas, next to your dev servers; click it there, or in the sidebar, to bring it back.
+- **Close to hide.** The red close button hides the window and leaves agents running; the Dock or the menu bar brings it back. ⌘Q quits.
+- **Idle agents sleep.** With *Put idle agents to sleep* on (Settings › General), an agent that has been idle for 10 minutes quits its CLI to free memory and keeps its screen; the next message or keystroke wakes it in the same conversation. Agents with subagents or background tasks running stay awake.
 - **Since you left.** Come back to an agent and a banner sums up what happened: edits, commands, approvals, tests, and the final answer.
 
 #### Start agents the way you want
@@ -186,6 +188,7 @@ ht ls
 - **Permissions, model and effort per agent.** *Ask First*, *Accept Edits*, *Plan* or *Full Access*, translated to each CLI's own flags (`--permission-mode` for Claude; approval and sandbox flags for Codex). Pick a model (Claude's `opus`/`sonnet`/`haiku` aliases, or any name) and, for Codex, reasoning effort. Leave them alone and the agent's own config applies.
 - **Plans you approve.** An agent in plan mode shows *Plan ready* on its card with *Approve Plan* and *Keep Planning*; the inspector's Plan tab shows the whole plan.
 - **Fork a conversation.** Right-click a Claude agent → *Fork Conversation* starts a new agent that continues from this point (`--resume --fork-session`); the original carries on unchanged.
+- **Or ask the organizer.** The Kuronami mark in the window's corner (⌃⌘O) opens an organizer agent: tell it what you want started, arranged or watched, and it does it with Kuronami's own tools. It can also answer questions for sessions you hand it, and it remembers past sessions.
 - **Reopen closed agents.** Closed agents with a conversation stay under *Recently closed* in the sidebar (and in ⌘P), one click from resuming.
 
 #### Answer approvals from anywhere
@@ -198,7 +201,7 @@ ht ls
 - **Any scope.** All changes since the branch left its base, only what's uncommitted, or exactly one turn. Unified or side by side, with whitespace changes hidden if you like.
 - **Comment on lines.** Double-click a diff line to comment; *Send comments* delivers them to the agent as one message (queued if it's mid-turn).
 - **Finish it.** Commit with a message your own Claude Code (or Codex) CLI drafts from the diff, following the repo's style; push; open a PR with a written title and description (via `gh`); merge into the base branch (refused if the main checkout is dirty or on another branch); or archive the worktree. Archiving commits leftover work to the branch first, so nothing is lost.
-- **Open in your editor.** ⌥⌘O, the toolbar, or any file's context menu opens the workspace in Cursor, VS Code, Zed, Xcode, JetBrains IDEs and others, whichever you have; the last one used becomes the default.
+- **Open in your editor.** ⌥⌘O, the editor button in the sidebar footer, or any file's context menu opens the workspace in Cursor, VS Code, Zed, Xcode, JetBrains IDEs and others, whichever you have; the last one used becomes the default.
 
 #### Turns and checkpoints
 Every agent turn in a Git workspace is checkpointed: a snapshot when the prompt goes in and another when the turn ends. Snapshots are hidden commits under `refs/kuronami/<session>/`, built in a throwaway index, so your index, HEAD, branches and stash are never touched and ignored files are left out.
@@ -210,7 +213,7 @@ Every agent turn in a Git workspace is checkpointed: a snapshot when the prompt 
 - **Continue after a rate limit.** When an agent stops on a usage limit, its card offers *Continue at 3:40 PM*; at the reset it's told to carry on.
 
 #### Project actions
-The toolbar's play button (and ⌘P) runs your project's commands. Kuronami detects them from `package.json` scripts (with your package manager), `Cargo.toml`, `Package.swift`, `go.mod`, `pyproject.toml` or a `Makefile`, or you list them yourself:
+The play button in the sidebar footer (and ⌘P) runs your project's commands. Kuronami detects them from `package.json` scripts (with your package manager), `Cargo.toml`, `Package.swift`, `go.mod`, `pyproject.toml` or a `Makefile`, or you list them yourself:
 ```json
 { "actions": [
     { "name": "Test", "command": "pnpm test" },
@@ -360,7 +363,7 @@ Sources/Hyperterm/Status    StatusReducer, ProcessInspector (identity, ports), G
 Sources/Hyperterm/IPC       control socket server and request handler (permissions)
 Sources/Hyperterm/Launch    agent wrappers, per-launch hooks/statusLine/MCP config
 Sources/Hyperterm/Browser   Chromium runtime (lazy start, DevTools port), browser surface and bar, Chrome logins import
-Sources/Hyperterm/UI        Design (tokens + components), LayoutTree, sidebar, toolbar, tiles, inspector, switcher, sheets
+Sources/Hyperterm/UI        Design (tokens + components), LayoutTree, sidebar, organizer, tiles, inspector, switcher, sheets
 Sources/HypertermHelper     Chromium helper process (renderer, GPU, utility)
 Sources/ht                  CLI, hook/permission/statusline entry points, stdio MCP server, browser MCP proxy
 Tests/HypertermTests        state machine, layout tree, checkpoints (real Git), agent options, project actions, naming,
