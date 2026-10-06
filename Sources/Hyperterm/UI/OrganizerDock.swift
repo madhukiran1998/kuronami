@@ -81,9 +81,12 @@ final class OrganizerDock {
             chooser.bottomAnchor.constraint(equalTo: frame.bottomAnchor),
         ])
         panel.contentView = frame
-        // Clicking anywhere else folds it away, like a popover.
-        NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.closeOnClickAway() }
+        // Clicking anywhere else in Kuronami folds it away, like a popover. Only a click: the
+        // organizer's own work (a confirm sheet, a popped-out tile, an app it opens) also takes
+        // focus from the panel, and must not fold it.
+        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            MainActor.assumeIsolated { self?.closeOnClickAway(event) }
+            return event
         }
     }
 
@@ -130,18 +133,15 @@ final class OrganizerDock {
     // MARK: - Opening and closing
 
     func toggle() {
-        // The click on the button itself took focus from the panel and already folded it.
-        if let foldedAt, Date().timeIntervalSince(foldedAt) < 0.4 { return }
         state.isOpen ? close() : open()
     }
 
-    /// When the panel last folded because focus left it.
-    private var foldedAt: Date?
-
-    private func closeOnClickAway() {
-        guard state.isOpen else { return }
-        foldedAt = Date()
-        close()
+    /// A click outside the panel and its button, except in a sheet (a confirm the organizer asked for).
+    private func closeOnClickAway(_ event: NSEvent) {
+        guard state.isOpen, let clicked = event.window, clicked !== panel, clicked !== button,
+              clicked.sheetParent == nil else { return }
+        // The click is already taking focus where it landed.
+        close(restoreFocus: false)
     }
 
     func open() {
@@ -157,12 +157,12 @@ final class OrganizerDock {
         }
     }
 
-    func close() {
+    func close(restoreFocus: Bool = true) {
         state.isOpen = false
         session?.surface.setOccluded(true)
         window?.removeChildWindow(panel)
         panel.orderOut(nil)
-        guard let window else { return }
+        guard restoreFocus, let window else { return }
         window.makeKeyAndOrderFront(nil)
         if let selected = store.selected, selected.surface.window === window { window.makeFirstResponder(selected.surface) }
     }
@@ -254,7 +254,7 @@ private struct OrganizerButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(dock.isOpen ? "Hide the organizer" : "Organizer\(kind.map { " (\($0.displayName))" } ?? ""): start agents, arrange the window, close sessions")
+        .help(dock.isOpen ? "Hide the organizer (⌃⌘O)" : "Organizer\(kind.map { " (\($0.displayName))" } ?? ""): start agents, arrange the window, close sessions (⌃⌘O)")
         .accessibilityLabel(dock.isOpen ? "Hide the organizer" : "Open the organizer")
     }
 }

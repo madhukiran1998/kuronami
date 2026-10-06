@@ -75,6 +75,18 @@ final class OrganizerTests: XCTestCase {
         XCTAssertEqual(store.organizerWatches[api.id], "next")
     }
 
+    func testWatchKeepsWhileTheOrganizerHasExited() {
+        let api = agent("api", state: .idle), organizer = agent("organizer", organizer: true)
+        let store = SessionStore(previewSessions: [api, organizer], previewLayout: .grid)
+        organizer.apply(.childExited(0), source: "test")
+        store.organizerWatches[api.id] = "next"
+
+        store.reportToOrganizer(api, from: .working)
+
+        XCTAssertTrue(store.organizerDigest.isEmpty)
+        XCTAssertEqual(store.organizerWatches[api.id], "next")
+    }
+
     func testEventsWaitForTheWindowAndArriveAsOneDigest() {
         let api = agent("api", state: .idle), db = agent("db", state: .failed("API error"))
         let organizer = agent("organizer", organizer: true, state: .needsInput("busy"))

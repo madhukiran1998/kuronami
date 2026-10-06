@@ -339,6 +339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func cleanUpWorktrees(_ sender: Any?) { windowController?.presentWorktreeCleanup() }
     @objc func toggleInspectorPane(_ sender: Any?) { windowController?.toggleInspector() }
     @objc func toggleSidebarPane(_ sender: Any?) { windowController?.toggleSidebar() }
+    @objc func toggleOrganizer(_ sender: Any?) { windowController?.toggleOrganizer() }
     @objc func newBrowser(_ sender: Any?) { store.openBrowser() }
     @objc func minimizeTile(_ sender: Any?) {
         guard let session = store.selected else { NSSound.beep(); return }

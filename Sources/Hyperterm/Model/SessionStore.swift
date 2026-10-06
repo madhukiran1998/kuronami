@@ -407,13 +407,26 @@ final class SessionStore: ObservableObject {
         if session.spec.labelSource == .user || session.spec.labelSource == nil {
             reservedLabels[session.label] = Date()
         }
+        // Its events stop with the process, so a watch or handoff ends here, told to the organizer.
+        let organizerHears = organizer.map { $0.id != session.id && !$0.isExitedProcess } ?? false
+        if organizerWatches.removeValue(forKey: session.id) != nil, organizerHears {
+            addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .exited))
+        }
+        if session.delegation != nil {
+            session.delegation = nil
+            if organizerHears { addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .stoppedHandling("it was closed"))) }
+        }
         session.terminate()
         sessions.removeAll { $0.id == session.id }
         forgetOverlaps(with: session)
         childCancellables[session.id] = nil
         recent.removeAll { $0 == session.id }
         onRemove?(session)
-        if selectedID == session.id { select(sessions.last { !$0.isOrganizer }) }
+        // Next in view, so closing a tile never brings back one the shelf or a window holds.
+        if selectedID == session.id {
+            select(visibleIDs.compactMap { id in sessions.first { $0.id == id } }.last
+                ?? sessions.last { !$0.isOrganizer && !$0.isMinimized && !$0.isDetached })
+        }
         persist()
         notifier.updateBadge(count: attentionCount)
     }
@@ -618,7 +631,8 @@ final class SessionStore: ObservableObject {
             }
             return spec
         }.forEach { create($0, resume: true, select: false) }
-        select(sessions.first)
+        // Never the organizer: selecting it opens its panel instead.
+        select(sessions.first { !$0.isOrganizer })
         return true
     }
 

@@ -208,7 +208,7 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
             "properties": [
                 "task": ["type": "string", "description": "Everything the agent needs: goal, constraints, where to look, what done means"],
                 "folder": ["type": "string", "description": "Project folder, absolute or ~/…, e.g. \"~/Desktop/shop\""],
-                "kind": ["type": "string", "enum": ["claude", "codex"], "description": "Which agent (default claude)"],
+                "kind": ["type": "string", "enum": ["claude", "codex"], "description": "Which agent (default: the same CLI you run on)"],
                 "label": ["type": "string", "description": "Short kebab-case label, e.g. \"checkout-bug\""],
                 "worktree": ["type": "boolean", "description": "Own worktree and branch when the folder is a repo (default true)"],
                 "count": ["type": "integer", "description": "How many agents take this same task, 1–\(organizerStartCap) (default 1)"],

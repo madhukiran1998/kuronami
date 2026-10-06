@@ -65,6 +65,8 @@ extension SessionStore {
         Task { @MainActor [spec] in
             await self.launch(spec, select: false, task: task)
             self.organizerStarting = false
+            // The CLI was switched while this one was starting.
+            if let organizer = self.organizer, organizer.kind != Self.organizerKind { self.switchOrganizer(to: Self.organizerKind) }
         }
     }
 
@@ -106,6 +108,7 @@ extension SessionStore {
             for session in sessions where !session.isOrganizer {
                 if session.kind == .server {
                     session.pinnedToGrid = shown.contains(session.id)
+                    if shown.contains(session.id) { session.spec.minimized = nil }
                 } else {
                     session.spec.minimized = shown.contains(session.id) ? nil : true
                 }
@@ -242,7 +245,8 @@ extension SessionStore {
     func reportToOrganizer(_ session: TerminalSession, from previous: AgentState) {
         guard let organizer else { return }
         if organizer.id == session.id { flushOrganizerDigest(); return }
-        guard let event = organizerEvent(session, from: previous) else { return }
+        // An exited organizer would drop the event; the watch keeps until it can hear.
+        guard !organizer.isExitedProcess, let event = organizerEvent(session, from: previous) else { return }
         addToOrganizerDigest(event)
     }
 
