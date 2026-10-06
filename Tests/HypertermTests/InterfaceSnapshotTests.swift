@@ -130,6 +130,7 @@ final class InterfaceSnapshotTests: XCTestCase {
         let review = sample("navigation", kind: .claude, branch: "feat/navigation", state: .idle)
         review.summary = "Navigation refresh ready for review"
         review.readyForReview = true
+        review.finishedUnseen = true
         review.diffStat = DiffStat(added: 142, removed: 38, files: 5)
         review.testEvidence = TestEvidence(passed: true, summary: "42 checks passed", date: now)
         terminalPixels(review, lines: [
