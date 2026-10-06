@@ -207,6 +207,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         canvasSidebarButton?.isHidden = !band
     }
 
+    func toggleOrganizer() { organizerDock.toggle() }
+
     func toggleInspector() {
         guard let inspectorItem else { return }
         if Motion.reduced { inspectorItem.isCollapsed.toggle() }

@@ -254,7 +254,7 @@ private struct OrganizerButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(dock.isOpen ? "Hide the organizer" : "Organizer\(kind.map { " (\($0.displayName))" } ?? ""): start agents, arrange the window, close sessions")
+        .help(dock.isOpen ? "Hide the organizer (⌃⌘O)" : "Organizer\(kind.map { " (\($0.displayName))" } ?? ""): start agents, arrange the window, close sessions (⌃⌘O)")
         .accessibilityLabel(dock.isOpen ? "Hide the organizer" : "Open the organizer")
     }
 }
