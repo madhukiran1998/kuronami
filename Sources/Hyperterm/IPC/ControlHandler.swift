@@ -348,32 +348,41 @@ struct ControlHandler {
         let base = normalizeLabel(request.label ?? "")
         let isolate = request.worktree ?? true
         let store = self.store
-        // When memory is short the steward holds the launch; the organizer hears so right away.
-        let blocker = Steward.shared.launchBlocker()
-        let queued = blocker != nil
-        if let blocker {
-            reply(.success(text: "queued: \(blocker), so the steward starts \(count == 1 ? "it" : "them") when there's room"))
-        }
-        Steward.shared.enqueueLaunch { Task { @MainActor in
-            var started: [TerminalSession] = []
-            for index in 1...count {
+        // One queued launch per agent: each takes its own steward reservation, so the cap holds
+        // for a batch. When anything is held back the organizer hears so right away.
+        let batch = LaunchBatch()
+        for index in 1...count {
+            Steward.shared.enqueueLaunch { Task { @MainActor in
                 var spec = LaunchSpec(label: base.isEmpty || count == 1 ? base : "\(base)-\(index)",
                                       kind: kind, cwd: expandTilde(folder))
                 if spec.labelSource == .user { spec.labelSource = .agent }
                 spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
                 let child = await store.launch(spec, select: false, isolateIfPossible: isolate, task: task)
                 child.record(.note, "Started by the organizer")
-                started.append(child)
-            }
-            // The user asked for them, so they show: one is selected, several land side by side
-            // like a project window opened for them.
-            store.showOpenedByOrganizer(started)
-            let labels = started.map { "@" + $0.label }.joined(separator: ", ")
-            guard !queued else { return }
-            var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))")
-            response.session = started.first?.info()
-            reply(response)
-        } }
+                batch.started.append(child)
+                guard batch.started.count == count else { return }
+                // The user asked for them, so they show: one is selected, several land side by side
+                // like a project window opened for them.
+                store.showOpenedByOrganizer(batch.started)
+                guard !batch.replied else { return }
+                let labels = batch.started.map { "@" + $0.label }.joined(separator: ", ")
+                var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))")
+                response.session = batch.started.first?.info()
+                reply(response)
+            } }
+        }
+        // The launch tasks run after this returns, so `replied` is set before any can read it.
+        if Steward.shared.queuedLaunches > 0 {
+            batch.replied = true
+            let why = Steward.shared.launchBlocker() ?? "memory is short"
+            reply(.success(text: "queued: \(why), so the steward starts \(count == 1 ? "it" : "them") when there's room"))
+        }
+    }
+
+    /// The agents of one organizer start request; the reply waits for the last to be up.
+    @MainActor private final class LaunchBatch {
+        var started: [TerminalSession] = []
+        var replied = false
     }
 
     /// Closed agents: list them, or reopen some and show them, resuming each conversation.
@@ -716,7 +725,7 @@ struct ControlHandler {
         if !isUser && target.kind == .shell && target.id != callerSession?.id {
             return .failure("@\(target.label) is a shell; agents can't read shells")
         }
-        let lines = min(request.lines ?? 60, 2000)
+        let lines = max(1, min(request.lines ?? 60, 2000))
         // Asleep, the terminal holds a bare shell; the agent's last screen is what was asked for.
         if let kept = target.asleepScreen {
             let screen = kept.split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).joined(separator: "\n")

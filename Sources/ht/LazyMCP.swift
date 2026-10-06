@@ -192,7 +192,7 @@ private final class LazyProxy: @unchecked Sendable {
                 writeToAgent(["jsonrpc": "2.0", "id": id, "error": error])
                 return
             }
-            withState { self.directDiscover = ("\(id)", version) }
+            withState { self.directDiscover = (mcpRequestKey(id), version) }
         }
         if serverRunning {
             if let id { forward(line, id: id) } else { sendToChild(line) }
@@ -249,13 +249,13 @@ private final class LazyProxy: @unchecked Sendable {
             replyRPCError(id: id, "Couldn't start the \(name) MCP server (\(command.joined(separator: " "))).")
             return
         }
-        withState { self.directInitializeID = "\(id)" }
+        withState { self.directInitializeID = mcpRequestKey(id) }
         forward(line, id: id)
     }
 
     /// Sends an agent request to the server, failing it if there is no server to answer.
     private func forward(_ line: String, id: Any) {
-        let key = "\(id)"
+        let key = mcpRequestKey(id)
         let registered = withState { () -> Bool in
             guard self.child != nil else { return false }
             self.pending[key] = id
@@ -311,11 +311,13 @@ private final class LazyProxy: @unchecked Sendable {
     }
 
     private func stopServer(_ process: Process) {
-        withState {
-            guard self.child === process else { return }
+        let input = withState { () -> FileHandle? in
+            guard self.child === process else { return nil }
             self.child = nil
-            self.toChild = nil
+            defer { self.toChild = nil }
+            return self.toChild
         }
+        try? input?.close()
         process.terminate()
         serverGone(process)
     }
@@ -393,9 +395,11 @@ private final class LazyProxy: @unchecked Sendable {
 
     private func relayServerOutput(from pipe: Pipe, of process: Process) {
         defer { serverGone(process) }
-        guard let stream = fdopen(pipe.fileHandleForReading.fileDescriptor, "r") else { return }
+        // A dup, so closing the stream doesn't close the Pipe's own descriptor twice.
+        guard let stream = fdopen(dup(pipe.fileHandleForReading.fileDescriptor), "r") else { return }
         var buffer: UnsafeMutablePointer<CChar>?
         var capacity = 0
+        defer { free(buffer); fclose(stream) }
         while getline(&buffer, &capacity, stream) > 0, let buffer {
             handleServerLine(String(cString: buffer))
         }
@@ -408,7 +412,8 @@ private final class LazyProxy: @unchecked Sendable {
             writeToAgent(line)
             return
         }
-        let key = "\(id)"
+        let key = mcpRequestKey(id)
+        let hiddenKey = id as? String
         let waiter = withState { () -> DispatchSemaphore? in
             self.pending[key] = nil
             if key == self.directInitializeID {
@@ -419,14 +424,16 @@ private final class LazyProxy: @unchecked Sendable {
                 self.directDiscover = nil
                 self.discoverRefusal = message["error"].map { ["protocolVersion": discover.version as Any, "error": $0] }
             }
-            guard let waiter = self.hiddenWaiters.removeValue(forKey: key) else { return nil }
-            self.hiddenReplies[key] = message
+            guard let hiddenKey, let waiter = self.hiddenWaiters.removeValue(forKey: hiddenKey) else { return nil }
+            self.hiddenReplies[hiddenKey] = message
             return waiter
         }
         if let waiter {
             waiter.signal()
             return
         }
+        // A late reply to one of our own timed-out hidden requests is not the agent's to see.
+        if let text = id as? String, text.hasPrefix("ht-lazy-") { return }
         writeToAgent(line)
     }
 

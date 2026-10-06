@@ -40,6 +40,8 @@ private final class BrowserProxy: @unchecked Sendable {
     private var rewrites: [String: Rewrite] = [:]
     private var labelsByPage: [Int: String] = [:]
     private var ownLabel: String?
+    /// A different endpoint Tako reported while the server was running; the next call restarts there.
+    private var movedEndpoint: String?
     private var pageScopedTools: Set<String> = []
 
     private var hiddenCounter = 0
@@ -56,13 +58,34 @@ private final class BrowserProxy: @unchecked Sendable {
         signal(SIGPIPE, SIG_IGN)
         let capture = (try? JSONSerialization.jsonObject(with: Data(browserMCPCapture.utf8))) as? [String: Any] ?? [:]
         staticTools = rewritten(["result": ["tools": capture["tools"] ?? []]], .toolsList)["result"] as? [String: Any] ?? [:]
+        // The server goes when the agent does.
+        var sources: [DispatchSourceSignal] = []
+        for sig in [SIGTERM, SIGINT, SIGHUP] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+            source.setEventHandler { [self] in
+                withState { self.child }?.terminate()
+                exit(0)
+            }
+            source.resume()
+            sources.append(source)
+        }
         while let line = readLine(strippingNewline: false) {
             handleAgentLine(line, capture: capture)
         }
+        shutDown()
+    }
+
+    /// Closes the server's stdin and gives it 3 seconds to exit before terminating it.
+    private func shutDown() -> Never {
         let (process, input) = withState { (self.child, self.toChild) }
         try? input?.close()
-        process?.waitUntilExit()
-        exit(process?.terminationStatus ?? 0)
+        if let process {
+            let deadline = Date().addingTimeInterval(3)
+            while process.isRunning, Date() < deadline { usleep(50_000) }
+            if process.isRunning { process.terminate() }
+        }
+        exit(process.map { $0.isRunning ? 0 : $0.terminationStatus } ?? 0)
     }
 
     // MARK: - Server process
@@ -136,11 +159,13 @@ private final class BrowserProxy: @unchecked Sendable {
     }
 
     private func stopServer(_ process: Process) {
-        withState {
-            guard self.child === process else { return }
+        let input = withState { () -> FileHandle? in
+            guard self.child === process else { return nil }
             self.child = nil
-            self.toChild = nil
+            defer { self.toChild = nil }
+            return self.toChild
         }
+        try? input?.close()
         process.terminate()
         childGone(process)
     }
@@ -242,7 +267,7 @@ private final class BrowserProxy: @unchecked Sendable {
 
     /// Sends an agent request to the server, failing it if there is no server to answer.
     private func forward(_ message: [String: Any], id: Any) {
-        let key = "\(id)"
+        let key = mcpRequestKey(id)
         let registered = withState { () -> Bool in
             guard self.child != nil else { return false }
             self.pending[key] = id
@@ -267,8 +292,20 @@ private final class BrowserProxy: @unchecked Sendable {
         var req = ControlRequest(cmd: .browser)
         req.from = callerSession
         req.text = tool
+        if let moved = withState({ () -> String? in
+            defer { self.movedEndpoint = nil }
+            return self.movedEndpoint
+        }), moved != browserURL, let process = withState({ self.child }) {
+            // The browser took another port while the server ran: restart it there (the handshake is replayed).
+            browserURL = moved
+            stopServer(process)
+        }
         if let ownLabel = withState({ self.ownLabel }), serverRunning {
-            DispatchQueue.global().async { _ = try? sendControlRequest(req, timeout: 2) }
+            DispatchQueue.global().async { [self] in
+                if let endpoint = (try? sendControlRequest(req, timeout: 2))?.endpoint, endpoint != browserURL {
+                    withState { self.movedEndpoint = endpoint }
+                }
+            }
             return (ownLabel, false)
         }
         guard let response = try? sendControlRequest(req, timeout: 30), response.ok, let label = response.text else {
@@ -328,9 +365,11 @@ private final class BrowserProxy: @unchecked Sendable {
 
     private func relayChildOutput(from pipe: Pipe, of process: Process) {
         defer { childGone(process) }
-        guard let stream = fdopen(pipe.fileHandleForReading.fileDescriptor, "r") else { return }
+        // A dup, so closing the stream doesn't close the Pipe's own descriptor twice.
+        guard let stream = fdopen(dup(pipe.fileHandleForReading.fileDescriptor), "r") else { return }
         var buffer: UnsafeMutablePointer<CChar>?
         var capacity = 0
+        defer { free(buffer); fclose(stream) }
         while getline(&buffer, &capacity, stream) > 0, let buffer {
             let line = String(cString: buffer)
             handleServerLine(line)
@@ -343,14 +382,17 @@ private final class BrowserProxy: @unchecked Sendable {
             writeToAgent(line)
             return
         }
-        let key = "\(id)"
+        let key = mcpRequestKey(id)
         if message["method"] == nil { withState { self.pending[key] = nil } }
-        if let waiter = withState({ self.hiddenWaiters.removeValue(forKey: key) }) {
-            withState { self.hiddenReplies[key] = message }
+        // Hidden calls use string ids and are keyed by them directly.
+        if let hiddenKey = id as? String, let waiter = withState({ self.hiddenWaiters.removeValue(forKey: hiddenKey) }) {
+            withState { self.hiddenReplies[hiddenKey] = message }
             waiter.signal()
             return
         }
         guard let rewrite = withState({ self.rewrites.removeValue(forKey: key) }) else {
+            // A late reply to one of our own timed-out hidden requests is not the agent's to see.
+            if message["method"] == nil, let text = id as? String, text.hasPrefix("ht-") { return }
             writeToAgent(line)
             return
         }
@@ -403,7 +445,7 @@ private final class BrowserProxy: @unchecked Sendable {
 
     // MARK: - Plumbing
 
-    private func track(_ id: Any, _ rewrite: Rewrite) { withState { self.rewrites["\(id)"] = rewrite } }
+    private func track(_ id: Any, _ rewrite: Rewrite) { withState { self.rewrites[mcpRequestKey(id)] = rewrite } }
 
     private func replyError(id: Any, _ text: String) {
         writeToAgent(["jsonrpc": "2.0", "id": id, "result": ["content": [["type": "text", "text": text]], "isError": true]])

@@ -344,6 +344,7 @@ enum HookLog {
         guard let handle, let end = try? handle.seekToEnd() else { return }
         if end > maxBytes {
             try? handle.truncate(atOffset: 0)
+            try? handle.seek(toOffset: 0)
         }
         try? handle.write(contentsOf: data)
     }

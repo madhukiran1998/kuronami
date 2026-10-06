@@ -20,6 +20,8 @@ struct KuronamiMark: NSViewRepresentable {
         private let sun = CALayer()
         private let tako = CALayer()
         private let rim = CAShapeLayer()
+        private let circleMask = CAShapeLayer()
+        private var laidOutBox = CGRect.zero
 
         var mood: Mood = .resting {
             didSet { if mood != oldValue { animate() } }
@@ -37,9 +39,10 @@ struct KuronamiMark: NSViewRepresentable {
             rim.strokeColor = Ink.hairline.cgColor
             rim.lineWidth = Size.hairline * 2
             layer?.addSublayer(rim)
-            NotificationCenter.default.addObserver(self, selector: #selector(motionPreferenceChanged),
-                                                   name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
-                                                   object: NSWorkspace.shared.notificationCenter)
+            layer?.mask = circleMask
+            NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(motionPreferenceChanged),
+                                                              name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+                                                              object: nil)
         }
 
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -54,13 +57,13 @@ struct KuronamiMark: NSViewRepresentable {
             super.layout()
             let side = min(bounds.width, bounds.height)
             let box = CGRect(x: (bounds.width - side) / 2, y: (bounds.height - side) / 2, width: side, height: side)
+            guard box != laidOutBox else { return }
+            laidOutBox = box
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             for layer in [ground, sun, tako] { layer.frame = box }
             let circle = CGPath(ellipseIn: box, transform: nil)
-            let mask = CAShapeLayer()
-            mask.path = circle
-            layer?.mask = mask
+            circleMask.path = circle
             rim.path = circle
             CATransaction.commit()
             animate()

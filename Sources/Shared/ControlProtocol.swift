@@ -173,3 +173,8 @@ func normalizeLabel(_ raw: String) -> String {
     label = String(label.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" })
     return label
 }
+
+/// Key for a JSON-RPC request id that keeps the id's type: integer 1 and string "1" are different ids.
+func mcpRequestKey(_ id: Any) -> String {
+    id is String ? "s:\(id)" : "n:\(id)"
+}

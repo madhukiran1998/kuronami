@@ -91,7 +91,7 @@ extension SessionStore {
         spec.options = session.spec.options
         spec.account = session.spec.account
         spec.baseBranch = session.spec.baseBranch
-        spec.port = session.spec.port
+        // No port copied: two dev servers on one port collide, so the fork is given its own.
         Task { @MainActor [weak self, spec] in
             guard let self else { return }
             let fork = await self.launch(spec, resume: false)
@@ -171,7 +171,7 @@ extension SessionStore {
                     guard case .success = merged else { completion(merged); return }
                     winner.record(.note, "Picked: merged \(branch) into \(base)")
                     winner.spec.race = nil
-                    for loser in losers { self.close(loser.session) }
+                    for loser in losers where self.sessions.contains(where: { $0.id == loser.session.id }) { self.close(loser.session) }
                     // Closing stops each agent; its worktree lock goes with it a moment later.
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.5) {
                         for loser in losers where loser.isWorktree {

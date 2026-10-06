@@ -556,7 +556,14 @@ private func write(_ object: [String: Any]) {
 
 /// Channel mode: long-poll Tako for messages addressed to this session and push each one
 /// into Claude as a `notifications/claude/channel` event.
+private let channelLoopStarted = NSLock()
+private nonisolated(unsafe) var channelLoopRunning = false
+
 private func startChannelLoop() {
+    channelLoopStarted.lock()
+    defer { channelLoopStarted.unlock() }
+    guard !channelLoopRunning else { return }
+    channelLoopRunning = true
     Thread.detachNewThread {
         while true {
             guard let response = try? sendControlRequest(ControlRequest(cmd: .subscribe), timeout: 60) else {

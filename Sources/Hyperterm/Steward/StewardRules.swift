@@ -173,6 +173,13 @@ struct SleepTracker {
         return true
     }
 
+    /// The candidate could not sleep (a draft, a dialog, queued messages): offer it again after
+    /// another quiet period rather than never.
+    mutating func retry(_ sessionID: String, now: Date) {
+        reported.remove(sessionID)
+        quietSince[sessionID] = now
+    }
+
     mutating func forget(_ sessionID: String) {
         quietSince[sessionID] = nil
         reported.remove(sessionID)

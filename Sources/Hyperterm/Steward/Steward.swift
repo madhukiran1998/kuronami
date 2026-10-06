@@ -85,7 +85,8 @@ final class Steward: ObservableObject {
     /// Called once per new escalation. The steward never acts on it.
     var onEscalation: ((Escalation) -> Void)?
     /// Called once when an idle, hidden session has been quiet for `sleepAfter`.
-    var onSleepCandidate: ((TerminalSession) -> Void)?
+    /// Returns whether the session fell asleep; when not, the steward offers it again later.
+    var onSleepCandidate: ((TerminalSession) -> Bool)?
     var policy = StewardPolicy.load() {
         didSet { policy.save(); rebalance() }
     }
@@ -171,7 +172,7 @@ final class Steward: ObservableObject {
             }
             let sleepBand = StewardRules.band(state: session.state, isAgent: true, focused: awake.contains(session.id))
             if session.kind.isAgent, sleepTracker.update(sessionID: key, band: sleepBand, cpu: workCPU, now: now) {
-                onSleepCandidate?(session)
+                if onSleepCandidate?(session) != true { sleepTracker.retry(key, now: now) }
             }
         }
         let live = Set(store.sessions.map(\.id))
@@ -181,10 +182,12 @@ final class Steward: ObservableObject {
     }
 
     private func forget(_ id: UUID) {
-        trees[id] = nil
         meters[id] = nil
         workMeters[id] = nil
-        lowered[id] = nil
+        if lowered.removeValue(forKey: id) != nil {
+            for pid in trees[id] ?? [] { Priority.restore(pid) }
+        }
+        trees[id] = nil
         escalationTracker.forget(id.uuidString)
         sleepTracker.forget(id.uuidString)
     }

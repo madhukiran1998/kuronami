@@ -189,6 +189,9 @@ final class TerminalSession: ObservableObject, Identifiable {
         endSleep()
         isWaking = false
         wakeDraft = ""
+        userDraftInProgress = false
+        submitInFlight = false
+        flushScheduled = false
         shellAtPrompt = false
         surface.events = nil
         destroySurface()
@@ -265,9 +268,15 @@ final class TerminalSession: ObservableObject, Identifiable {
     private func finishWaking() {
         isWaking = false
         (surface as? TerminalSurfaceView)?.thawFrame()
+        deliverWakeDraft()
+    }
+
+    /// Types the draft kept while waking once the agent can take it; held while it asks something
+    /// or has failed, and delivered when it next goes idle or works.
+    private func deliverWakeDraft() {
         let draft = wakeDraft
-        wakeDraft = ""
         guard !draft.isEmpty, state == .idle || state == .working else { return }
+        wakeDraft = ""
         // A draft holds queued messages back, as one the user typed would.
         userDraftInProgress = true
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(400)) { [weak self] in
@@ -322,7 +331,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         state = next
         stateSource = source
         stateChangedAt = Date()
-        if isWaking, next != .starting { finishWaking() }
+        if isWaking, next != .starting { finishWaking() } else if !isWaking, !wakeDraft.isEmpty { deliverWakeDraft() }
         // Without a prompt hook a turn starts when work starts from rest. Claude's turns come
         // from its UserPromptSubmit and Stop hooks instead.
         if kind.adapter?.reportsPrompts == false, !reportsTurnsByHook, next == .working, previous == .idle || previous == .starting,

@@ -13,6 +13,7 @@ final class HookServer: @unchecked Sendable {
 
     static let path = "/hook/claude"
     private static let maxRequestBytes = 16_000_000
+    private static let connectionDeadline: UInt64 = 5_000_000_000
     private static let secret = SymmetricKey(size: .bits256)
 
     /// The token a session's agent sends; set as HT_HOOK_TOKEN in its environment.
@@ -86,10 +87,19 @@ final class HookServer: @unchecked Sendable {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         var parsed = HookHTTPRequest.Parse.incomplete
+        // A trickling client can't hold the serial queue past the deadline.
+        let deadline = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + Self.connectionDeadline
+        var headChecked = false
         while case .incomplete = parsed, data.count <= Self.maxRequestBytes {
+            guard clock_gettime_nsec_np(CLOCK_UPTIME_RAW) < deadline else { return reply(client, status: "408 Request Timeout") }
             let n = read(client, &buffer, buffer.count)
             guard n > 0 else { break }
             data.append(contentsOf: buffer[0..<n])
+            // Auth comes from the headers, so an unauthorized sender is dropped before its body is read.
+            if !headChecked, let head = HookHTTPRequest.parseHead(data) {
+                guard Self.authorizedSession(head) != nil else { return reply(client, status: "403 Forbidden") }
+                headChecked = true
+            }
             parsed = HookHTTPRequest.parse(data)
         }
         guard case .complete(let request) = parsed else { return reply(client, status: "400 Bad Request") }
@@ -116,7 +126,15 @@ struct HookHTTPRequest {
     let headers: [String: String]
     let body: Data
 
-    static func parse(_ data: Data) -> Parse {
+    /// The request line and headers as soon as they have all arrived, with an empty body.
+    static func parseHead(_ data: Data) -> HookHTTPRequest? {
+        guard let end = data.range(of: Data("\r\n\r\n".utf8)),
+              case .complete(let head) = parse(Data(data[data.startIndex..<end.lowerBound]) + Data("\r\n\r\n".utf8), bodyOptional: true)
+        else { return nil }
+        return head
+    }
+
+    static func parse(_ data: Data, bodyOptional: Bool = false) -> Parse {
         guard let end = data.range(of: Data("\r\n\r\n".utf8)) else { return .incomplete }
         let lines = String(decoding: data[data.startIndex..<end.lowerBound], as: UTF8.self).components(separatedBy: "\r\n")
         let start = lines[0].split(separator: " ")
@@ -129,7 +147,7 @@ struct HookHTTPRequest {
         guard headers["transfer-encoding"] == nil else { return .invalid }
         guard let length = Int(headers["content-length"] ?? "0"), length >= 0 else { return .invalid }
         let body = data[end.upperBound...]
-        guard body.count >= length else { return .incomplete }
+        guard bodyOptional || body.count >= length else { return .incomplete }
         return .complete(HookHTTPRequest(method: String(start[0]), path: String(start[1]), headers: headers, body: Data(body.prefix(length))))
     }
 }

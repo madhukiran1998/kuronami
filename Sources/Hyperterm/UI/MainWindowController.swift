@@ -55,6 +55,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         bindStore()
         organizerDock.install(in: window)
+        organizerDock.keepsOpenForClicks = { [weak self] clicked in
+            guard let self else { return false }
+            return clicked === self.switcher || clicked === self.mentionPicker || self.detachedTiles.owns(clicked)
+        }
     }
 
     /// View › Theme's colours and opacity, applied in place: nothing is rebuilt, no session restarts.
@@ -66,6 +70,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         paneBackings.forEach { $0.layer?.backgroundColor = theme.paneFill.cgColor }
         canvas.applyTheme()
         terminalArea.applyTheme()
+        detachedTiles.applyTheme()
         // The user's own Ghostty `background-blur`, if they set one; nothing is added on top.
         if theme.isTranslucent, let app = GhosttyRuntime.shared.app {
             ghostty_set_window_background_blur(app, Unmanaged.passUnretained(window).toOpaque())
@@ -252,6 +257,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         store.onDetach = { [weak self] session in self?.detach(session) }
         store.onReattach = { [weak self] session in self?.reattach(session) }
         detachedTiles.onReturn = { [weak self] session in self?.reattach(session) }
+        detachedTiles.onClose = { [weak self] session in self?.confirmClose(session) }
         detachedTiles.onFocus = { [weak self] session in
             guard let self, self.store.selectedID != session.id else { return }
             self.store.select(session)
@@ -588,6 +594,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// The red button hides the window like any Mac app; sessions keep running, the Dock icon
     /// brings it back, and ⌘Q quits.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // The organizer's panel is the window's child and would be left open with nothing under it.
+        organizerDock.close(restoreFocus: false)
         sender.orderOut(nil)
         return false
     }

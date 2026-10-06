@@ -22,6 +22,8 @@ final class OrganizerDock {
     private var chooser: NSView!
     private weak var session: TerminalSession?
     private var choiceWatch: AnyCancellable?
+    /// Windows whose clicks leave the organizer open (popped-out tiles, the switcher, the mention picker).
+    var keepsOpenForClicks: (NSWindow) -> Bool = { _ in false }
 
     /// The mark grows with the screen: 5% of its shorter side, between 40 and 60 points.
     static func markSize(for screen: NSScreen?) -> CGFloat {
@@ -147,13 +149,16 @@ final class OrganizerDock {
     /// A click outside the panel and its button, except in a sheet (a confirm the organizer asked for).
     private func closeOnClickAway(_ event: NSEvent) {
         guard state.isOpen, let clicked = event.window, clicked !== panel, clicked !== button,
-              clicked.sheetParent == nil else { return }
+              clicked.sheetParent == nil, !keepsOpenForClicks(clicked) else { return }
         // The click is already taking focus where it landed.
         close(restoreFocus: false)
     }
 
     func open() {
         guard let window else { return }
+        // The panel is the window's child: with the window hidden it would show nothing.
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        if !window.isVisible { window.makeKeyAndOrderFront(nil) }
         startIfNeeded()
         state.isOpen = true
         if panel.parent !== window { window.addChildWindow(panel, ordered: .above) }

@@ -4,8 +4,17 @@
 set -e
 cd "$(dirname "$0")/.."
 xcodegen generate >/dev/null
-xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration Release \
-  -derivedDataPath build/DerivedData build 2>&1 | grep -E "error:|BUILD (SUCCEEDED|FAILED)" | sort -u
+# A pipe would hide xcodebuild's exit status from set -e, so keep the log in a file and check it.
+BUILD_LOG=$(mktemp)
+if ! xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration Release \
+  -derivedDataPath build/DerivedData build >"$BUILD_LOG" 2>&1; then
+  grep -E "error:|BUILD (SUCCEEDED|FAILED)" "$BUILD_LOG" | sort -u || true
+  rm -f "$BUILD_LOG"
+  echo "Build failed; nothing was quit or replaced."
+  exit 1
+fi
+grep -E "error:|BUILD (SUCCEEDED|FAILED)" "$BUILD_LOG" | sort -u || true
+rm -f "$BUILD_LOG"
 # macOS's App Management protection can stop this terminal from replacing an app in
 # /Applications. Check before quitting anything, so a refused copy never leaves you with no app.
 for OLD in /Applications/Tako.app /Applications/Kuronami.app; do
@@ -17,7 +26,7 @@ for OLD in /Applications/Tako.app /Applications/Kuronami.app; do
   fi
 done
 # Also stops copies installed under the old names (Kuronami.app, Hyperterm.app), which share this app's data.
-PIDS=$(pgrep -f "/Contents/MacOS/(Tako|Kuronami|Hyperterm)$" || true)
+PIDS=$(pgrep -f "^/Applications/(Tako|Kuronami|Hyperterm)\.app/Contents/MacOS/(Tako|Kuronami|Hyperterm)$" || true)
 for PID in $PIDS; do kill "$PID"; done
 # Wait for them to really exit (Chromium makes shutdown take a few seconds): a new copy that
 # finds the old one still answering its socket hands off to it and quits.

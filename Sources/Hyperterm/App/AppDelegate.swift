@@ -51,7 +51,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Steward.shared.start(store: store)
         Steward.shared.onEscalation = { [weak store] in store?.reportToOrganizer($0) }
         Steward.shared.onSleepCandidate = { [weak store] in
-            if AppSettings.autoSleepEnabled { store?.sleep($0) }
+            guard AppSettings.autoSleepEnabled, let store else { return false }
+            store.sleep($0)
+            return $0.isAsleep
         }
         startInspector()
         store.notifier.onActivate = { [weak self] id in
@@ -91,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.informativeText = "\(busy.map { "@" + $0.label }.joined(separator: ", ")) \(busy.count == 1 ? "is" : "are") still working. Agent conversations resume the next time you open Tako."
             alert.addButton(withTitle: "Quit")
             alert.addButton(withTitle: "Cancel")
-            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+            guard alert.runModal() == .alertFirstButtonReturn else { quitConfirmed = false; return false }
         }
         quitConfirmed = true
         return true

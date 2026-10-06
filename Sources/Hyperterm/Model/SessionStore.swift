@@ -84,6 +84,8 @@ final class SessionStore: ObservableObject {
     private var channelWaiters: [UUID: ControlServer.Reply] = [:]
     private var channelInbox: [UUID: [String]] = [:]
     private var channelLastSeen: [UUID: Date] = [:]
+    /// Identifies the waiter a timeout belongs to, so an old timer can't end a newer long-poll.
+    private var channelWaiterTokens: [UUID: UUID] = [:]
 
     nonisolated static var channelsEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "channels") }
@@ -100,8 +102,12 @@ final class SessionStore: ObservableObject {
         }
         channelWaiters.removeValue(forKey: session.id)?(ControlResponse.success())
         channelWaiters[session.id] = reply
+        let token = UUID()
+        channelWaiterTokens[session.id] = token
         DispatchQueue.main.asyncAfter(deadline: .now() + 45) { [weak self] in
-            guard let self, let waiting = self.channelWaiters.removeValue(forKey: session.id) else { return }
+            guard let self, self.channelWaiterTokens[session.id] == token,
+                  let waiting = self.channelWaiters.removeValue(forKey: session.id) else { return }
+            self.channelWaiterTokens[session.id] = nil
             waiting(ControlResponse.success())
         }
     }
@@ -117,6 +123,16 @@ final class SessionStore: ObservableObject {
             waiter(response)
         } else {
             channelInbox[session.id, default: []].append(text)
+            // A poller that died inside the freshness window never drains this: if the message is
+            // still waiting, call the channel dead and type it instead.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self, weak session] in
+                guard let self, let session, var inbox = self.channelInbox[session.id],
+                      let index = inbox.firstIndex(of: text) else { return }
+                inbox.remove(at: index)
+                self.channelInbox[session.id] = inbox.isEmpty ? nil : inbox
+                self.channelLastSeen[session.id] = nil
+                _ = session.deliver(text, from: nil)
+            }
         }
         return true
     }
@@ -153,7 +169,11 @@ final class SessionStore: ObservableObject {
     var visibleIDs: [UUID] {
         switch layout {
         case .focus:
-            return selectedID.map { [$0] } ?? []
+            // A detached session shows in its own window; the canvas falls back to one it holds.
+            guard let selected, selected.isDetached else { return selectedID.map { [$0] } ?? [] }
+            let onCanvas = sessions.filter { !$0.isMinimized && !$0.isOrganizer && !$0.isDetached }
+            let ids = Set(onCanvas.map(\.id))
+            return (recent.first { ids.contains($0) } ?? onCanvas.first?.id).map { [$0] } ?? []
         case .split:
             let hidden = Set(sessions.filter { $0.isMinimized || $0.isOrganizer || $0.isDetached }.map(\.id))
             let pair = Set(recent.filter { !hidden.contains($0) }.prefix(2))
@@ -419,6 +439,10 @@ final class SessionStore: ObservableObject {
             if organizerHears { addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .stoppedHandling("it was closed"))) }
         }
         session.terminate()
+        channelWaiters.removeValue(forKey: session.id)?(ControlResponse.success())
+        channelWaiterTokens[session.id] = nil
+        channelInbox[session.id] = nil
+        channelLastSeen[session.id] = nil
         sessions.removeAll { $0.id == session.id }
         forgetOverlaps(with: session)
         childCancellables[session.id] = nil
@@ -549,7 +573,8 @@ final class SessionStore: ObservableObject {
         adoptIntoPhoneMode(session)
         delegationStateChanged(session, from: previous)
         watchOverlaps(session, from: previous)
-        let isVisible = visibleIDs.contains(session.id) && NSApp.isActive
+        let isVisible = (visibleIDs.contains(session.id) && NSApp.isActive)
+            || (session.isDetached && session.surface.window?.isKeyWindow == true)
         switch session.state {
         case .needsInput(let reason):
             // Handed to the organizer: it hears instead, and the user only if it doesn't answer.

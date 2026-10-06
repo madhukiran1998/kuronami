@@ -395,6 +395,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
+        lastKeyWasAt = false
         if window?.firstResponder !== self { window?.makeFirstResponder(self) }
         sendMouseButton(GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, event)
     }
@@ -405,6 +406,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     override func rightMouseDown(with event: NSEvent) {
+        lastKeyWasAt = false
         if !sendMouseButton(GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, event) { super.rightMouseDown(with: event) }
     }
 
@@ -413,6 +415,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     override func otherMouseDown(with event: NSEvent) {
+        lastKeyWasAt = false
         sendMouseButton(GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_MIDDLE, event)
     }
 
@@ -464,16 +467,22 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     override func keyDown(with event: NSEvent) {
         guard let surface else {
+            lastKeyWasAt = false
             interpretKeyEvents([event])
             return
         }
-        if events?.surfaceInterceptsKey(event) == true { return }
+        if events?.surfaceInterceptsKey(event) == true { lastKeyWasAt = false; return }
         // @@ opens the session picker. The first @ already reached the program; erasing it also
         // closes Claude Code's file picker that it opened.
+        // Only agent terminals: in a shell or vim, @@ belongs to the program (a macro repeat).
         let typedAt = event.characters == "@" && markedText.length == 0
+            && (events as? TerminalSession)?.kind.isAgent == true
             && event.modifierFlags.isDisjoint(with: [.command, .control, .option])
         defer { lastKeyWasAt = typedAt && !lastKeyWasAt }
-        if typedAt && lastKeyWasAt {
+        // The picker is a child of the main window; with that hidden it would never appear and
+        // the erased @ would be lost, so the keys go through as typed.
+        let pickerCanShow = NSApp.windows.contains { $0 is KuronamiWindow && $0.isVisible }
+        if typedAt && lastKeyWasAt && pickerCanShow {
             _ = pressKey(named: "backspace")
             events?.surfaceMentionRequested()
             return
@@ -599,7 +608,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     // MARK: - Menu actions
 
     @objc func copy(_ sender: Any?) { performBinding("copy_to_clipboard") }
-    @objc func paste(_ sender: Any?) { performBinding("paste_from_clipboard") }
+    @objc func paste(_ sender: Any?) { lastKeyWasAt = false; performBinding("paste_from_clipboard") }
     @objc override func selectAll(_ sender: Any?) { performBinding("select_all") }
     @objc func clearScreen(_ sender: Any?) { performBinding("clear_screen") }
     @objc func increaseFontSize(_ sender: Any?) { performBinding("increase_font_size:1") }
@@ -623,6 +632,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        lastKeyWasAt = false
         switch string {
         case let value as NSAttributedString: markedText = NSMutableAttributedString(attributedString: value)
         case let value as String: markedText = NSMutableAttributedString(string: value)
