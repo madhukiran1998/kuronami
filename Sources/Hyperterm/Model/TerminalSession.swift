@@ -23,6 +23,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// Background shells under the agent CLI, from the last process snapshot (see `canSleep`).
     var backgroundShells = 0
     @Published var unread = false
+    /// Finished a turn the user hasn't looked at since: its tile is marked until they do.
+    @Published var finishedUnseen = false
     /// What the agent is doing this moment ("Bash: pnpm test"), from tool-use hooks.
     @Published var activity: String?
     /// The agent's own one-line status, posted with the set_status tool.
@@ -39,7 +41,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var tasks = TaskProgress()
     /// Claude subagents started and not yet stopped, by agent id. Background ones keep working
     /// after the session's own turn ends, so it isn't done while any remain.
-    @Published var runningSubagents: Set<String> = []
+    @Published var runningSubagents: [String: Subagent] = [:]
     @Published var testEvidence: TestEvidence?
     @Published var diffStat: DiffStat?
     /// Finished a turn with changes that the user hasn't opened in review yet.
@@ -300,9 +302,10 @@ final class TerminalSession: ObservableObject, Identifiable {
         guard next != state else { return }
         if !next.needsAttention { pendingRequest = nil }
         if next == .idle || next == .exited(0) { activity = nil }
+        if next != .idle { finishedUnseen = false }
         // A CLI that exited or relaunched took its subagents with it.
-        if next == .starting { runningSubagents = [] }
-        if case .exited = next { runningSubagents = [] }
+        if next == .starting { runningSubagents = [:] }
+        if case .exited = next { runningSubagents = [:] }
         let previous = state
         state = next
         stateSource = source

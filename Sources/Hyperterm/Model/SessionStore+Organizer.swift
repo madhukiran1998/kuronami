@@ -40,13 +40,70 @@ extension SessionStore {
         set { organizerDefaults.set(newValue.rawValue, forKey: organizerKindKey) }
     }
 
-    /// The panel asks which CLI to use instead of starting one. One already running (from before
-    /// there was a choice) counts as chosen.
-    var organizerNeedsChoice: Bool { Self.chosenOrganizerKind == nil && organizer == nil }
+    /// The panel asks which CLI, then which model, instead of starting one. One already running
+    /// (from before there was a choice) counts as chosen.
+    var organizerNeedsChoice: Bool {
+        guard organizer == nil else { return false }
+        guard let kind = Self.chosenOrganizerKind else { return true }
+        return Self.chosenOrganizerModel(for: kind) == nil
+    }
 
-    /// The first-run choice: remembered, then the organizer starts on it.
+    /// The first-run choice: remembered, then the organizer starts on it once its model is picked.
     func chooseOrganizer(_ kind: SessionKind) {
         Self.organizerKind = kind
+        if Self.chosenOrganizerModel(for: kind) != nil { startOrganizer() }
+    }
+
+    // MARK: - Its model
+
+    /// A model the organizer can run on. Its work is starting, arranging and watching agents, so
+    /// a small model does it well for far fewer tokens.
+    struct OrganizerModel: Equatable, Identifiable {
+        /// Passed to the CLI as its model; nil leaves the CLI's own default.
+        var name: String?
+        var title: String
+        var detail: String
+        var recommended = false
+
+        var id: String { name ?? "" }
+    }
+
+    /// Smallest first. Codex's names come from its model catalog (`codex debug models`).
+    static func organizerModels(for kind: SessionKind) -> [OrganizerModel] {
+        switch kind {
+        case .claude: return [
+            OrganizerModel(name: "haiku", title: "Haiku", detail: "Smallest and fastest. Plenty for starting, arranging and watching agents.", recommended: true),
+            OrganizerModel(name: "sonnet", title: "Sonnet", detail: "Mid-size, for long plans across many agents."),
+            OrganizerModel(name: nil, title: "Claude Code's default", detail: "Usually Opus: the most tokens per turn."),
+        ]
+        case .codex: return [
+            OrganizerModel(name: "gpt-6-luna", title: "GPT-6-Luna", detail: "Fast and affordable. Plenty for starting, arranging and watching agents.", recommended: true),
+            OrganizerModel(name: nil, title: "Codex's default", detail: "Its workhorse model: more tokens per turn."),
+        ]
+        default: return []
+        }
+    }
+
+    private static func organizerModelKey(_ kind: SessionKind) -> String { "organizerModel." + kind.rawValue }
+
+    /// The model picked for `kind`: nil until picked, "" for the CLI's own default.
+    static func chosenOrganizerModel(for kind: SessionKind) -> String? {
+        organizerDefaults.string(forKey: organizerModelKey(kind))
+    }
+
+    static func setOrganizerModel(_ name: String?, for kind: SessionKind) {
+        organizerDefaults.set(name ?? "", forKey: organizerModelKey(kind))
+    }
+
+    /// What the organizer is launched with: nil for the CLI's default.
+    static func organizerModel(for kind: SessionKind) -> String? {
+        chosenOrganizerModel(for: kind).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// The model step's choice: remembered, then the organizer starts on it, replacing one running.
+    func chooseOrganizerModel(_ name: String?) {
+        Self.setOrganizerModel(name, for: Self.organizerKind)
+        if let organizer, !organizer.isExitedProcess { close(organizer) }
         startOrganizer()
     }
 
@@ -60,7 +117,7 @@ extension SessionStore {
         }
         var spec = LaunchSpec(label: "organizer", kind: Self.organizerKind, cwd: Self.organizerFolder)
         spec.organizer = true
-        spec.options = AgentOptions(mode: .fullAccess)
+        spec.options = AgentOptions(mode: .fullAccess, model: Self.organizerModel(for: Self.organizerKind))
         organizerStarting = true
         Task { @MainActor [spec] in
             await self.launch(spec, select: false, task: task)
@@ -71,11 +128,12 @@ extension SessionStore {
     }
 
     /// Runs the organizer on another CLI: the current one closes and a new one starts where it was.
+    /// A CLI it hasn't run on yet waits in the panel for its model to be picked.
     func switchOrganizer(to kind: SessionKind) {
         guard kind != organizer?.kind || organizer == nil else { Self.organizerKind = kind; return }
         Self.organizerKind = kind
         if let organizer { close(organizer) }
-        startOrganizer()
+        if Self.chosenOrganizerModel(for: kind) != nil { startOrganizer() }
     }
 
     // MARK: - Arranging

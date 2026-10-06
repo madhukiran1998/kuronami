@@ -284,7 +284,8 @@ final class Steward: ObservableObject {
 
     var queuedLaunches: Int { launches.count }
 
-    private func drainLaunches() {
+    /// Starts queued launches that fit now. Cheap, so it runs on every poll, not only on a tick.
+    func drainLaunches() {
         while !launches.isEmpty, canLaunchAgent() {
             reservations.append(Date())
             launches.removeFirst()()

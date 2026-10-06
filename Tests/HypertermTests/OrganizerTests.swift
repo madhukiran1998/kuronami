@@ -87,6 +87,30 @@ final class OrganizerTests: XCTestCase {
         XCTAssertEqual(store.organizerWatches[api.id], "next")
     }
 
+    func testAFinishedTurnIsMarkedDoneUntilLookedAtOrWorkResumes() {
+        let api = agent("api", state: .working), web = agent("web", state: .idle)
+        let store = SessionStore(previewSessions: [api, web], previewLayout: .grid)
+        store.select(web)
+
+        api.apply(.childExited(0), source: "test", force: .idle)
+        store.sessionStateChanged(api, from: .working)
+        XCTAssertTrue(api.finishedUnseen)
+        XCTAssertFalse(web.finishedUnseen)
+
+        store.select(api)
+        XCTAssertFalse(api.finishedUnseen, "looking at it clears the mark")
+
+        store.markFinished(web)
+        XCTAssertTrue(web.finishedUnseen)
+        web.apply(.childExited(0), source: "test", force: .working)
+        XCTAssertFalse(web.finishedUnseen, "a new turn is not done")
+
+        web.apply(.childExited(0), source: "test", force: .idle)
+        web.runningSubagents = ["a1": Subagent(type: "Explore", startedAt: Date())]
+        store.markFinished(web)
+        XCTAssertFalse(web.finishedUnseen, "not done while a subagent still runs")
+    }
+
     func testBackgroundSubagentsHoldTheFinishUntilTheLastOneStops() {
         let api = agent("api", state: .idle), organizer = agent("organizer", organizer: true, state: .needsInput("busy"))
         let store = SessionStore(previewSessions: [api, organizer], previewLayout: .grid)
@@ -100,6 +124,7 @@ final class OrganizerTests: XCTestCase {
         // The session's own turn ends while both still run.
         store.reportToOrganizer(api, from: .working)
         XCTAssertEqual(api.info().subagents, 2)
+        XCTAssertEqual(api.runningSubagents["a1"]?.type, "Explore", "the sidebar names each one")
         hook("SubagentStop", "a1")
         hook("SubagentStop", "a1")
         store.flushOrganizerDigest(now: Date().addingTimeInterval(OrganizerDigest.window))
@@ -229,8 +254,35 @@ final class OrganizerTests: XCTestCase {
             XCTAssertTrue(store.organizerNeedsChoice)
 
             SessionStore.organizerKind = .codex
+            XCTAssertTrue(store.organizerNeedsChoice, "its model is asked next")
+
+            SessionStore.setOrganizerModel("gpt-6-luna", for: .codex)
             XCTAssertFalse(store.organizerNeedsChoice)
         }
+    }
+
+    func testAModelIsAskedForEachCLIItHasntRunOn() {
+        withOwnDefaults { _ in
+            let store = SessionStore(previewSessions: [], previewLayout: .grid)
+            SessionStore.organizerKind = .claude
+            SessionStore.setOrganizerModel(nil, for: .claude)
+            XCTAssertFalse(store.organizerNeedsChoice, "the CLI's default is a choice")
+            XCTAssertNil(SessionStore.organizerModel(for: .claude), "and launches with no model flag")
+
+            SessionStore.organizerKind = .codex
+            XCTAssertTrue(store.organizerNeedsChoice)
+        }
+    }
+
+    func testEachCLIRecommendsItsSmallestModelFirst() {
+        for kind in SessionStore.organizerChoices {
+            let models = SessionStore.organizerModels(for: kind)
+            XCTAssertEqual(models.filter(\.recommended).count, 1, "\(kind)")
+            XCTAssertTrue(models.first?.recommended == true, "\(kind)")
+            XCTAssertNotNil(models.first?.name.flatMap(AgentOptions.validModel), "\(kind)")
+            XCTAssertTrue(models.contains { $0.name == nil }, "\(kind) offers its own default")
+        }
+        XCTAssertEqual(SessionStore.organizerModels(for: .claude).first?.name, "haiku")
     }
 
     func testAnOrganizerRunningFromBeforeTheChoiceCountsAsChosen() {

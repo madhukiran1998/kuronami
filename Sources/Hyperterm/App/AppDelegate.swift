@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let gitInspector = GitInspector()
     private var statusBar: StatusBarController?
     private var pollCount = 0
+    /// When the steward last measured; it runs on the poll, but at most once a minute.
+    private var lastStewardUpdate: Date?
     private var lastRegistryStatus: [UUID: String] = [:]
     private var diffStatsInFlight = false
     private var gitInFlight = false
@@ -181,10 +183,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     nonisolated private static let activePollInterval: TimeInterval = 2.5
     nonisolated private static let backgroundPollInterval: TimeInterval = 5
+    /// Focus and layout changes, thermal state and memory pressure still rebalance at once.
+    private static let stewardInterval: TimeInterval = 60
 
     private func apply(_ snapshots: [String: ProcessSnapshot]) {
         pollCount += 1
-        Steward.shared.update(snapshots)
+        if lastStewardUpdate.map({ Date().timeIntervalSince($0) >= Self.stewardInterval }) ?? true {
+            lastStewardUpdate = Date()
+            Steward.shared.update(snapshots)
+        } else if Steward.shared.queuedLaunches > 0 {
+            Steward.shared.drainLaunches()
+        }
         refreshGit()
         // Working agents and the one on screen every ~10s; everything else once a minute (idle
         // agents also refresh on their Stop hook).

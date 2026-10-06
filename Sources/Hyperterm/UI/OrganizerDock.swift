@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// The organizer's place in the window: a round button in the bottom-left corner. Clicking it
@@ -20,6 +21,7 @@ final class OrganizerDock {
     private let container = SurfaceContainer()
     private var chooser: NSView!
     private weak var session: TerminalSession?
+    private var choiceWatch: AnyCancellable?
 
     /// The mark grows with the screen: 5% of its shorter side, between 40 and 60 points.
     static func markSize(for screen: NSScreen?) -> CGFloat {
@@ -60,7 +62,8 @@ final class OrganizerDock {
         header.sizingOptions = []
         header.translatesAutoresizingMaskIntoConstraints = false
         container.translatesAutoresizingMaskIntoConstraints = false
-        chooser = NSHostingView(rootView: OrganizerChooser(choose: { [weak self] in self?.choose($0) }))
+        chooser = NSHostingView(rootView: OrganizerChooser(choose: { [weak self] in self?.choose($0) },
+                                                           chooseModel: { [weak self] in self?.chooseModel($0) }))
         chooser.translatesAutoresizingMaskIntoConstraints = false
         chooser.isHidden = true
         frame.addSubview(container)
@@ -81,6 +84,11 @@ final class OrganizerDock {
             chooser.bottomAnchor.constraint(equalTo: frame.bottomAnchor),
         ])
         panel.contentView = frame
+        // Switching to a CLI it hasn't run on yet (here or in Settings) closes the organizer and
+        // asks for a model.
+        choiceWatch = store.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.syncChooser() }
+        }
         // Clicking anywhere else in Kuronami folds it away, like a popover. Only a click: the
         // organizer's own work (a confirm sheet, a popped-out tile, an app it opens) also takes
         // focus from the panel, and must not fold it.
@@ -167,7 +175,7 @@ final class OrganizerDock {
         if let selected = store.selected, selected.surface.window === window { window.makeFirstResponder(selected.surface) }
     }
 
-    /// The first time, the panel asks which CLI to run instead of starting one.
+    /// The first time, the panel asks which CLI and model to run instead of starting one.
     private func startIfNeeded() {
         chooser.isHidden = !store.organizerNeedsChoice
         guard chooser.isHidden else { return }
@@ -175,8 +183,18 @@ final class OrganizerDock {
     }
 
     private func choose(_ kind: SessionKind) {
-        chooser.isHidden = true
         store.chooseOrganizer(kind)
+        syncChooser()
+    }
+
+    private func chooseModel(_ name: String?) {
+        chooser.isHidden = true
+        store.chooseOrganizerModel(name)
+    }
+
+    private func syncChooser() {
+        let hidden = !store.organizerNeedsChoice
+        if chooser.isHidden != hidden { chooser.isHidden = hidden }
     }
 }
 
@@ -311,6 +329,17 @@ private struct OrganizerHeader: View {
                             if kind == SessionStore.organizerKind { Label(kind.displayName, systemImage: "checkmark") } else { Text(kind.displayName) }
                         }
                     }
+                    Section("Model") {
+                        let current = SessionStore.organizerModel(for: SessionStore.organizerKind)
+                        ForEach(SessionStore.organizerModels(for: SessionStore.organizerKind)) { model in
+                            let title = model.title + (model.recommended ? " (Recommended)" : "")
+                            Button {
+                                store.chooseOrganizerModel(model.name)
+                            } label: {
+                                if model.name == current { Label(title, systemImage: "checkmark") } else { Text(title) }
+                            }
+                        }
+                    }
                 } label: {
                     Text(SessionStore.organizerKind.displayName)
                         .font(Typeface.caption.weight(.medium))
@@ -319,7 +348,7 @@ private struct OrganizerHeader: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("Which agent runs the organizer. Switching restarts it.")
+                .help("Which agent and model run the organizer. Switching restarts it.")
             }
             Button(action: collapse) {
                 Image(systemName: "chevron.down").font(Typeface.caption.weight(.semibold)).foregroundStyle(Tone.muted)
@@ -346,44 +375,89 @@ private struct OrganizerTitle: View {
     private var line: String {
         switch session.state {
         case .working: return session.activity ?? "Working"
-        case .idle: return "Full access"
+        case .idle:
+            let model = session.spec.options?.model
+            let title = model.map { name in SessionStore.organizerModels(for: session.kind).first { $0.name == name }?.title ?? name }
+            return [title, "Full access"].compactMap { $0 }.joined(separator: " · ")
         default: return session.state.phrase
         }
     }
 }
 
-/// The first time the panel opens: which CLI runs the organizer. Ones not on the PATH show, greyed.
+/// The first time the panel opens: which CLI runs the organizer, then which of its models. Ones
+/// not on the PATH show, greyed.
 private struct OrganizerChooser: View {
     let choose: (SessionKind) -> Void
+    let chooseModel: (String?) -> Void
     @ObservedObject private var installed = InstalledAgents.shared
+    @AppStorage(SessionStore.organizerKindKey, store: SessionStore.organizerDefaults) private var chosen: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
-            Text("Run the organizer with").font(Typeface.headline).foregroundStyle(Tone.text)
-            ForEach(SessionStore.organizerChoices) { kind in
-                let available = installed.isInstalled(kind)
-                Button { choose(kind) } label: {
-                    HStack(spacing: Space.s) {
-                        AgentAvatar(kind: kind, dimmed: !available)
-                        VStack(alignment: .leading, spacing: Space.xxs) {
-                            Text(kind.displayName).font(Typeface.body.weight(.medium)).foregroundStyle(available ? Tone.text : Tone.faint)
-                            Text(available ? kind.organizerNote : "not installed").font(Typeface.caption).foregroundStyle(Tone.faint)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(Space.s)
-                    .frame(width: 300)
-                    .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .disabled(!available)
+            if let kind = SessionStore.chosenOrganizerKind {
+                models(kind)
+            } else {
+                clis
             }
-            Text("You can change it later in the header or in Settings.").font(Typeface.caption).foregroundStyle(Tone.faint)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Tone.deep)
         .onAppear { installed.refresh() }
+    }
+
+    @ViewBuilder private var clis: some View {
+        Text("Run the organizer with").font(Typeface.headline).foregroundStyle(Tone.text)
+        ForEach(SessionStore.organizerChoices) { kind in
+            let available = installed.isInstalled(kind)
+            Button { choose(kind) } label: {
+                HStack(spacing: Space.s) {
+                    AgentAvatar(kind: kind, dimmed: !available)
+                    VStack(alignment: .leading, spacing: Space.xxs) {
+                        Text(kind.displayName).font(Typeface.body.weight(.medium)).foregroundStyle(available ? Tone.text : Tone.faint)
+                        Text(available ? kind.organizerNote : "not installed").font(Typeface.caption).foregroundStyle(Tone.faint)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .modifier(ChoiceRow())
+            }
+            .buttonStyle(.plain)
+            .disabled(!available)
+        }
+        Text("You can change it later in the header or in Settings.").font(Typeface.caption).foregroundStyle(Tone.faint)
+    }
+
+    /// The second step: a small model is recommended, since the organizer wakes on every update.
+    @ViewBuilder private func models(_ kind: SessionKind) -> some View {
+        Text("Pick \(kind.displayName)'s model").font(Typeface.headline).foregroundStyle(Tone.text)
+        Text("It wakes on every update it watches, so a smaller model saves the most tokens.")
+            .font(Typeface.caption).foregroundStyle(Tone.faint).frame(width: 300, alignment: .leading)
+        ForEach(SessionStore.organizerModels(for: kind)) { model in
+            Button { chooseModel(model.name) } label: {
+                VStack(alignment: .leading, spacing: Space.xxs) {
+                    HStack(spacing: Space.s) {
+                        Text(model.title).font(Typeface.body.weight(.medium)).foregroundStyle(Tone.text)
+                        if model.recommended { Tag(text: "Recommended", tint: Palette.accent) }
+                    }
+                    Text(model.detail).font(Typeface.caption).foregroundStyle(Tone.faint).fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .modifier(ChoiceRow())
+            }
+            .buttonStyle(.plain)
+        }
+        Button("Choose another CLI") { chosen = nil }
+            .buttonStyle(.plain).font(Typeface.caption).foregroundStyle(Tone.muted)
+    }
+}
+
+/// One choice on the chooser: a fixed-width card.
+private struct ChoiceRow: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(Space.s)
+            .frame(width: 300)
+            .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
     }
 }
 
