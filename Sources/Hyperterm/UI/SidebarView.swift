@@ -110,16 +110,21 @@ private struct RowChrome: ViewModifier {
     let action: () -> Void
     @State private var hovering = false
 
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Radius.row, style: .continuous) }
+    private var rowFill: Color { selected || waiting ? Tone.raised : hovering ? Tone.surface : .clear }
+
     func body(content: Content) -> some View {
         content
             .padding(.horizontal, Space.s)
             .padding(.vertical, Space.s - 1)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? Tone.raised : hovering ? Tone.surface : .clear,
-                        in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous)
-                .strokeBorder(Palette.attention.opacity(0.55), lineWidth: Size.hairline)
-                .opacity(waiting ? 1 : 0))
+            .background(rowFill, in: shape)
+            // A waiting row lifts off the list like a card: a warm tint, a thin attention hairline
+            // and a soft shadow. Every other row stays flat.
+            .background(Palette.attention.opacity(waiting ? 0.06 : 0), in: shape)
+            .overlay(shape.strokeBorder(Palette.attention.opacity(0.5), lineWidth: Size.hairline).opacity(waiting ? 1 : 0))
+            .shadow(color: .black.opacity(waiting ? 0.35 : 0), radius: 8, y: 3)
+            .zIndex(waiting ? 1 : 0)
             .contentShape(RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)
@@ -166,9 +171,9 @@ struct AgentRow: View {
                         .help("Tell the agent to carry on once the usage limit resets")
                 }
                 badges
-                HelpersLine(session: session)
             }
             .padding(.leading, Size.avatar + Space.s)
+            HelpersLine(session: session)
         }
         .modifier(RowChrome(selected: selected, waiting: session.state.needsAttention) { store.select(session) })
         .contextMenu { SessionMenu(session: session, actions: actions) }
@@ -291,34 +296,46 @@ struct StateLabel: View {
     }
 }
 
-/// "▸ 2 helpers · general-purpose ×2", folded; the chevron opens one small row per helper.
+/// A muted "▸ 2 helpers" with a live spinner; opened, a rail hangs off the avatar's column with
+/// one tick and one leaf per helper.
 private struct HelpersLine: View {
     @ObservedObject var session: TerminalSession
     @State private var open = false
 
     var body: some View {
-        if !session.helpers.isEmpty {
-            VStack(alignment: .leading, spacing: Space.xxs) {
+        let helpers = session.helpers
+        if !helpers.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
                 Button { open.toggle() } label: {
-                    Text("\(open ? "▾" : "▸") \(session.helpers.count) helper\(session.helpers.count == 1 ? "" : "s") · \(summary)")
-                        .font(Typeface.caption)
-                        .foregroundStyle(Tone.muted)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    HStack(spacing: Space.xs + 1) {
+                        Text("\(open ? "▾" : "▸") \(helpers.count) helper\(helpers.count == 1 ? "" : "s")")
+                        BrailleSpinner()
+                    }
+                    .font(Typeface.caption)
+                    .foregroundStyle(Tone.muted)
+                    .lineLimit(1)
                 }
                 .buttonStyle(.plain)
+                .padding(.leading, Size.avatar + Space.s)
+                .help(summary(helpers))
+                .accessibilityLabel("\(helpers.count) helper\(helpers.count == 1 ? "" : "s"), \(open ? "shown" : "hidden")")
                 if open {
-                    TimelineView(.periodic(from: .now, by: 60)) { context in
-                        VStack(alignment: .leading, spacing: Space.xxs) {
-                            ForEach(session.helpers) { helper in
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(helpers.enumerated()), id: \.element.id) { index, helper in
                                 HStack(spacing: Space.xs + 1) {
-                                    Circle().fill(Palette.working).frame(width: 5, height: 5)
+                                    HelperRail(last: index == helpers.count - 1)
+                                        .stroke(Tone.hairline, lineWidth: Size.hairline)
+                                        .frame(width: Size.avatar + Space.s - Space.xs)
+                                    BrailleSpinner()
                                     Text(helper.type).lineLimit(1).truncationMode(.tail)
                                     Spacer(minLength: Space.xs)
                                     Text(elapsed(since: helper.startedAt, now: context.date)).monospacedDigit()
                                 }
                                 .font(Typeface.caption)
                                 .foregroundStyle(Tone.muted)
+                                .padding(.vertical, 2)
+                                .padding(.leading, Space.xs)
                             }
                         }
                     }
@@ -327,12 +344,50 @@ private struct HelpersLine: View {
         }
     }
 
-    private var summary: String {
+    /// "general-purpose ×2, Explore", for the tooltip.
+    private func summary(_ helpers: [Helper]) -> String {
         var counts: [(type: String, n: Int)] = []
-        for helper in session.helpers {
+        for helper in helpers {
             if let i = counts.firstIndex(where: { $0.type == helper.type }) { counts[i].n += 1 } else { counts.append((helper.type, 1)) }
         }
         return counts.map { $0.n > 1 ? "\($0.type) ×\($0.n)" : $0.type }.joined(separator: ", ")
+    }
+}
+
+/// One leaf's piece of the rail: the vertical line down the avatar's column (stopping at the tick
+/// on the last leaf) and a short horizontal tick to the leaf.
+private struct HelperRail: Shape {
+    let last: Bool
+
+    func path(in rect: CGRect) -> Path {
+        let x = Size.avatar / 2 - Space.xs, mid = rect.midY
+        var path = Path()
+        path.move(to: CGPoint(x: x, y: rect.minY))
+        path.addLine(to: CGPoint(x: x, y: last ? mid : rect.maxY))
+        path.move(to: CGPoint(x: x, y: mid))
+        path.addLine(to: CGPoint(x: rect.maxX - Space.xs, y: mid))
+        return path
+    }
+}
+
+/// A small braille spinner; still (one glyph) with Reduce Motion.
+private struct BrailleSpinner: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                Text(Self.frames[0])
+            } else {
+                TimelineView(.periodic(from: .now, by: 0.1)) { context in
+                    Text(Self.frames[Int(context.date.timeIntervalSinceReferenceDate * 10) % Self.frames.count])
+                }
+            }
+        }
+        .font(Typeface.codeSmall)
+        .foregroundStyle(Palette.working)
+        .accessibilityHidden(true)
     }
 }
 
@@ -347,6 +402,15 @@ private struct ApprovalStrip: View {
     private var asksTrust: Bool { session.state == .needsInput(TerminalSession.trustReason) }
 
     var body: some View {
+        // A question shows what was asked; only permission requests get Allow / Deny.
+        if let question = session.pendingQuestion, session.pendingPlan == nil, !asksTrust {
+            QuestionCard(session: session, store: store, question: question)
+        } else {
+            permissionCard
+        }
+    }
+
+    private var permissionCard: some View {
         VStack(alignment: .leading, spacing: Space.s) {
             if let plan = session.pendingPlan {
                 Text(planTitle(plan))
@@ -407,6 +471,136 @@ private struct ApprovalStrip: View {
             error = failure.description
             store.select(session)
         }
+    }
+}
+
+/// What the agent actually asked (AskUserQuestion): the question, its real options as numbered rows
+/// that answer in the terminal on click, and a way into the terminal for anything else. Several
+/// questions, multi-select, or an unreadable payload offer "Answer in terminal" / "Open terminal"
+/// instead, since only a single-select list is driven reliably by keystrokes.
+private struct QuestionCard: View {
+    @ObservedObject var session: TerminalSession
+    let store: SessionStore
+    let question: PendingQuestion
+    @State private var expanded = false
+    @State private var error: String?
+
+    /// More options than this scroll inside a fixed height rather than growing the row.
+    private static let visibleOptions = 4
+    private static let listHeight: CGFloat = 150
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            Text(label).font(Typeface.micro).foregroundStyle(Palette.attention)
+            switch question.mode {
+            case .unavailable:
+                Text(session.state.detail ?? "Waiting for you").font(Typeface.callout).foregroundStyle(Tone.muted)
+                terminalButton("Open terminal")
+            case .terminalOnly:
+                questionText(question.items[0].question)
+                terminalButton("Answer in terminal")
+            case .options:
+                let item = question.items[0]
+                questionText(item.question)
+                if item.options.count > Self.visibleOptions {
+                    ScrollView { optionList(item) }
+                        .scrollIndicators(.automatic)
+                        .frame(height: Self.listHeight)
+                } else {
+                    optionList(item)
+                }
+            }
+            if let error {
+                Text(error).font(Typeface.caption).foregroundStyle(Tone.muted)
+            }
+        }
+    }
+
+    private var label: String {
+        question.items.count > 1 ? "Question · \(question.items.count) questions" : "Question"
+    }
+
+    /// Three lines, then tap to read the rest.
+    private func questionText(_ text: String) -> some View {
+        Text(text)
+            .font(Typeface.callout)
+            .foregroundStyle(Tone.text)
+            .lineLimit(expanded ? nil : 3)
+            .fixedSize(horizontal: false, vertical: true)
+            .contentShape(Rectangle())
+            .onTapGesture { expanded.toggle() }
+            .help(expanded ? "" : text)
+    }
+
+    private func optionList(_ item: PendingQuestion.Item) -> some View {
+        VStack(alignment: .leading, spacing: Space.xxs) {
+            ForEach(Array(item.options.enumerated()), id: \.offset) { index, option in
+                QuestionOptionRow(number: index + 1, title: option.label, detail: option.description) { choose(index) }
+            }
+            QuestionOptionRow(number: nil, title: "Type something…", detail: nil, muted: true) { store.select(session) }
+        }
+    }
+
+    private func terminalButton(_ title: String) -> some View {
+        Button(title) { store.select(session) }
+            .buttonStyle(PanelButtonStyle())
+            .help("Show the terminal to answer there")
+    }
+
+    private func choose(_ index: Int) {
+        store.answerQuestion(session, option: index) { result in
+            switch result {
+            case .success: error = nil
+            case .failure(let failure):
+                error = failure.description
+                store.select(session)
+            }
+        }
+    }
+}
+
+/// One numbered answer: the label on one line (tail-truncated, full text on hover) and, under it,
+/// the option's description in at most two lines.
+private struct QuestionOptionRow: View {
+    let number: Int?
+    let title: String
+    let detail: String?
+    var muted = false
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                Text(number.map(String.init) ?? "…")
+                    .font(Typeface.caption.monospacedDigit())
+                    .foregroundStyle(Tone.faint)
+                    .frame(minWidth: 10)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(Typeface.callout)
+                        .foregroundStyle(muted ? Tone.muted : Tone.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let detail {
+                        Text(detail)
+                            .font(Typeface.caption)
+                            .foregroundStyle(Tone.faint)
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Space.xs + 2)
+            .padding(.vertical, Space.xs)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(hovering ? Tone.surface : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help([title, detail].compactMap { $0 }.joined(separator: "\n"))
     }
 }
 

@@ -28,6 +28,7 @@ extension SessionStore {
         // Plan mode ends by asking to exit it; the plan is the request.
         session.pendingPlan = tool == "ExitPlanMode" ? (json["tool_input"] as? [String: Any])?["plan"] as? String : nil
         session.pendingRequest = summary
+        if tool == "AskUserQuestion" { session.pendingQuestion = PendingQuestion.parse(toolInput: input) }
         session.record(.approval, "Asked to run \(summary)")
         session.apply(.claudeHook(event: "Notification", notificationType: "permission_prompt", message: summary),
                       source: "permission hook", force: .needsInput(summary))
@@ -55,6 +56,18 @@ extension SessionStore {
         session.apply(.userSubmitted, source: "approval", force: .working)
         notifier.clearApproval(session: session)
         return .success(answer == .deny ? "denied" : "approved")
+    }
+
+    /// Answers a single-select question by picking its option in the CLI's own list. A held
+    /// permission hook is released first so the CLI's list is the thing on screen; the keys follow
+    /// once it has drawn.
+    func answerQuestion(_ session: TerminalSession, option index: Int, completion: @escaping (Result<String, TerminalSession.PromptError>) -> Void) {
+        guard approvals[session.id] != nil else { return completion(session.answerQuestionByKeys(option: index)) }
+        dropApproval(for: session)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak session] in
+            guard let session else { return }
+            completion(session.answerQuestionByKeys(option: index))
+        }
     }
 
     /// Releases a held hook with no decision, so the CLI's own prompt (or its outcome) stands.

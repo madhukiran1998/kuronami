@@ -38,6 +38,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var agentStatus: String?
     /// The request an agent is blocked on ("Bash: pnpm prisma migrate dev"), when known.
     @Published var pendingRequest: String?
+    /// What the agent asked with AskUserQuestion, while it waits for the answer.
+    @Published var pendingQuestion: PendingQuestion?
     /// The user handed this session's waits to the organizer (in memory only).
     @Published var delegation: Delegation?
     /// True while a PermissionRequest hook is held open, so approvals go through the CLI's API.
@@ -321,7 +323,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         guard !isAsleep else { return }
         let next = force ?? reduceState(state, kind: kind, event: event)
         guard next != state else { return }
-        if !next.needsAttention { pendingRequest = nil }
+        if !next.needsAttention { pendingRequest = nil; pendingQuestion = nil }
         if next == .idle || next == .exited(0) { activity = nil }
         if next != .idle { finishedUnseen = false }
         // A CLI that exited or relaunched took its subagents with it.
@@ -446,6 +448,23 @@ final class TerminalSession: ObservableObject, Identifiable {
         record(.approval, answer == .deny ? "Denied in Tako" : "Approved in Tako")
         apply(.userSubmitted, source: "approval", force: answer == .deny ? .idle : .working)
         return .success(answer == .deny ? "denied" : "approved")
+    }
+
+    /// Picks option `index` of the single-select question on screen by pressing the arrow keys and
+    /// enter. Re-reads the screen first, like `answerPromptByKeys`, so nothing stray is typed.
+    func answerQuestionByKeys(option index: Int) -> Result<String, PromptError> {
+        guard kind.isAgent, state.needsAttention else { return .failure(.notWaiting(label)) }
+        guard let question = pendingQuestion, question.mode == .options, question.items[0].options.indices.contains(index) else {
+            return .failure(.noPromptOnScreen(label))
+        }
+        let screen = surface.readViewport()
+        let first = String(question.items[0].options[0].label.prefix(12))
+        guard screen.contains(first) else { return .failure(.noPromptOnScreen(label)) }
+        PendingQuestion.keys(forOption: index).forEach { _ = surface.pressKey(named: $0) }
+        record(.approval, "Answered \(question.items[0].options[index].label) in Tako")
+        pendingQuestion = nil
+        apply(.userSubmitted, source: "approval", force: .working)
+        return .success(question.items[0].options[index].label)
     }
 
     enum PromptError: Error, CustomStringConvertible {
