@@ -218,8 +218,15 @@ extension SessionStore {
             // Out of reach for good: its checkpoints can go too.
             let dropped = recentlyClosed.suffix(from: 50)
             recentlyClosed.removeLast(recentlyClosed.count - 50)
-            let targets = dropped.map { (path: $0.workPath, id: $0.id.uuidString) }
-            pruneQueue.async { for target in targets { Checkpoints.prune(at: target.path, session: target.id) } }
+            // An archived worktree's folder is gone, but its refs live in the shared repository:
+            // prune from the main checkout (Claude worktrees keep it as cwd) when that's all that's left.
+            let targets = dropped.map { (paths: [$0.workPath, expandTilde($0.cwd)], id: $0.id.uuidString) }
+            pruneQueue.async {
+                for target in targets {
+                    guard let path = target.paths.first(where: { FileManager.default.fileExists(atPath: $0) }) else { continue }
+                    Checkpoints.prune(at: path, session: target.id)
+                }
+            }
         }
         saveRecentlyClosed()
     }
@@ -246,9 +253,10 @@ extension SessionStore {
     }
 
     private func saveRecentlyClosed() {
+        guard persists else { return }
         let specs = recentlyClosed
         let url = Self.recentlyClosedURL
-        DispatchQueue.global(qos: .utility).async {
+        Self.persistQueue.async {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             if let data = try? encoder.encode(specs) { try? data.write(to: url, options: .atomic) }
@@ -259,7 +267,8 @@ extension SessionStore {
 
     /// When the account's limit resets, tells the agent to carry on.
     func continueAtReset(_ session: TerminalSession) {
-        guard let reset = [rateLimits?.fiveHourResets, rateLimits?.sevenDayResets].compactMap({ $0 })
+        let limits = self.limits(for: session)
+        guard let reset = [limits?.fiveHourResets, limits?.sevenDayResets].compactMap({ $0 })
             .filter({ $0 > Date() }).min() else { return }
         session.resumeAt = reset
         session.record(.note, "Will continue at \(reset.formatted(date: .omitted, time: .shortened))")
@@ -280,7 +289,8 @@ extension SessionStore {
     /// The reset time to offer, when an agent stopped on a rate limit.
     func rateLimitReset(for session: TerminalSession) -> Date? {
         guard case .failed(let reason) = session.state, reason.lowercased().contains("rate") else { return nil }
-        return [rateLimits?.fiveHourResets, rateLimits?.sevenDayResets].compactMap { $0 }.filter { $0 > Date() }.min()
+        let limits = self.limits(for: session)
+        return [limits?.fiveHourResets, limits?.sevenDayResets].compactMap { $0 }.filter { $0 > Date() }.min()
     }
 
     // MARK: - Project actions

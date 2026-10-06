@@ -39,6 +39,8 @@ final class HookServer: @unchecked Sendable {
     private let acceptQueue = DispatchQueue(label: "dev.hyperterm.hooks.accept")
     /// Serial, so events reach the store in the order Claude sent them.
     private let ioQueue = DispatchQueue(label: "dev.hyperterm.hooks.io", qos: .userInitiated)
+    /// Connections are read in parallel, so one idle or slow socket can't hold up the rest.
+    private let readQueue = DispatchQueue(label: "dev.hyperterm.hooks.read", qos: .userInitiated, attributes: .concurrent)
 
     init(handler: @escaping Handler) {
         self.handler = handler
@@ -74,20 +76,19 @@ final class HookServer: @unchecked Sendable {
     private func acceptConnection() {
         let client = accept(listenFD, nil, nil)
         guard client >= 0 else { return }
-        let sentAt = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         var timeout = timeval(tv_sec: 2, tv_usec: 0)
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         var noSigPipe: Int32 = 1
         setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
-        ioQueue.async { [weak self] in self?.serve(client, sentAt: sentAt) }
+        readQueue.async { [weak self] in self?.serve(client) }
     }
 
-    private func serve(_ client: Int32, sentAt: UInt64) {
+    private func serve(_ client: Int32) {
         defer { close(client) }
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         var parsed = HookHTTPRequest.Parse.incomplete
-        // A trickling client can't hold the serial queue past the deadline.
+        // A trickling client can't hold its reader past the deadline.
         let deadline = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + Self.connectionDeadline
         var headChecked = false
         while case .incomplete = parsed, data.count <= Self.maxRequestBytes {
@@ -104,8 +105,14 @@ final class HookServer: @unchecked Sendable {
         }
         guard case .complete(let request) = parsed else { return reply(client, status: "400 Bad Request") }
         guard let session = Self.authorizedSession(request) else { return reply(client, status: "403 Forbidden") }
+        // Queued before the reply: Claude sends its next event only once this one is answered,
+        // so the serial queue gets them in the order they were sent.
+        let handler = self.handler
+        let body = request.body
+        // Stamped on the serial queue, so stamps rise in the order the store gets them: a slow
+        // read finishing late isn't dropped as older than events queued before it.
+        ioQueue.async { handler("claude", session, body, clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) }
         reply(client, status: "200 OK")
-        handler("claude", session, request.body, sentAt)
     }
 
     private func reply(_ client: Int32, status: String) {

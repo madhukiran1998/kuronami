@@ -25,6 +25,7 @@ extension SessionStore {
         }
         approvals[session.id] = approval
         session.hasHookApproval = true
+        session.heldToolCall = HeldToolCall(json: json)
         // Plan mode ends by asking to exit it; the plan is the request.
         session.pendingPlan = tool == "ExitPlanMode" ? (json["tool_input"] as? [String: Any])?["plan"] as? String : nil
         session.pendingRequest = summary
@@ -50,6 +51,7 @@ extension SessionStore {
             return session.answerPromptByKeys(answer)
         }
         session.hasHookApproval = false
+        session.heldToolCall = nil
         session.pendingPlan = nil
         approval.reply(ControlResponse.success(text: decisionJSON(approval, answer, reason: reason)))
         session.record(.approval, answer == .deny ? "Denied \(approval.summary)" : answer == .always ? "Always allowed \(approval.summary)" : "Allowed \(approval.summary)")
@@ -74,6 +76,7 @@ extension SessionStore {
     func dropApproval(for session: TerminalSession) {
         guard let approval = approvals.removeValue(forKey: session.id) else { return }
         session.hasHookApproval = false
+        session.heldToolCall = nil
         session.pendingPlan = nil
         approval.reply(ControlResponse.success())
         notifier.clearApproval(session: session)
@@ -112,4 +115,45 @@ extension SessionStore {
         let data = (try? JSONSerialization.data(withJSONObject: output)) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }
+}
+
+/// The tool call a held PermissionRequest hook asks about. Claude runs read-only tools alongside
+/// the one waiting for approval, so only this call's own PostToolUse means it moved on.
+struct HeldToolCall {
+    let name: String
+    let toolUseID: String?
+    let input: NSDictionary
+    /// The subagent that asked; nil for the main agent.
+    let agentID: String?
+
+    init(json: [String: Any]) {
+        name = json["tool_name"] as? String ?? ""
+        toolUseID = json["tool_use_id"] as? String
+        input = NSDictionary(dictionary: json["tool_input"] as? [String: Any] ?? [:])
+        agentID = json["agent_id"] as? String
+    }
+
+    /// Whether a tool hook payload reports this call: by tool_use_id when both carry one, else by
+    /// tool name and input. The permission flow can add to the input (AskUserQuestion's answers),
+    /// so every key held must be there unchanged; extra keys are fine. A payload naming no tool
+    /// can't be told apart, so it counts.
+    func matches(_ json: [String: Any]) -> Bool {
+        if let toolUseID, let other = json["tool_use_id"] as? String { return toolUseID == other }
+        guard let tool = json["tool_name"] as? String else { return true }
+        let other = NSDictionary(dictionary: json["tool_input"] as? [String: Any] ?? [:])
+        return tool == name && input.allSatisfy { key, value in (value as AnyObject).isEqual(other[key]) }
+    }
+
+    /// Whether another tool call can run while this one waits: a read-only tool Claude runs in
+    /// parallel, or any tool from a different agent. Anything else from the same agent means this
+    /// call was settled (allowed, denied or answered) and the agent moved on.
+    func runsAlongside(_ json: [String: Any]) -> Bool {
+        if json["agent_id"] as? String != agentID { return true }
+        guard let tool = json["tool_name"] as? String else { return false }
+        return Self.readOnlyTools.contains(tool) || ClaudeAdapter.browserReadOnlyTools.contains { "mcp__browser__" + $0 == tool }
+    }
+
+    private static let readOnlyTools: Set = [
+        "Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "NotebookRead", "TodoRead", "TodoWrite", "ToolSearch",
+    ]
 }

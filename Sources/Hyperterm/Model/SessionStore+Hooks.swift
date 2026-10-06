@@ -103,8 +103,14 @@ extension SessionStore {
         if ["UserPromptSubmit", "Stop", "PostToolUse"].contains(event) {
             session.recordAgentSessionId(json["session_id"] as? String)
         }
+        // A tool running alongside the one held for approval (Claude runs read-only tools in
+        // parallel, subagents run their own) says nothing about the dialog, which is still up.
+        // So does the held call's own PreToolUse, which can arrive after its PermissionRequest.
+        let toolEvent = ["PreToolUse", "PostToolUse", "PostToolUseFailure"].contains(event)
+        let held = toolEvent && session.hasHookApproval ? session.heldToolCall : nil
+        let parallelTool = held.map { $0.matches(json) ? event == "PreToolUse" : $0.runsAlongside(json) } ?? false
         // A tool call moving on means a prompt held open was answered in the terminal itself.
-        if ["PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "UserPromptSubmit"].contains(event) {
+        if !parallelTool, held != nil || ["PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "UserPromptSubmit"].contains(event) {
             dropApproval(for: session)
             session.pendingQuestion = nil
         }
@@ -132,9 +138,11 @@ extension SessionStore {
                 let input = json["tool_input"] as? [String: Any] ?? [:]
                 let text = AgentText.describeTool(name: tool, input: input, cwd: cwd)
                 session.activity = text
-                session.pendingRequest = text
-                question = tool == "AskUserQuestion" ? PendingQuestion.parse(toolInput: input) : nil
-                session.pendingQuestion = question
+                if !parallelTool {
+                    session.pendingRequest = text
+                    question = tool == "AskUserQuestion" ? PendingQuestion.parse(toolInput: input) : nil
+                    session.pendingQuestion = question
+                }
                 let isEdit = ["Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"].contains(tool)
                 if tool != "Read" && tool != "Glob" && tool != "Grep" { session.record(isEdit ? .edit : .tool, text) }
             }
@@ -150,7 +158,7 @@ extension SessionStore {
             refreshReview(session)
         case "StopFailure":
             session.activity = nil
-            let reason = failureReason(type: json["error"] as? String, details: json["error_details"] as? String)
+            let reason = failureReason(type: json["error"] as? String, details: json["error_details"] as? String, limits: limits(for: session))
             session.record(.failure, reason)
             session.apply(.claudeHook(event: event, notificationType: nil, message: reason), source: source)
             return
@@ -191,6 +199,8 @@ extension SessionStore {
             break
         }
 
+        // The held request keeps the session waiting on the user.
+        if parallelTool { return }
         let notificationType = json["notification_type"] as? String
         let message = json["message"] as? String
         let detail = notificationType == "permission_prompt" ? (session.pendingRequest ?? message) : message
@@ -215,10 +225,10 @@ extension SessionStore {
     }
 
     /// StopFailure's error type, in words, with the reset time when it's a rate limit.
-    private func failureReason(type: String?, details: String?) -> String {
+    private func failureReason(type: String?, details: String?, limits: RateLimits?) -> String {
         switch type {
         case "rate_limit":
-            if let resets = rateLimits?.fiveHourResets ?? rateLimits?.sevenDayResets {
+            if let resets = limits?.fiveHourResets ?? limits?.sevenDayResets {
                 return "Rate-limited · resets \(resets.formatted(date: .omitted, time: .shortened))"
             }
             return "Rate-limited"
@@ -276,7 +286,7 @@ extension SessionStore {
     }
 
     private func recordLimits(_ limits: RateLimits, for session: TerminalSession) {
-        let key = "\(session.kind.rawValue)/\(session.spec.account ?? AgentAccount.defaultID)"
+        let key = limitsKey(for: session)
         if accountLimits[key] != limits {
             accountLimits[key] = limits
             saveUsage()

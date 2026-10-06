@@ -118,6 +118,12 @@ final class Steward: ObservableObject {
         store.$selectedID.combineLatest(store.$layout).dropFirst()
             .sink { [weak self] _ in DispatchQueue.main.async { self?.rebalance() } }
             .store(in: &observers)
+        // An agent starting or finishing work changes its band.
+        store.$sessions
+            .map { sessions in Publishers.MergeMany(sessions.map { $0.$state.dropFirst().map { _ in () } }) }
+            .switchToLatest()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.rebalance() } }
+            .store(in: &observers)
         NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.conditionsChanged() }
@@ -179,6 +185,18 @@ final class Steward: ObservableObject {
         for id in Set(trees.keys).union(meters.keys).subtracting(live) { forget(id) }
         if samples != next { samples = next }
         conditionsChanged()
+    }
+
+    /// Between ticks: keeps each sampled session's tree current, so children started since the
+    /// last tick are backgrounded with it.
+    func refreshTrees(_ snapshots: [String: ProcessSnapshot]) {
+        var changed = false
+        for (id, tree) in trees {
+            guard let pids = snapshots[id.uuidString]?.pids, !pids.isEmpty, pids != tree else { continue }
+            trees[id] = pids
+            changed = true
+        }
+        if changed { rebalance() }
     }
 
     private func forget(_ id: UUID) {
@@ -255,6 +273,8 @@ final class Steward: ObservableObject {
         updateHeavyCapacity()
         heavy.reap()
         drainLaunches()
+        // Thermal state decides what is backgrounded.
+        rebalance()
     }
 
     private func updateHeavyCapacity() {
@@ -302,15 +322,22 @@ final class Steward: ObservableObject {
     // MARK: - Heavy jobs
 
     /// `ht heavy`: acquire replies once a slot is free; the slot frees on release or when the
-    /// holder process exits.
-    func handleHeavy(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
-        guard let raw = request.pid, raw > 0 else { reply(.failure("heavy needs the holder's pid")); return }
-        let pid = pid_t(raw)
+    /// holder process exits. The holder is the kernel's peer pid when the server knows it, so a
+    /// caller can't lease or release slots for other processes; `request.pid` is the fallback.
+    func handleHeavy(_ request: ControlRequest, peer: pid_t? = nil, reply: @escaping ControlServer.Reply) {
+        let pid: pid_t
+        if let peer, peer > 0 {
+            pid = peer
+        } else if let raw = request.pid, raw > 0 {
+            pid = pid_t(raw)
+        } else {
+            reply(.failure("heavy needs the holder's pid")); return
+        }
         switch request.text ?? "acquire" {
         case "acquire":
             guard HeavyQueue.isAlive(pid) else { reply(.failure("no such process")); return }
             heavy.reap()
-            heavy.acquire(pid) { reply(.success(text: "granted")) }
+            heavy.acquire(pid, ancestors: HeavyQueue.ancestors(of: pid)) { reply(.success(text: "granted")) }
         case "release":
             heavy.release(pid)
             reply(.success())

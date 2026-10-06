@@ -29,6 +29,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var foregroundProcess: String?
     /// Background shells under the agent CLI, from the last process snapshot (see `canSleep`).
     var backgroundShells = 0
+    /// Scripts running in a shell or server terminal, from the last process snapshot.
+    var nestedShells = 0
     @Published var unread = false
     /// Finished a turn the user hasn't looked at since: its tile is marked until they do.
     @Published var finishedUnseen = false
@@ -44,6 +46,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var delegation: Delegation?
     /// True while a PermissionRequest hook is held open, so approvals go through the CLI's API.
     @Published var hasHookApproval = false
+    /// The tool call the held hook asks about, so a parallel tool finishing doesn't release it.
+    var heldToolCall: HeldToolCall?
     @Published var git: GitInfo?
     @Published var timeline: [TimelineEvent] = []
     @Published var usage = UsageSnapshot()
@@ -172,7 +176,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         pendingInput = AgentIntegration.initialInput(for: spec, resume: resume, task: task)
         guard pendingInput != nil else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            guard let self, self.inputGeneration == generation else { return }
+            guard let self, self.inputGeneration == generation, !self.resumeAwaitsExit else { return }
             self.sendPendingInput()
         }
     }
@@ -192,6 +196,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         store?.dropApproval(for: self)
         endSleep()
         isWaking = false
+        resumeAwaitsExit = false
         wakeDraft = ""
         userDraftInProgress = false
         submitInFlight = false
@@ -229,15 +234,22 @@ final class TerminalSession: ObservableObject, Identifiable {
         isAsleep = true
         fellAsleepAt = Date()
         spec.asleep = true
+        // The CLI holds the terminal until it quits; the shell's next prompt (OSC 7) says it has.
+        shellAtPrompt = false
+        sleepExitSeen = false
         record(.note, "Asleep: the agent quit to free memory; its conversation resumes on the next message")
         type(kind.adapter?.exitCommand ?? "/exit", submit: true, countsAsWork: false)
     }
 
     /// Resumes the conversation in the same shell, which is back at its prompt.
     func wakeUp() {
+        // Woken while the CLI is still quitting (a key right after the exit command): the resume
+        // waits until it has, so it is never typed into the live CLI.
+        let quitting = isAsleep && !sleepExitSeen && !shellAtPrompt
         endSleep()
         isWaking = true
         record(.note, "Woke: resuming the conversation")
+        resumeAwaitsExit = quitting
         scheduleInitialInput(resume: true)
         agentProcessSeen = false
         createdAt = Date()
@@ -248,6 +260,38 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     /// When it was told to quit, to notice a CLI that didn't.
     private(set) var fellAsleepAt: Date?
+    /// The CLI quit after its exit command: its shell prompt came back, or the poll found it gone.
+    /// True when restored asleep, since no CLI ran then.
+    private var sleepExitSeen = true
+    /// Woken before the CLI was seen to quit; the resume command is held until it has.
+    private(set) var resumeAwaitsExit = false
+
+    /// The poll found no agent CLI process while it slept or was waking.
+    func cliExitSeen() {
+        if isAsleep { sleepExitSeen = true }
+        guard resumeAwaitsExit else { return }
+        resumeAwaitsExit = false
+        // A moment for the shell to draw its prompt.
+        let generation = inputGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(300)) { [weak self] in
+            guard let self, self.inputGeneration == generation else { return }
+            self.sendPendingInput()
+        }
+    }
+
+    /// Woken while quitting, and the CLI never did (it asked something instead): drop the resume,
+    /// close what it asked and keep the live CLI, as `abortSleep` does.
+    func cliStayedRunning() {
+        guard resumeAwaitsExit else { return }
+        resumeAwaitsExit = false
+        pendingInput = nil
+        inputGeneration += 1
+        _ = surface.pressKey(named: "esc")
+        fellAsleepAt = nil
+        record(.note, "Stayed awake: the agent didn't quit when asked")
+        agentProcessSeen = true
+        apply(.processStarted, source: "process", force: .idle)
+    }
 
     /// The CLI is still running after its exit command (it asked something instead): close
     /// whatever it asked and show the live terminal again, awake.
@@ -647,6 +691,9 @@ extension TerminalSession: TerminalSurfaceEvents {
 
     func surfacePwdChanged(_ pwd: String) {
         shellAtPrompt = true
+        // The shell's prompt is back, so the CLI told to quit has.
+        if isAsleep { sleepExitSeen = true }
+        resumeAwaitsExit = false
         if pendingInput != nil { sendPendingInput() }
         guard !pwd.isEmpty, let url = URL(string: pwd), url.isFileURL || pwd.hasPrefix("/") else { return }
         let path = url.isFileURL ? url.path : pwd

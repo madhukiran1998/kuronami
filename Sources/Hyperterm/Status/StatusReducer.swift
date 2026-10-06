@@ -96,6 +96,14 @@ private func reduceRegistry(_ state: AgentState, status: String) -> AgentState {
     }
 }
 
+/// Claude rewrites its registry file on its own schedule, so a "busy" written before the newest
+/// hook, or read within a few seconds of one (a Stop that just ended the turn), is older news
+/// than the hook and must not reopen the turn.
+func registryBusyIsStale(writtenAt: Date?, lastHookAt: Date, now: Date = Date()) -> Bool {
+    if let writtenAt, writtenAt <= lastHookAt { return true }
+    return now.timeIntervalSince(lastHookAt) < 3
+}
+
 /// First meaningful line of an agent's last message, used as the row summary.
 func summarize(_ text: String, limit: Int = 140) -> String? {
     let plain = text.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")

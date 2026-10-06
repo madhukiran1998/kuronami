@@ -11,10 +11,22 @@ extension SessionStore {
 
     private static var usageFile: URL { ControlPaths.supportDirectory.appendingPathComponent("usage.json") }
 
+    /// `accountLimits` key for the account `session` runs on: "claude/default", "codex/work".
+    func limitsKey(for session: TerminalSession) -> String {
+        "\(session.kind.rawValue)/\(session.spec.account ?? AgentAccount.defaultID)"
+    }
+
+    /// The limits of the account `session` runs on; the CLI's last reading from any account
+    /// until that account has reported.
+    func limits(for session: TerminalSession) -> RateLimits? {
+        accountLimits[limitsKey(for: session)] ?? (session.kind == .codex ? codexRateLimits : rateLimits)
+    }
+
     func saveUsage() {
+        guard persists else { return }
         let saved = SavedUsage(claude: rateLimits, codex: codexRateLimits, accounts: accountLimits)
         let url = Self.usageFile
-        DispatchQueue.global(qos: .utility).async {
+        Self.persistQueue.async {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             guard let data = try? encoder.encode(saved) else { return }

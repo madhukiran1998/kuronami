@@ -113,11 +113,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         guard windowController != nil else { return }
-        store.persist()
+        // Written now, not after persist's debounce: the process ends when this returns.
+        store.flushPersist()
         controlServer?.stop()
         hookServer?.stop()
-        // Give the debounced persist a moment to land.
-        Thread.sleep(forTimeInterval: 0.4)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -139,8 +138,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startControlServer() {
         let store = self.store
         let inspector = self.inspector
-        let server = ControlServer(path: ControlPaths.socketPath, identify: { inspector.identify(pid: $0) }) { request, caller, reply in
-            if request.cmd == .heavy { Steward.shared.handleHeavy(request, reply: reply); return }
+        let server = ControlServer(path: ControlPaths.socketPath, identify: { inspector.identify(pid: $0) }) { request, caller, peer, reply in
+            if request.cmd == .heavy { Steward.shared.handleHeavy(request, peer: peer, reply: reply); return }
             ControlHandler(store: store, caller: caller).handle(request, reply: reply)
         }
         do {
@@ -193,8 +192,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if lastStewardUpdate.map({ Date().timeIntervalSince($0) >= Self.stewardInterval }) ?? true {
             lastStewardUpdate = Date()
             Steward.shared.update(snapshots)
-        } else if Steward.shared.queuedLaunches > 0 {
-            Steward.shared.drainLaunches()
+        } else {
+            Steward.shared.refreshTrees(snapshots)
+            if Steward.shared.queuedLaunches > 0 { Steward.shared.drainLaunches() }
         }
         refreshGit()
         // Working agents and the one on screen every ~10s; everything else once a minute (idle
@@ -210,10 +210,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if session.ports != snapshot.ports { session.ports = snapshot.ports }
             if session.foregroundProcess != snapshot.foreground { session.foregroundProcess = snapshot.foreground }
             session.backgroundShells = snapshot.backgroundShells
+            session.nestedShells = snapshot.nestedShells
             if session.kind == .claude {
                 if let status = snapshot.claudeStatus {
                     lastRegistryStatus[session.id] = status
-                    session.apply(.registryStatus(status), source: "claude registry")
+                    // A "busy" older than the last hook (the Stop that ended the turn) is stale.
+                    if status != "busy" || !registryBusyIsStale(writtenAt: snapshot.claudeStatusAt, lastHookAt: session.lastHookAt) {
+                        session.apply(.registryStatus(status), source: "claude registry")
+                    }
                 }
             }
             if session.kind == .server, case .exited = session.state, snapshot.foreground != nil {
@@ -292,10 +296,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the shell stays. Hooks report this for Claude; this covers Codex and crashes.
     private func trackAgentProcess(_ session: TerminalSession, _ snapshot: ProcessSnapshot?) {
         guard let adapter = session.kind.adapter else { return }
-        let name = adapter.command
-        let alive = snapshot?.programs.contains { $0.contains(name) } ?? false
+        let alive = snapshot?.agentCLIs.contains(adapter.command) ?? false
         if session.isAsleep {
             if alive, let since = session.fellAsleepAt, Date().timeIntervalSince(since) > 8 { session.abortSleep() }
+            if !alive { session.cliExitSeen() }
+            return
+        }
+        // Woken while its CLI was still quitting: the resume waits for it to go.
+        if session.resumeAwaitsExit {
+            if !alive {
+                session.cliExitSeen()
+            } else if let since = session.fellAsleepAt, Date().timeIntervalSince(since) > 8 {
+                session.cliStayedRunning()
+            }
             return
         }
         if alive {
@@ -413,6 +426,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func newCodexHere(_ sender: Any?) { windowController?.quickCreate(.codex) }
 
     @objc func closeSession(_ sender: Any?) {
+        // ⌘W in Settings, a preview or any other window closes that window, not a terminal. A
+        // sheet or panel on a terminal window counts as that window.
+        if let key = NSApp.keyWindow {
+            var owner = key
+            while let parent = owner.sheetParent ?? owner.parent { owner = parent }
+            if windowController?.isTerminalWindow(owner) != true {
+                // Borderless panels (Quick Ask) have no close button for performClose to press.
+                if key.styleMask.contains(.closable) { key.performClose(sender) } else { key.close() }
+                return
+            }
+        }
         if let session = store.selected { windowController?.confirmClose(session) }
     }
 
