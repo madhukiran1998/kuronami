@@ -49,6 +49,10 @@ struct ControlHandler {
             reply(.failure("browser unavailable: \(AgentBrowser.shared.startError ?? "Chromium didn't start")"))
             return
         }
+        if let agent = callerAgent, request.text == "new_tab" || request.text == "close_tab" {
+            handleBrowserTab(request, agent: agent, reply: reply)
+            return
+        }
         let target: TerminalSession
         if let agent = callerAgent {
             target = store.browser(for: agent)
@@ -57,6 +61,15 @@ struct ControlHandler {
         } else {
             target = store.looseBrowsers.first ?? store.openBrowser()
         }
+        var page: URL?
+        if let raw = request.url {
+            guard let url = resolveAddress(raw), BrowserTarget.isAllowed(url) else {
+                reply(.failure("can't open \(raw): give an http(s) address or a path to a local file"))
+                return
+            }
+            page = url
+            store.select(target)
+        }
         if let tool = request.text, tool != "mark", let agent = callerAgent {
             AgentBrowser.shared.noteActivity(agent: agent.label, browser: target.label, tool: tool)
         }
@@ -64,10 +77,45 @@ struct ControlHandler {
         let store = self.store
         AgentBrowser.waitUntilReady({ store.isBrowserReady(target) }) { ready in
             guard ready else { reply(.failure("browser unavailable: Chromium didn't come up")); return }
+            if let page, let surface = target.surface as? BrowserSurfaceView { surface.model.load(page) }
             store.markBrowsers()
             // Tags land asynchronously in each page's renderer.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 var response = ControlResponse.success(text: target.label)
+                response.endpoint = AgentBrowser.endpoint
+                reply(response)
+            }
+        }
+    }
+
+    /// An agent's extra tabs are more browsers it owns (they show under it in the sidebar and tile
+    /// like any browser). `new_tab` opens one on `request.command`; `close_tab` closes one of the
+    /// agent's own, never its first browser or anyone else's.
+    private func handleBrowserTab(_ request: ControlRequest, agent: TerminalSession, reply: @escaping ControlServer.Reply) {
+        let primary = store.browser(for: agent)
+        if request.text == "close_tab" {
+            let owned = store.browsers(ownedBy: agent)
+            guard let tab = owned.first(where: { $0.label == request.target?.trimmingCharacters(in: CharacterSet(charactersIn: "@")) }) else {
+                reply(.failure("that page isn't a tab you opened"))
+                return
+            }
+            guard tab.id != primary.id else { reply(.failure("@\(tab.label) is your main browser; it stays open")); return }
+            store.close(tab)
+            reply(.success(text: "closed @\(tab.label)"))
+            return
+        }
+        var spec = LaunchSpec(label: "", kind: .browser, cwd: agent.spec.cwd)
+        spec.owner = agent.id
+        if let url = request.command, !url.isEmpty { spec.url = url }
+        let tab = store.create(spec, select: false)
+        agent.record(.note, "Opened browser @\(tab.label)")
+        store.wakeBrowser(tab)
+        let store = self.store
+        AgentBrowser.waitUntilReady({ store.isBrowserReady(tab) }) { ready in
+            guard ready else { reply(.failure("browser unavailable: Chromium didn't come up")); return }
+            store.markBrowsers()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                var response = ControlResponse.success(text: tab.label)
                 response.endpoint = AgentBrowser.endpoint
                 reply(response)
             }
