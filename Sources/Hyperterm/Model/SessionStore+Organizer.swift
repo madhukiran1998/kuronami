@@ -56,6 +56,26 @@ extension SessionStore {
 
     // MARK: - Arranging
 
+    /// Sessions the organizer just started, reopened or resumed. Opening several takes several
+    /// calls, so whatever it opened in the last 20 s shows together: one fills the view, two or
+    /// three sit side by side, more go in rows of three.
+    func showOpenedByOrganizer(_ opened: [TerminalSession]) {
+        let now = Date()
+        organizerOpened.removeAll { entry in now.timeIntervalSince(entry.at) > 20 || !sessions.contains { $0.id == entry.id } }
+        organizerOpened += opened.map { (id: $0.id, at: now) }
+        let group = organizerOpened.compactMap { entry in sessions.first { $0.id == entry.id } }
+        guard group.count > 1 else {
+            if let only = group.first { select(only) }
+            return
+        }
+        let rows = stride(from: 0, to: group.count, by: 3).map { start -> LayoutNode in
+            let row = group[start..<min(start + 3, group.count)].map { LayoutNode.leaf($0.id) }
+            return row.count == 1 ? row[0] : .split(axis: .horizontal, weights: row.map { _ in 1 }, children: row)
+        }
+        let tiles = rows.count == 1 ? rows[0] : LayoutNode.split(axis: .vertical, weights: rows.map { _ in 1 }, children: rows)
+        arrange(layout: .grid, focus: opened.last, tiles: tiles)
+    }
+
     /// The organizer's view request. `tiles` sets the grid exactly: the sessions it names show in
     /// that shape, servers it leaves out go to the strip, and everything else to the shelf.
     func arrange(layout: LayoutMode?, focus: TerminalSession?, tiles: LayoutNode?) {

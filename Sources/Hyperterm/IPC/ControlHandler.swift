@@ -237,6 +237,12 @@ struct ControlHandler {
             reply(.failure("a server needs a command"))
             return
         }
+        // An agent CLI run as a server gets none of Kuronami's hooks: no state, no messages, no sleep.
+        let program = (command.split(separator: " ").first.map(String.init) ?? "") as NSString
+        if ["claude", "codex"].contains(program.lastPathComponent) {
+            reply(.failure("that's an agent, not a server: resume a conversation with reopen_session (conversation, folder), or start one with start_agent"))
+            return
+        }
         let label = normalizeLabel(request.label ?? "")
         let cwd = request.cwd ?? agent.spec.cwd
         store.confirm(
@@ -355,7 +361,7 @@ struct ControlHandler {
             }
             // The user asked for them, so they show: one is selected, several land side by side
             // like a project window opened for them.
-            if count > 1 { store.arrange(layout: .grid, focus: started.first, tiles: nil) } else { store.select(started.first) }
+            store.showOpenedByOrganizer(started)
             let labels = started.map { "@" + $0.label }.joined(separator: ", ")
             guard !queued else { return }
             var response = ControlResponse.success(text: "started \(labels) in \(abbreviateHome(expandTilde(folder)))")
@@ -398,19 +404,47 @@ struct ControlHandler {
                 let renamed = session.label == spec.label ? "" : " (was @\(spec.label))"
                 lines.append("@\(session.label)\(renamed) " + (spec.agentSessionId == nil ? "started fresh" : "resumed its conversation"))
             }
-            if reopened.count == 1 {
-                store.select(reopened[0])
-            } else if reopened.count > 1 {
-                store.arrange(layout: .grid, focus: reopened.first, tiles: nil)
-            }
+            store.showOpenedByOrganizer(reopened)
             let text = lines.joined(separator: "\n")
             guard !reopened.isEmpty else { return .failure(text) }
             var response = ControlResponse.success(text: text)
             response.session = reopened.first?.info()
             return response
+        case "resume":
+            return resumeConversation(request)
         default:
-            return .failure("history takes list or reopen")
+            return .failure("history takes list, reopen or resume")
         }
+    }
+
+    /// A Claude or Codex conversation Kuronami never ran (say from the CLI on its own), resumed as
+    /// a proper agent: hooks, state, sleep and messages all work, unlike a bare process.
+    private func resumeConversation(_ request: ControlRequest) -> ControlResponse {
+        guard let kind = SessionKind(rawValue: request.kind ?? "claude"), kind.isAgent else {
+            return .failure("kind must be claude or codex")
+        }
+        guard let id = request.target, isSafeIdentifier(id) else { return .failure("give the conversation id") }
+        if let open = store.sessions.first(where: { $0.spec.agentSessionId == id }) {
+            store.select(open)
+            return .success(text: "@\(open.label) already has that conversation open; it's on screen")
+        }
+        guard let folder = request.cwd.map(expandTilde), !folder.isEmpty else {
+            return .failure("say which folder the conversation ran in")
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return .failure("no folder at \(folder)")
+        }
+        var spec = LaunchSpec(label: normalizeLabel(request.label ?? ""), kind: kind, cwd: folder)
+        if spec.labelSource == .user { spec.labelSource = .agent }
+        spec.agentSessionId = id
+        spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
+        let session = store.create(spec, resume: true, select: false)
+        session.record(.note, "Resumed by the organizer")
+        store.showOpenedByOrganizer([session])
+        var response = ControlResponse.success(text: "resumed @\(session.label) in \(abbreviateHome(folder))")
+        response.session = session.info()
+        return response
     }
 
     /// The steward's view of the machine, or a change to its policy.

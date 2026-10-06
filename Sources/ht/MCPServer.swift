@@ -169,7 +169,9 @@ owns, what not to touch, and what done means. Before starting several, split the
 parallel only on work that touches different files or modules. \
 Agents you start or reopen appear on screen for the user. When the user asks to open, resume or continue \
 past sessions ("open my last sessions", "pick up where @api left off"), call session_history and then \
-reopen_session: it resumes their own conversations. Never start new agents to read old transcripts. \
+reopen_session: it resumes their own conversations. A conversation Kuronami never ran (not in session_history) \
+resumes the same way with reopen_session's conversation and folder; never run claude or codex through start_server. \
+Never start new agents to read old transcripts. \
 Arrange the window with arrange_view. Close finished terminals with close_terminal; the user confirms each. \
 Check on agents with list_terminals and read_terminal, and pass instructions on with send_message. When you \
 relay an agent's result, quote its own words from read_terminal instead of paraphrasing. Kuronami's steward \
@@ -285,12 +287,16 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "reopen_session",
-        "description": "Reopen closed sessions from session_history: each resumes its own conversation in its folder and shows on screen (several at once in a grid). Use this, not start_agent, to continue past work.",
+        "description": "Reopen closed sessions from session_history: each resumes its own conversation in its folder and shows on screen (several at once in a grid). For a Claude or Codex conversation Kuronami never ran (not in session_history), pass conversation (its session id, e.g. a ~/.claude/projects/<folder>/<id>.jsonl name) and folder instead. Use this, not start_agent or start_server, to continue past work.",
         "inputSchema": [
             "type": "object",
             "properties": [
                 "terminal": ["type": "string", "description": "Label or id from session_history"],
                 "terminals": ["type": "array", "items": ["type": "string"], "description": "Several labels or ids, to reopen them together"],
+                "conversation": ["type": "string", "description": "A Claude session id or Codex thread id not in session_history"],
+                "folder": ["type": "string", "description": "With conversation: the folder it ran in, absolute or ~/…"],
+                "kind": ["type": "string", "enum": ["claude", "codex"], "description": "With conversation (default claude)"],
+                "label": ["type": "string", "description": "With conversation: a short label"],
             ],
         ],
     ],
@@ -418,6 +424,13 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req.text = "list"
         req.cwd = (arguments["folder"] as? String).map { ($0 as NSString).expandingTildeInPath }
         req.lines = arguments["limit"] as? Int
+    case "reopen_session" where (arguments["conversation"] as? String)?.isEmpty == false:
+        req = ControlRequest(cmd: .history)
+        req.text = "resume"
+        req.target = arguments["conversation"] as? String
+        req.cwd = (arguments["folder"] as? String).map { ($0 as NSString).expandingTildeInPath }
+        req.kind = arguments["kind"] as? String
+        req.label = arguments["label"] as? String
     case "reopen_session":
         req = ControlRequest(cmd: .history)
         req.text = "reopen"

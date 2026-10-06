@@ -22,6 +22,8 @@ final class SessionStore: ObservableObject {
     /// Terminals the organizer waits on, each with the note it left for when that one finishes.
     var organizerWatches: [UUID: String] = [:]
     var organizerDigest = OrganizerDigest()
+    /// What the organizer opened in the last few seconds (see showOpenedByOrganizer).
+    var organizerOpened: [(id: UUID, at: Date)] = []
     var overlapWatch = OverlapWatch()
     /// Called when a session's status changes. It can change which tiles show (grid hides exited
     /// sessions) and their chrome, but must not pull keyboard focus away from where the user is.
