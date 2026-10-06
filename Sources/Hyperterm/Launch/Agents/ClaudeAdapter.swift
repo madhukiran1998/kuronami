@@ -50,7 +50,7 @@ struct ClaudeAdapter: AgentAdapter {
 
     /// Browser tools that only look: screenshots, page snapshots, console and network logs.
     /// Navigating, clicking, typing, and running scripts still ask.
-    private static let browserReadOnlyTools = [
+    static let browserReadOnlyTools = [
         "list_pages", "take_snapshot", "take_screenshot", "list_console_messages", "get_console_message",
         "list_network_requests", "get_network_request", "get_css_styles", "wait_for",
     ]

@@ -106,7 +106,18 @@ struct ControlHandler {
         }
         var spec = LaunchSpec(label: "", kind: .browser, cwd: agent.spec.cwd)
         spec.owner = agent.id
-        if let url = request.command, !url.isEmpty { spec.url = url }
+        // The same allow-list as `browser`: no javascript:, data: or custom schemes.
+        if let raw = request.command, !raw.isEmpty {
+            // A local file (relative to the agent's folder), about:blank, or a web address.
+            let address = BrowserTarget.fileURL(raw, cwd: agent.spec.workPath)
+                ?? (raw.lowercased().hasPrefix("about:") ? URL(string: raw) : nil)
+                ?? resolveAddress(raw)
+            guard let url = address, BrowserTarget.isAllowed(url) else {
+                reply(.failure("can't open \(raw): give an http(s) address or a path to a local file"))
+                return
+            }
+            spec.url = url.absoluteString
+        }
         let tab = store.create(spec, select: false)
         agent.record(.note, "Opened browser @\(tab.label)")
         store.wakeBrowser(tab)
@@ -139,6 +150,8 @@ struct ControlHandler {
             startServerForAgent(request, reply: reply)
         case .new where callerAgent != nil && (request.kind == SessionKind.claude.rawValue || request.kind == SessionKind.codex.rawValue):
             startAgentForAgent(request, reply: reply)
+        case .new:
+            create(request, reply: reply)
         default:
             reply(handle(request))
         }
@@ -170,7 +183,8 @@ struct ControlHandler {
             store.setLayout(mode)
             return .success()
         case .new:
-            return create(request)
+            // Answered by `create(_:reply:)` in the asynchronous dispatch above.
+            return .failure("new is handled asynchronously")
         case .status:
             let target = callerAgent ?? (isUser ? resolve(request.target) : nil)
             guard let me = target else { return .failure("set_status works from inside an agent terminal") }
@@ -256,32 +270,43 @@ struct ControlHandler {
 
     // MARK: - Commands
 
-    private func create(_ request: ControlRequest) -> ControlResponse {
+    /// `ht new`. A worktree is made off the main thread (`git worktree add` can take seconds), so
+    /// the window stays responsive; everything else starts at once as before.
+    private func create(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
         guard let kind = SessionKind(rawValue: request.kind ?? "shell") else {
-            return .failure("kind must be one of: claude, codex, shell, server")
+            return reply(.failure("kind must be one of: claude, codex, shell, server"))
         }
         if !isUser {
-            guard callerAgent != nil else { return .failure("not allowed from a detached process") }
-            if kind == .shell { return .failure("agents can't open shells; ask the user") }
+            guard callerAgent != nil else { return reply(.failure("not allowed from a detached process")) }
+            if kind == .shell { return reply(.failure("agents can't open shells; ask the user")) }
             // Raw flags would let an agent start a sibling with weaker permissions.
-            if request.command?.isEmpty == false { return .failure("agents can't pass extra arguments to new agents") }
+            if request.command?.isEmpty == false { return reply(.failure("agents can't pass extra arguments to new agents")) }
         }
         let cwd = request.cwd ?? callerSession?.spec.cwd ?? NSHomeDirectory()
         var spec = LaunchSpec(label: request.label ?? "", kind: kind, cwd: cwd, command: request.command)
         if callerAgent != nil && spec.labelSource == .user { spec.labelSource = .agent }
         if let account = request.account {
             guard AccountStore.shared.account(account, kind: kind) != nil else {
-                return .failure("no \(kind.displayName) account named \(account); add it in Accounts")
+                return reply(.failure("no \(kind.displayName) account named \(account); add it in Accounts"))
             }
             if account != AgentAccount.defaultID { spec.account = account }
         } else if let parent = callerAgent, parent.kind == kind {
             // An agent's helpers bill the same subscription it does.
             spec.account = parent.spec.account
         }
-        let session = store.create(spec, select: isUser, worktree: request.worktree ?? false, task: request.text)
-        var response = ControlResponse.success(text: "@\(session.label)")
-        response.session = session.info()
-        return response
+        func respond(_ session: TerminalSession) {
+            var response = ControlResponse.success(text: "@\(session.label)")
+            response.session = session.info()
+            reply(response)
+        }
+        if request.worktree == true, kind.isAgent {
+            let (store, select) = (self.store, isUser)
+            Task { @MainActor in
+                respond(await store.launch(spec, select: select, worktree: true, task: request.text))
+            }
+            return
+        }
+        respond(store.create(spec, select: isUser, worktree: request.worktree ?? false, task: request.text))
     }
 
     /// A command an agent wants run as a server runs outside its own permission checks, so the

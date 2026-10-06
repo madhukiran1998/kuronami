@@ -13,7 +13,20 @@ struct HeavyQueue {
 
     var waiting: Int { waiters.count }
 
-    mutating func acquire(_ pid: pid_t, grant: @escaping () -> Void) {
+    /// One lease per pid: asking again while holding is granted at once, and asking again while
+    /// waiting answers both asks on the one grant. A process whose ancestor holds a slot is part
+    /// of that job (`ht heavy make` running `ht heavy cc`), so it's granted without another slot;
+    /// waiting for one would deadlock the holder on its own child.
+    mutating func acquire(_ pid: pid_t, ancestors: [pid_t] = [], grant: @escaping () -> Void) {
+        if holders.contains(pid) || !Set(ancestors).isDisjoint(with: holders) {
+            grant()
+            return
+        }
+        if let index = waiters.firstIndex(where: { $0.pid == pid }) {
+            let earlier = waiters[index].grant
+            waiters[index].grant = { earlier(); grant() }
+            return
+        }
         waiters.append((pid, grant))
         pump()
     }
@@ -42,6 +55,23 @@ struct HeavyQueue {
 
     static func isAlive(_ pid: pid_t) -> Bool {
         kill(pid, 0) == 0 || errno == EPERM
+    }
+
+    /// `pid`'s parent, grandparent, … up to (not including) launchd.
+    static func ancestors(of pid: pid_t) -> [pid_t] {
+        var chain: [pid_t] = []
+        var current = pid
+        for _ in 0..<64 {
+            var info = kinfo_proc()
+            var size = MemoryLayout<kinfo_proc>.stride
+            var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, current]
+            guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size > 0, info.kp_proc.p_pid == current else { break }
+            let parent = info.kp_eproc.e_ppid
+            guard parent > 1, parent != current else { break }
+            chain.append(parent)
+            current = parent
+        }
+        return chain
     }
 
     private mutating func pump() {
