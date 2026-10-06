@@ -262,8 +262,9 @@ final class SessionStore: ObservableObject {
         sessions.filter { $0.kind == .browser && $0.spec.owner == agent.id }
     }
 
+    /// The organizer has no sidebar row, so its browsers are loose too.
     var looseBrowsers: [TerminalSession] {
-        let agents = Set(sessions.filter(\.kind.isAgent).map(\.id))
+        let agents = Set(sessions.filter { $0.kind.isAgent && !$0.isOrganizer }.map(\.id))
         return sessions.filter { $0.kind == .browser && !($0.spec.owner.map(agents.contains) ?? false) }
     }
 
