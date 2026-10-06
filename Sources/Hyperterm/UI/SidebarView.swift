@@ -635,10 +635,6 @@ private struct SidebarFooter: View {
             Hairline()
             WindowControls(store: store, actions: actions)
                 .padding(.horizontal, Space.m)
-            if let since = store.phoneModeSince {
-                PhoneModeBanner(since: since, turnOff: { store.setPhoneMode(false) })
-                    .padding(.horizontal, Space.m)
-            }
             // Both meters stack when Claude and Codex are both in use; each is labeled then.
             VStack(alignment: .leading, spacing: Space.s) {
                 let both = store.rateLimits != nil && store.codexRateLimits != nil
@@ -700,64 +696,6 @@ private struct WindowControls: View {
             .help("New terminal (⌘N)")
         }
         .frame(height: Size.iconButton)
-    }
-}
-
-/// Phone Mode's switch: a quiet icon like its neighbors when off, gold while it's on.
-private struct PhoneModeButton: View {
-    @ObservedObject var store: SessionStore
-    @State private var hovering = false
-
-    var body: some View {
-        let on = store.isPhoneModeOn
-        Button { if on { store.setPhoneMode(false) } else { store.startPhoneMode() } } label: {
-            Image(systemName: "iphone")
-                .font(Typeface.caption.weight(.semibold))
-                .foregroundStyle(on ? Palette.attention : hovering ? Tone.text : Tone.muted)
-                .frame(width: Size.iconButton, height: Size.iconButton)
-                .background(on ? Palette.attention.opacity(0.14) : hovering ? Tone.raised : .clear,
-                            in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(on ? "Phone Mode is on. Click to turn it off."
-                 : "Phone Mode: connects the organizer to your phone with Claude Remote Control. While you're away, agents don't wait for you here. Ordinary requests are allowed and the organizer handles the rest.")
-        .accessibilityLabel("Phone Mode")
-        .accessibilityValue(on ? "On" : "Off")
-    }
-}
-
-/// Above the usage meters while Phone Mode is on, so it's never forgotten.
-private struct PhoneModeBanner: View {
-    let since: Date
-    let turnOff: () -> Void
-
-    var body: some View {
-        HStack(spacing: Space.s) {
-            Image(systemName: "iphone")
-                .font(Typeface.caption.weight(.bold))
-                .foregroundStyle(Tone.deep)
-                .frame(width: Size.iconButton, height: Size.iconButton)
-                .background(Palette.attention, in: Circle())
-            VStack(alignment: .leading, spacing: Space.xxs) {
-                Text("Phone Mode on").font(Typeface.callout.weight(.medium)).foregroundStyle(Tone.text)
-                Text("Remote Control · since \(since.formatted(date: .omitted, time: .shortened))")
-                    .font(Typeface.caption)
-                    .foregroundStyle(Tone.muted)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            Spacer(minLength: Space.xs)
-            Button("Turn Off", action: turnOff)
-                .buttonStyle(PanelButtonStyle(prominent: true, tint: Palette.attention))
-                .fixedSize()
-        }
-        .padding(.horizontal, Space.s)
-        .padding(.vertical, Space.s - Space.xxs)
-        .background(Palette.attention.opacity(0.10), in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous).strokeBorder(Palette.attention.opacity(0.35), lineWidth: Size.hairline))
-        .help("Since \(since.formatted(date: .omitted, time: .shortened)), the organizer is open to your phone through Claude Remote Control. Agents' ordinary requests are allowed and it handles their questions and risky requests with you.")
     }
 }
 
