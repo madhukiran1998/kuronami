@@ -690,6 +690,10 @@ final class SessionStore: ObservableObject {
                 spec.cwd = Self.organizerFolder
                 spec.agentSessionId = nil
             }
+            // A model saved for another CLI would fail to launch this one.
+            if spec.organizer == true, let model = spec.options?.model, !Self.isOrganizerModel(model, of: spec.kind) {
+                spec.options?.model = nil
+            }
             return spec
         }.forEach { create($0, resume: true, select: false) }
         // Never the organizer: selecting it opens its panel instead.

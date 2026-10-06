@@ -86,9 +86,21 @@ extension SessionStore {
 
     private static func organizerModelKey(_ kind: SessionKind) -> String { "organizerModel." + kind.rawValue }
 
-    /// The model picked for `kind`: nil until picked, "" for the CLI's own default.
+    /// Whether `name` is one of `kind`'s own models: a model from another CLI (Codex's `gpt-6-luna` on
+    /// Claude) is never launched, and "" is the CLI's own default.
+    static func isOrganizerModel(_ name: String, of kind: SessionKind) -> Bool {
+        name.isEmpty || organizerModels(for: kind).contains { $0.name == name }
+    }
+
+    /// The model picked for `kind`: nil until picked, "" for the CLI's own default. One saved for
+    /// another CLI is dropped, so the panel asks again instead of launching a CLI with it.
     static func chosenOrganizerModel(for kind: SessionKind) -> String? {
-        organizerDefaults.string(forKey: organizerModelKey(kind))
+        guard let name = organizerDefaults.string(forKey: organizerModelKey(kind)) else { return nil }
+        guard isOrganizerModel(name, of: kind) else {
+            organizerDefaults.removeObject(forKey: organizerModelKey(kind))
+            return nil
+        }
+        return name
     }
 
     static func setOrganizerModel(_ name: String?, for kind: SessionKind) {
@@ -105,11 +117,21 @@ extension SessionStore {
         chosenOrganizerModel(for: kind).flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    /// The model step's choice: remembered, then the organizer starts on it, replacing one running.
-    func chooseOrganizerModel(_ name: String?) {
-        Self.setOrganizerModel(name, for: Self.organizerKind)
+    /// The model step's choice for `kind`, the CLI whose models were shown: remembered, then the
+    /// organizer starts on that CLI and model, replacing one running.
+    func chooseOrganizerModel(_ name: String?, for kind: SessionKind) {
+        guard Self.isOrganizerModel(name ?? "", of: kind) else { return }
+        Self.organizerKind = kind
+        Self.setOrganizerModel(name, for: kind)
         if let organizer, !organizer.isExitedProcess { close(organizer) }
         startOrganizer()
+    }
+
+    /// A running organizer that isn't on the CLI chosen (a choice made while another was starting,
+    /// or one left from an earlier run) moves to the chosen CLI.
+    func reconcileOrganizerKind() {
+        guard !organizerStarting, let organizer, organizer.kind != Self.organizerKind else { return }
+        switchOrganizer(to: Self.organizerKind)
     }
 
     /// Starts the organizer in `cwd`, replacing one that has exited. It runs with full access:

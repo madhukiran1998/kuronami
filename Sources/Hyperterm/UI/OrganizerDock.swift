@@ -181,6 +181,7 @@ final class OrganizerDock {
         // The panel is the window's child: with the window hidden it would show nothing.
         if window.isMiniaturized { window.deminiaturize(nil) }
         if !window.isVisible { window.makeKeyAndOrderFront(nil) }
+        store.reconcileOrganizerKind()
         startIfNeeded()
         state.isOpen = true
         if panel.parent !== window { window.addChildWindow(panel, ordered: .above) }
@@ -282,7 +283,7 @@ final class OrganizerDock {
     private func chooseModel(_ name: String?, of kind: SessionKind) {
         chooserState.model.notice = nil
         chooser.isHidden = true
-        store.chooseOrganizerModel(name)
+        store.chooseOrganizerModel(name, for: kind)
         watchStart(kind: kind, name: name)
     }
 
@@ -382,7 +383,7 @@ private struct OrganizerButton: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Nil until a CLI is chosen; one running from before there was a choice counts.
-    private var kind: SessionKind? { SessionStore.chosenOrganizerKind ?? store.organizer?.kind }
+    private var kind: SessionKind? { store.organizer?.kind ?? SessionStore.chosenOrganizerKind }
 
     private var mood: KuronamiMark.Mood {
         switch store.organizer?.state {
@@ -468,6 +469,9 @@ private struct OrganizerHeader: View {
     let start: () -> Void
     @AppStorage(SessionStore.organizerKindKey, store: SessionStore.organizerDefaults) private var chosen: String?
 
+    /// The CLI actually running, so the label never says Codex over a Claude terminal.
+    private var shown: SessionKind { store.organizer?.kind ?? SessionStore.organizerKind }
+
     var body: some View {
         let choosing = store.organizerNeedsChoice
         HStack(spacing: Space.s) {
@@ -487,24 +491,24 @@ private struct OrganizerHeader: View {
                         Button {
                             store.switchOrganizer(to: kind)
                         } label: {
-                            if kind == SessionStore.organizerKind { Label(kind.displayName, systemImage: "checkmark") } else { Text(kind.displayName) }
+                            if kind == shown { Label(kind.displayName, systemImage: "checkmark") } else { Text(kind.displayName) }
                         }
                     }
                     Section("Model") {
-                        let current = SessionStore.organizerModel(for: SessionStore.organizerKind)
-                        ForEach(SessionStore.organizerModels(for: SessionStore.organizerKind)) { model in
+                        let current = SessionStore.organizerModel(for: shown)
+                        ForEach(SessionStore.organizerModels(for: shown)) { model in
                             let title = model.title + (model.recommended ? " (Recommended)" : "")
                             Button {
-                                store.chooseOrganizerModel(model.name)
+                                store.chooseOrganizerModel(model.name, for: shown)
                             } label: {
                                 if model.name == current { Label(title, systemImage: "checkmark") } else { Text(title) }
                             }
                         }
                     }
                 } label: {
-                    Text(SessionStore.organizerKind.displayName)
+                    Text(shown.displayName)
                         .font(Typeface.caption.weight(.medium))
-                        .foregroundStyle(SessionStore.organizerKind.tint)
+                        .foregroundStyle(shown.tint)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)

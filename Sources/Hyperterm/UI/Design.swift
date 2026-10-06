@@ -125,7 +125,7 @@ enum Palette {
     static let idle = Tone.faint
     /// Which agent it is: used only on the agent's own mark.
     static let claude = Color(nsColor: NSColor(srgbRed: 0.851, green: 0.502, blue: 0.396, alpha: 1))
-    static let codex = Color(nsColor: NSColor(srgbRed: 0.722, green: 0.733, blue: 0.851, alpha: 1))
+    static let codex = Color(nsColor: NSColor(srgbRed: 0.353, green: 0.682, blue: 1.0, alpha: 1))
 
     static func status(_ state: AgentState) -> Color {
         switch state {
@@ -562,7 +562,9 @@ struct KindMark: View {
     var font: Font = Typeface.caption
 
     var body: some View {
-        if let letter = kind.monogram {
+        if let image = AgentMarkImage.image(for: kind) {
+            Image(nsImage: image).renderingMode(.template).resizable().scaledToFit().frame(width: Size.avatar * 0.62, height: Size.avatar * 0.62)
+        } else if let letter = kind.monogram {
             Text(letter).font(font.weight(.bold)).fontDesign(.rounded)
         } else {
             Image(systemName: kind.symbol).font(font.weight(.medium))
@@ -570,17 +572,34 @@ struct KindMark: View {
     }
 }
 
-/// The agent's mark in its own color on a quiet square. State is shown by the dot beside it,
-/// so the mark never changes color.
+/// The agent's own logo, as a single-color template image bundled under Resources/Mark. Without
+/// the file the monogram letter is drawn instead.
+enum AgentMarkImage {
+    private static var cache: [SessionKind: NSImage?] = [:]
+
+    static func image(for kind: SessionKind) -> NSImage? {
+        if let cached = cache[kind] { return cached }
+        let name: String? = { switch kind { case .claude: return "claude"; case .codex: return "codex"; default: return nil } }()
+        let image = name.flatMap { Bundle.main.url(forResource: $0, withExtension: "png", subdirectory: "Mark") }
+            .flatMap { NSImage(contentsOf: $0) }
+        image?.isTemplate = true
+        cache[kind] = image
+        return image
+    }
+}
+
+/// The agent's mark on a tile filled with its own color; other kinds keep the quiet square. State
+/// is shown by the dot beside it, so the mark never changes color.
 struct AgentAvatar: View {
     let kind: SessionKind
     var dimmed = false
 
     var body: some View {
+        let filled = kind.monogram != nil
         KindMark(kind: kind)
-            .foregroundStyle(kind.tint.opacity(dimmed ? 0.45 : 1))
+            .foregroundStyle(filled ? Color(nsColor: NSColor(srgbRed: 0.078, green: 0.071, blue: 0.063, alpha: 1)) : kind.tint.opacity(dimmed ? 0.45 : 1))
             .frame(width: Size.avatar, height: Size.avatar)
-            .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.control + 1, style: .continuous))
+            .background(filled ? kind.tint.opacity(dimmed ? 0.45 : 1) : Tone.surface, in: RoundedRectangle(cornerRadius: Radius.control + 1, style: .continuous))
             .accessibilityHidden(true)
     }
 }

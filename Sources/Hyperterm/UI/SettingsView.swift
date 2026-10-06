@@ -93,7 +93,7 @@ private struct GeneralSettings: View {
 
     /// Shared with the organizer panel's header: a running organizer restarts on the new CLI.
     private var organizerKind: Binding<SessionKind?> {
-        Binding(get: { SessionStore.chosenOrganizerKind ?? TerminalSessionFactory.store?.organizer?.kind }, set: { kind in
+        Binding(get: { TerminalSessionFactory.store?.organizer?.kind ?? SessionStore.chosenOrganizerKind }, set: { kind in
             guard let kind else { return }
             if let store = TerminalSessionFactory.store, store.organizer != nil {
                 store.switchOrganizer(to: kind)

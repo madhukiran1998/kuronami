@@ -274,6 +274,34 @@ final class OrganizerTests: XCTestCase {
         }
     }
 
+    func testAModelSavedForAnotherCLIIsNeverLaunched() {
+        withOwnDefaults { _ in
+            // Codex's model saved under Claude, as an earlier mix-up left it.
+            SessionStore.organizerDefaults.set("gpt-6-luna", forKey: "organizerModel.claude")
+            XCTAssertNil(SessionStore.chosenOrganizerModel(for: .claude), "it is dropped, so the panel asks again")
+            XCTAssertNil(SessionStore.organizerModel(for: .claude), "and Claude is launched with no model flag")
+            XCTAssertNil(SessionStore.organizerDefaults.string(forKey: "organizerModel.claude"), "the bad value is cleaned up")
+
+            XCTAssertTrue(SessionStore.isOrganizerModel("haiku", of: .claude))
+            XCTAssertFalse(SessionStore.isOrganizerModel("haiku", of: .codex))
+            XCTAssertTrue(SessionStore.isOrganizerModel("", of: .codex), "the CLI's own default fits every CLI")
+        }
+    }
+
+    func testTheModelStepSavesForTheCLIItShowedNotTheCurrentOne() {
+        withOwnDefaults { _ in
+            let store = SessionStore(previewSessions: [], previewLayout: .grid)
+            SessionStore.organizerKind = .claude
+            store.chooseOrganizerModel("gpt-6-luna", for: .codex)
+            XCTAssertEqual(SessionStore.organizerKind, .codex, "the CLI whose models were shown is the one chosen")
+            XCTAssertEqual(SessionStore.chosenOrganizerModel(for: .codex), "gpt-6-luna")
+            XCTAssertNil(SessionStore.chosenOrganizerModel(for: .claude), "nothing lands under the other CLI")
+
+            store.chooseOrganizerModel("haiku", for: .codex)
+            XCTAssertEqual(SessionStore.chosenOrganizerModel(for: .codex), "gpt-6-luna", "a model of another CLI is refused")
+        }
+    }
+
     func testEachCLIRecommendsItsSmallestModelFirst() {
         for kind in SessionStore.organizerChoices {
             let models = SessionStore.organizerModels(for: kind)
