@@ -601,6 +601,11 @@ struct ControlHandler {
                 reply(.failure("the user kept @\(target.label) open"))
                 return
             }
+            // It may have been closed while the sheet was up.
+            guard store.sessions.contains(where: { $0.id == target.id }) else {
+                reply(.success(text: "@\(target.label) was already closed"))
+                return
+            }
             store.close(target)
             reply(.success(text: "closed @\(target.label)"))
         }
@@ -617,7 +622,6 @@ struct ControlHandler {
         if let target = request.target, !target.isEmpty {
             guard let session = resolve(target) else { return notFound(target) }
             guard !session.isOrganizer else { return .failure("the organizer stays in the sidebar; focus another terminal") }
-            store.wake(session)
             focus = session
         }
         var tiles: LayoutNode?
@@ -632,6 +636,7 @@ struct ControlHandler {
             layout = .grid
         }
         guard layout != nil || focus != nil || tiles != nil else { return .failure("pass a layout, a terminal to focus, or tiles") }
+        if let focus { store.wake(focus) }
         store.arrange(layout: layout, focus: focus, tiles: tiles)
         return .success(text: "arranged")
     }
@@ -643,6 +648,7 @@ struct ControlHandler {
         if let label = spec.terminal {
             guard let session = resolve(label) else { return .failure(TileError(message: notFound(label).error ?? "unknown terminal")) }
             guard !session.isOrganizer else { return .failure(TileError(message: "the organizer stays in the sidebar; leave it out of the tiles")) }
+            guard !session.isDetached else { return .failure(TileError(message: "@\(session.label) is in its own window; detach_terminals back first")) }
             guard seen.insert(session.id).inserted else { return .failure(TileError(message: "@\(session.label) appears twice")) }
             return .success(.leaf(session.id))
         }
