@@ -150,6 +150,8 @@ final class SessionStore: ObservableObject {
     let notifier = AttentionNotifier()
     /// Previews and tests post no banners.
     private(set) var notifiesUser = true
+    /// Previews and tests write nothing to disk: the test host shares the app's support folder.
+    private(set) var persists = true
 
     init() {}
 
@@ -159,6 +161,7 @@ final class SessionStore: ObservableObject {
         sessions = previewSessions
         layout = previewLayout
         notifiesUser = false
+        persists = false
         tileOrder = []
         selectedID = previewSessions.first?.id
         recent = previewSessions.map(\.id)
@@ -219,8 +222,11 @@ final class SessionStore: ObservableObject {
         session.spec.minimized = minimized ? true : nil
         persist()
         if minimized, selectedID == session.id {
-            let next = visibleIDs.first { $0 != session.id }
-            select(next.flatMap { id in sessions.first { $0.id == id } })
+            // Focus shows only the selection, so there may be nothing else on screen: fall back
+            // like close does, to a session the canvas holds.
+            let next = visibleIDs.first { $0 != session.id }.flatMap { id in sessions.first { $0.id == id } }
+                ?? sessions.last { $0.id != session.id && !$0.isSumi && !$0.isMinimized && !$0.isDetached }
+            select(next)
         } else {
             onArrangementChange?()
         }
@@ -456,6 +462,10 @@ final class SessionStore: ObservableObject {
         if selectedID == session.id {
             select(visibleIDs.compactMap { id in sessions.first { $0.id == id } }.last
                 ?? sessions.last { !$0.isSumi && !$0.isMinimized && !$0.isDetached })
+        } else {
+            // The others re-flow into the space it left. A status-style refresh: the selection
+            // didn't change, so keyboard focus stays where the user is (Sumi or ht may close it).
+            onStatusChange?()
         }
         persist()
         notifier.updateBadge(count: attentionCount)
@@ -464,8 +474,6 @@ final class SessionStore: ObservableObject {
     func select(_ session: TerminalSession?) {
         // Sumi has no tile; choosing it opens its panel.
         if let session, session.isSumi { onShowSumi?(); return }
-        // A detached session is chosen by bringing its window forward.
-        if let session, session.isDetached { onShowDetached?(session) }
         if let previous = selected { previous.lastViewedAt = Date() }
         // Choosing a minimized session is asking for it back.
         if let session, session.isMinimized {
@@ -479,6 +487,9 @@ final class SessionStore: ObservableObject {
             recent.removeAll { $0 == session.id }
             recent.insert(session.id, at: 0)
         }
+        // A detached session is chosen by bringing its window forward. After the selection is
+        // set: its window becoming key reports back as a choice of what is already chosen.
+        if let session, session.isDetached { onShowDetached?(session) }
         onArrangementChange?()
     }
 
@@ -663,19 +674,37 @@ final class SessionStore: ObservableObject {
     /// True when an earlier run left session state: an upgrade rather than a fresh install.
     static var hasSavedState: Bool { FileManager.default.fileExists(atPath: stateFileURL.path) }
 
+    /// Writes run one at a time, so a quit's flush can't be overwritten by an older write.
+    /// Every file the store writes goes through this one queue, so `flushPersist` waits for all of them.
+    static let persistQueue = DispatchQueue(label: "dev.hyperterm.persist", qos: .utility)
+
     func persist() {
+        guard persists else { return }
         persistWork?.cancel()
         let specs = sessions.map(\.spec)
         let url = stateFile
-        let work = DispatchWorkItem {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            encoder.dateEncodingStrategy = .iso8601
-            guard let data = try? encoder.encode(specs) else { return }
-            try? data.write(to: url, options: .atomic)
-        }
+        let work = DispatchWorkItem { Self.write(specs, to: url) }
         persistWork = work
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.3, execute: work)
+        Self.persistQueue.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    /// Quitting: writes the sessions now instead of after persist's debounce, once any write
+    /// already under way has landed.
+    func flushPersist() {
+        guard persists else { return }
+        persistWork?.cancel()
+        persistWork = nil
+        let specs = sessions.map(\.spec)
+        let url = stateFile
+        Self.persistQueue.sync { Self.write(specs, to: url) }
+    }
+
+    nonisolated private static func write(_ specs: [LaunchSpec], to url: URL) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(specs) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 
     func restore() -> Bool {

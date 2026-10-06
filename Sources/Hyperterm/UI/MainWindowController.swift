@@ -267,7 +267,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         store.onArrangeTiles = { [weak self] root in self?.terminalArea.setTree(root, for: .grid) }
         store.onStatusChange = { [weak self] in self?.arrange(takeFocus: false) }
         store.confirmHandler = { [weak self] title, message, completion in
-            guard let window = self?.window else { completion(false); return }
+            guard let window = self?.windowForSheet() else { completion(false); return }
             let alert = NSAlert()
             alert.messageText = title
             alert.informativeText = message
@@ -321,11 +321,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         arrange(takeFocus: false)
     }
 
+    /// The main window or a detached tile's: where ⌘W closes a terminal rather than the window.
+    func isTerminalWindow(_ candidate: NSWindow) -> Bool {
+        candidate === window || detachedTiles.owns(candidate)
+    }
+
     /// Puts a detached tile back in the canvas, focused.
     func reattach(_ session: TerminalSession) {
         guard session.isDetached else { return }
-        detachedTiles.close(session)
+        // Cleared first: closing the tile can make this window key, which must not treat the
+        // session as still detached and select another one.
         session.isDetached = false
+        detachedTiles.close(session)
         terminalArea.mount(session)
         window?.makeKeyAndOrderFront(nil)
         store.select(session)
@@ -357,10 +364,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func presentWorktreeCleanup() {
-        guard let window, sheetWindow == nil else { return }
+        guard sheetWindow == nil, let window = windowForSheet() else { return }
         let roots = store.sessions.compactMap { $0.git.map(GitInfo.mainRoot) }
         let inUse = Set(store.sessions.map(\.spec.workPath))
-        let view = WorktreeCleanupView(repoRoots: roots, inUse: inUse) { [weak self] in self?.dismissSheet() }
+        // Closed agents' checkpoints live in the shared repo; archiving their worktree prunes them.
+        let closedIDs = Dictionary(grouping: store.recentlyClosed, by: \.workPath).mapValues { $0.map(\.id.uuidString) }
+        let view = WorktreeCleanupView(repoRoots: roots, inUse: inUse, sessionIDs: closedIDs) { [weak self] in self?.dismissSheet() }
         let sheet = NSWindow(contentViewController: NSHostingController(rootView: view))
         sheetWindow = sheet
         window.beginSheet(sheet)
@@ -460,7 +469,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Sheets
 
     func presentNewSession(kind: SessionKind? = nil) {
-        guard let window, sheetWindow == nil else { return }
+        guard sheetWindow == nil, let window = windowForSheet() else { return }
         var draft = NewSessionDraft()
         if let current = store.selected { draft.cwd = current.spec.cwd }
         if let kind { draft.kind = kind }
@@ -479,6 +488,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let sheet = NSWindow(contentViewController: NSHostingController(rootView: view))
         sheetWindow = sheet
         window.beginSheet(sheet)
+    }
+
+    /// The window, brought back if the red button hid it: a sheet on a hidden window never shows,
+    /// and one that never shows is never dismissed.
+    private func windowForSheet() -> NSWindow? {
+        guard let window else { return nil }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        if !window.isVisible { showWindow(nil) }
+        return window
     }
 
     private func dismissSheet() {
@@ -505,7 +523,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let parts = error.components(separatedBy: ". ")
         alert.messageText = parts[0].hasSuffix(".") ? parts[0] : parts[0] + "."
         alert.informativeText = parts.dropFirst().joined(separator: ". ")
-        if let window { alert.beginSheetModal(for: window) }
+        if let window = windowForSheet() { alert.beginSheetModal(for: window) }
     }
 
     /// One-keystroke creation in the current session's folder.
@@ -530,7 +548,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         alert.addButton(withTitle: "Rename")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
-        guard let window else { return }
+        guard let window = windowForSheet() else { return }
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn else { return }
             self?.store.rename(session, to: field.stringValue)
@@ -550,7 +568,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func askBeforeRemoving(_ session: TerminalSession, archive: Bool) {
         // A browser has no process to lose; closing it just closes the page.
         guard session.kind != .browser else { store.close(session); return }
-        let running = session.state == .working || session.state == .running || session.state.needsAttention
+        // A shell or server reads as running while it lives, so it holds work only while a program
+        // other than its shell is running in it.
+        let running = session.state == .working || session.state.needsAttention
+            || (session.state == .running && (session.kind.isAgent || session.foregroundProcess != nil || session.nestedShells > 0))
         let spec = session.spec
         guard spec.isWorktree else {
             if running { presentCloseBar(for: session, risk: nil, running: true, archive: archive) } else { store.close(session) }
@@ -572,7 +593,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         var parts: [String] = []
         if let risk, !risk.isEmpty { parts.append(risk.headline(base: spec.baseBranch) + ".") }
         if running { parts.append(session.kind.isAgent ? "Still working." : "Still running.") }
-        let canMerge = !running && spec.isWorktree && spec.baseBranch != nil && risk?.isEmpty == false
+        let canMerge = !running && spec.isWorktree && spec.baseBranch != nil && risk?.isEmpty == false && risk?.baseUnknown != true
         let leaveTitle = running ? (archive ? "Stop and archive" : "Stop and close") : archive ? "Archive, keep work on branch" : "Close, leave work in folder"
         let model = CloseBarModel(message: parts.joined(separator: " "),
                                   mergeTitle: canMerge ? (archive ? "Merge, then archive" : "Merge, then close") : nil,
@@ -598,7 +619,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     /// Fallback when the agent has no tile to carry the bar: the same question as a sheet.
     private func presentCloseAlert(for session: TerminalSession, model: CloseBarModel, archive: Bool) {
-        guard let window else { return }
+        guard let window = windowForSheet() else { return }
         let alert = NSAlert()
         alert.messageText = "Close @\(session.label)?"
         alert.informativeText = model.message
@@ -649,22 +670,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let shared = store.sessions.contains { $0.id != session.id && $0.spec.workPath == path }
         store.close(session)
         guard spec.isWorktree, !shared else { return }
-        // Closing stops the agent; its worktree lock goes with it a moment later.
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            if !saveWork {
-                guard let risk = WorkAtRisk.evaluate(at: path, base: base), risk.isEmpty else { return }
-            }
-            let outcome = Review.archive(worktree: path, mainRoot: root)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    switch outcome {
-                    case .success: Checkpoints.prune(at: root, session: id)
-                    case .failure(let error):
-                        guard reportFailure, let window = self?.window else { return }
-                        let alert = NSAlert()
-                        alert.messageText = "Couldn't archive @\(label)'s worktree"
-                        alert.informativeText = error.description
-                        alert.beginSheetModal(for: window)
+        // Closing stops the agent; its worktree lock goes with it once the reaper has stopped
+        // its process tree (SIGKILL after the grace period), plus a moment for the kill to land.
+        SessionReaper.whenStopped(session: id) { [weak self] in
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                if !saveWork {
+                    guard let risk = WorkAtRisk.evaluate(at: path, base: base), risk.isEmpty else { return }
+                }
+                let outcome = Review.archive(worktree: path, mainRoot: root)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        switch outcome {
+                        case .success: Checkpoints.prune(at: root, session: id)
+                        case .failure(let error):
+                            guard reportFailure, let window = self?.windowForSheet() else { return }
+                            let alert = NSAlert()
+                            alert.messageText = "Couldn't archive @\(label)'s worktree"
+                            alert.informativeText = error.description
+                            alert.beginSheetModal(for: window)
+                        }
                     }
                 }
             }
@@ -672,7 +696,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func confirmPickWinner(_ session: TerminalSession) {
-        guard let window else { return }
+        guard let window = windowForSheet() else { return }
         let others = store.raceSiblings(of: session)
         let alert = NSAlert()
         alert.messageText = "Keep \(session.label)'s work?"
@@ -684,7 +708,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
             self.store.pickWinner(session) { [weak self] result in
-                guard let self, let window = self.window else { return }
+                guard let self, let window = self.windowForSheet() else { return }
                 let done = NSAlert()
                 switch result {
                 case .success(let text): done.messageText = text
@@ -698,7 +722,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func confirmRestart(_ session: TerminalSession) {
-        guard session.state == .working || session.state.needsAttention, let window else { session.restart(); return }
+        guard session.state == .working || session.state.needsAttention, let window = windowForSheet() else { session.restart(); return }
         let alert = NSAlert()
         alert.messageText = "Restart @\(session.label)?"
         alert.informativeText = session.kind.isAgent
@@ -748,6 +772,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         // Hiding the window drops its child windows; bring Sumi's button back with it.
         if let window { sumiDock.install(in: window) }
+        // Coming back from a detached tile's window: the main window takes a session it holds.
+        if let session = store.selected, session.isDetached,
+           let fallback = store.visibleIDs.first.flatMap({ id in store.sessions.first { $0.id == id } }) {
+            store.select(fallback)
+        }
         guard let window, window.firstResponder == nil || window.firstResponder === window else { return }
         if let session = store.selected, session.surface.window === window { window.makeFirstResponder(session.surface) }
     }

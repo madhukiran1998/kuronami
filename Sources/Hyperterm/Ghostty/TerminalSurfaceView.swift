@@ -51,6 +51,18 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     /// The last key typed was a plain @, so another one opens the session picker.
     private var lastKeyWasAt = false
     private var focused = false
+    /// What libghostty was last told: first responder in the key window.
+    /// libghostty creates every surface focused, so the first sync can turn that off.
+    private var surfaceHasFocus = true
+    private var windowKeyObservers: [NSObjectProtocol] = []
+    /// The program is at a password prompt; secure input holds while this surface has focus.
+    var passwordInput = false {
+        didSet {
+            guard passwordInput != oldValue else { return }
+            if passwordInput { SecureInput.setScoped(ObjectIdentifier(self), focused: surfaceHasFocus) }
+            else { SecureInput.removeScoped(ObjectIdentifier(self)) }
+        }
+    }
     private var pointerStyle: NSCursor = .iBeam
     private var trackingArea: NSTrackingArea?
     private var windowOcclusionObserver: NSObjectProtocol?
@@ -115,6 +127,9 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
             NotificationCenter.default.removeObserver(windowOcclusionObserver)
             self.windowOcclusionObserver = nil
         }
+        windowKeyObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        windowKeyObservers = []
+        SecureInput.removeScoped(ObjectIdentifier(self))
         guard let surface else { return }
         self.surface = nil
         ghostty_surface_free(surface)
@@ -273,10 +288,20 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     private func setFocused(_ value: Bool) {
-        guard focused != value, let surface else { return }
+        guard focused != value, surface != nil else { return }
         focused = value
-        ghostty_surface_set_focus(surface, value)
+        syncSurfaceFocus()
         if value { events?.surfaceFocused() }
+    }
+
+    /// libghostty draws the cursor and reports focus to programs only while this view is the
+    /// first responder of the key window, so another window or app taking key unfocuses it.
+    private func syncSurfaceFocus() {
+        let value = focused && window?.isKeyWindow == true
+        guard let surface, value != surfaceHasFocus else { return }
+        surfaceHasFocus = value
+        ghostty_surface_set_focus(surface, value)
+        if passwordInput { SecureInput.setScoped(ObjectIdentifier(self), focused: value) }
     }
 
     /// Hidden sessions keep running; telling libghostty they're occluded stops wasted rendering.
@@ -351,6 +376,16 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
                 MainActor.assumeIsolated { self?.updateOcclusion() }
             }
         }
+        windowKeyObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        windowKeyObservers = []
+        if let window {
+            windowKeyObservers = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification].map { name in
+                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.syncSurfaceFocus() }
+                }
+            }
+        }
+        syncSurfaceFocus()
         updateOcclusion()
         guard let surface, let screen = window?.screen,
               let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else { return }
