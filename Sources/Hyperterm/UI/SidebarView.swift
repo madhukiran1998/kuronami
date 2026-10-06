@@ -11,6 +11,7 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            SidebarTopBar(toggle: actions.toggleSidebar)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: Space.xxs) {
@@ -52,7 +53,8 @@ struct SidebarView: View {
             }
             SidebarFooter(store: store, actions: actions)
         }
-        .background(Tone.pane.ignoresSafeArea())
+        // The top bar takes the titlebar band itself; the fill is the AppKit backing's (the theme's).
+        .ignoresSafeArea(.container, edges: .top)
         .foregroundStyle(Tone.text)
         .tint(Palette.accent)
     }
@@ -411,6 +413,24 @@ private struct ClosedRow: View {
     }
 }
 
+// MARK: - Top bar
+
+/// The sidebar's top inset: room for the traffic lights, the sidebar toggle beside them, and
+/// somewhere to drag the window by.
+private struct SidebarTopBar: View {
+    let toggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            IconButton(symbol: "sidebar.left", help: "Hide the sidebar (⌃⌘S)", action: toggle)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, Size.trafficLights)
+        .frame(height: Size.titlebar)
+        .background(WindowDragArea())
+    }
+}
+
 // MARK: - Footer
 
 private struct SidebarFooter: View {
@@ -420,32 +440,15 @@ private struct SidebarFooter: View {
     var body: some View {
         VStack(spacing: Space.s) {
             Hairline()
-            HStack(spacing: Space.s) {
-                // Both meters stack when Claude and Codex are both in use; each is labeled then.
-                VStack(alignment: .leading, spacing: Space.s) {
-                    let both = store.rateLimits != nil && store.codexRateLimits != nil
-                    if let limits = store.rateLimits { UsageMeter(limits: limits, label: both ? "Claude" : nil) }
-                    if let limits = store.codexRateLimits { UsageMeter(limits: limits, label: both || store.rateLimits == nil ? "Codex" : nil) }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Menu {
-                    Button("New Terminal…", action: actions.newSession)
-                    Divider()
-                    ForEach(SessionKind.allCases) { kind in
-                        Button { NSApp.sendAction(#selector(AppDelegate.newSessionOfKind(_:)), to: nil, from: KindSender(kind: kind)) } label: {
-                            Label("New \(kind.displayName)", systemImage: kind.symbol)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "plus").font(Typeface.body.weight(.medium)).foregroundStyle(Tone.muted)
-                } primaryAction: {
-                    actions.newSession()
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("New terminal (⌘N)")
+            WindowControls(store: store, actions: actions)
+                .padding(.horizontal, Space.m)
+            // Both meters stack when Claude and Codex are both in use; each is labeled then.
+            VStack(alignment: .leading, spacing: Space.s) {
+                let both = store.rateLimits != nil && store.codexRateLimits != nil
+                if let limits = store.rateLimits { UsageMeter(limits: limits, label: both ? "Claude" : nil) }
+                if let limits = store.codexRateLimits { UsageMeter(limits: limits, label: both || store.rateLimits == nil ? "Codex" : nil) }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             // The organizer's mark floats in this corner (OrganizerDock), so the row starts past it
             // and is as tall as its button.
             .frame(minHeight: buttonSize)
@@ -456,6 +459,103 @@ private struct SidebarFooter: View {
     }
 
     private var buttonSize: CGFloat { OrganizerDock.markSize(for: NSScreen.main) + Space.s }
+}
+
+/// The window's actions (there is no toolbar): search, run, editor, layout, inspector, and new.
+/// Every one also has its menu item and shortcut.
+private struct WindowControls: View {
+    @ObservedObject var store: SessionStore
+    let actions: SessionActions
+    /// Looked up once: finding installed editors asks Launch Services about each.
+    @State private var editorName = Editors.preferred?.name ?? "your editor"
+
+    var body: some View {
+        HStack(spacing: Space.xs) {
+            IconButton(symbol: "magnifyingglass", help: "Search sessions and run commands (⌘P)") {
+                NSApp.sendAction(#selector(AppDelegate.showSwitcher(_:)), to: nil, from: nil)
+            }
+            IconButton(symbol: "play", help: "Run a project action: tests, dev server, build", action: actions.showProjectActions)
+            IconButton(symbol: "chevron.left.forwardslash.chevron.right", help: "Open in \(editorName) (⌥⌘O)") {
+                NSApp.sendAction(#selector(AppDelegate.openInEditor(_:)), to: nil, from: nil)
+            }
+            LayoutPicker(selection: store.layout, choose: store.setLayout)
+            IconButton(symbol: "sidebar.right", help: "Show or hide the inspector (⌥⌘I)", action: actions.toggleInspector)
+            Spacer(minLength: Space.xs)
+            let waiting = store.attentionCount
+            if waiting > 0 { WaitingBadge(count: waiting, action: store.selectNextNeedingAttention) }
+            Menu {
+                Button("New Terminal…", action: actions.newSession)
+                Divider()
+                ForEach(SessionKind.allCases) { kind in
+                    Button { NSApp.sendAction(#selector(AppDelegate.newSessionOfKind(_:)), to: nil, from: KindSender(kind: kind)) } label: {
+                        Label("New \(kind.displayName)", systemImage: kind.symbol)
+                    }
+                }
+            } label: {
+                Image(systemName: "plus").font(Typeface.body.weight(.medium)).foregroundStyle(Tone.muted)
+            } primaryAction: {
+                actions.newSession()
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("New terminal (⌘N)")
+        }
+        .frame(height: Size.iconButton)
+    }
+}
+
+/// Focus, split, grid: three small icons in one pill.
+private struct LayoutPicker: View {
+    let selection: LayoutMode
+    let choose: (LayoutMode) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(LayoutMode.allCases.enumerated()), id: \.element) { index, mode in
+                let selected = mode == selection
+                Button { choose(mode) } label: {
+                    Image(systemName: mode.symbol)
+                        .font(Typeface.caption.weight(.semibold))
+                        .foregroundStyle(selected ? Tone.text : Tone.muted)
+                        .frame(width: Size.iconButton, height: Size.iconButton - Space.xs)
+                        .background(selected ? Tone.raised : .clear, in: RoundedRectangle(cornerRadius: Radius.control - 1, style: .continuous))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("\(mode.title) (⌥⌘\(index + 1))")
+                .accessibilityLabel(mode.title)
+                .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+            }
+        }
+        .padding(Space.xxs)
+        .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.control + 1, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Terminal layout")
+    }
+}
+
+/// Shown only while sessions need you; takes you to the one that has waited longest.
+private struct WaitingBadge: View {
+    let count: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Space.xs) {
+                Circle().fill(Palette.attention).frame(width: 6, height: 6)
+                Text(String(count)).monospacedDigit()
+            }
+            .font(Typeface.caption.weight(.semibold))
+            .foregroundStyle(Palette.attention)
+            .padding(.horizontal, Space.s)
+            .frame(height: Size.iconButton)
+            .background(Palette.attention.opacity(0.12), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help((count == 1 ? "1 needs you" : "\(count) need you") + " · go to the one that has waited longest (⌘J)")
+        .accessibilityLabel(count == 1 ? "1 session needs you" : "\(count) sessions need you")
+    }
 }
 
 /// Account usage windows shared by every agent: the thing that actually caps parallelism.
@@ -617,6 +717,11 @@ struct SessionActions {
     var showPlan: (TerminalSession) -> Void = { _ in }
     /// Keeps one racing agent's work and closes the others, after confirming.
     var pickWinner: (TerminalSession) -> Void = { _ in }
+    /// The sidebar footer's and top bar's window controls.
+    var toggleSidebar: () -> Void = {}
+    var toggleInspector: () -> Void = {}
+    /// Pops up the selected session's project actions under the pointer.
+    var showProjectActions: () -> Void = {}
 }
 
 /// Wraps children onto new lines like text.

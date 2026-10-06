@@ -9,7 +9,7 @@ struct EmptyStateView: View {
                     VStack(spacing: Space.m) {
                         WaveMark().frame(width: 76, height: 76)
                         Text("Start an agent").font(Typeface.title)
-                        Text("Type a task in the sidebar, or pick what to open.")
+                        Text("Pick what to open, or ask the organizer in the corner.")
                             .font(Typeface.body)
                             .foregroundStyle(Tone.muted)
                             .multilineTextAlignment(.center)
@@ -30,8 +30,8 @@ struct EmptyStateView: View {
             }
             .scrollIndicators(.never)
         }
+        // No fill of its own: it sits on the canvas, which carries the theme.
         .foregroundStyle(Tone.text)
-        .background(Tone.floor)
     }
 
     private func shortcut(_ keys: String, _ title: String) -> some View {

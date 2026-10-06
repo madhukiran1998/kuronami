@@ -73,9 +73,15 @@ extension SessionStore {
         session.lastHookAt = Date()
         switch source {
         case "claude":
-            handleClaudeHook(session, json)
+            handleAgentHook(session, json, source: "claude hook")
+        case "codex":
+            session.reportsTurnsByHook = true
+            handleAgentHook(session, json, source: "codex hook")
         case "codex-notify":
             session.recordAgentSessionId(json["thread-id"] as? String)
+            refreshUsage(session)
+            // Its hooks already reported the turn; notify stands in only when hooks are off.
+            if session.reportsTurnsByHook { return }
             if let last = json["last-assistant-message"] as? String {
                 session.summary = summarize(last)
                 session.record(.done, summarize(last) ?? "Turn complete")
@@ -83,13 +89,13 @@ extension SessionStore {
             session.apply(.codexTurnComplete, source: "codex notify")
             checkpoint(session, phase: .end, prompt: "")
             refreshReview(session)
-            refreshCodexUsage(session)
         default:
             break
         }
     }
 
-    private func handleClaudeHook(_ session: TerminalSession, _ json: [String: Any]) {
+    /// Claude Code's hooks, and Codex's, which share their names and fields.
+    private func handleAgentHook(_ session: TerminalSession, _ json: [String: Any], source: String) {
         let event = json["hook_event_name"] as? String ?? ""
         let cwd = json["cwd"] as? String
         // Only conversations with at least one prompt can be resumed.
@@ -106,7 +112,9 @@ extension SessionStore {
             let prompt = json["prompt"] as? String
             // Another agent's message isn't the user's turn: no checkpoint for it.
             session.turnIsMessage = prompt.map(isAgentMessage) ?? false
-            if !session.turnIsMessage { checkpoint(session, phase: .start, prompt: prompt ?? "Turn") }
+            // A turn already opened before the hooks could report it isn't opened twice.
+            if !session.turnIsMessage && !session.turnOpenedByGuess { checkpoint(session, phase: .start, prompt: prompt ?? "Turn") }
+            session.turnOpenedByGuess = false
             if let prompt {
                 if session.turnIsMessage {
                     session.record(.message, summarize(prompt) ?? prompt)
@@ -123,7 +131,7 @@ extension SessionStore {
                 let text = AgentText.describeTool(name: tool, input: input, cwd: cwd)
                 session.activity = text
                 session.pendingRequest = text
-                let isEdit = ["Edit", "Write", "MultiEdit", "NotebookEdit"].contains(tool)
+                let isEdit = ["Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"].contains(tool)
                 if tool != "Read" && tool != "Glob" && tool != "Grep" { session.record(isEdit ? .edit : .tool, text) }
             }
         case "PostToolUse", "PostToolUseFailure":
@@ -140,7 +148,7 @@ extension SessionStore {
             session.activity = nil
             let reason = failureReason(type: json["error"] as? String, details: json["error_details"] as? String)
             session.record(.failure, reason)
-            session.apply(.claudeHook(event: event, notificationType: nil, message: reason), source: "claude hook")
+            session.apply(.claudeHook(event: event, notificationType: nil, message: reason), source: source)
             return
         case "SessionEnd":
             session.activity = nil
@@ -170,7 +178,7 @@ extension SessionStore {
         let message = json["message"] as? String
         let detail = notificationType == "permission_prompt" ? (session.pendingRequest ?? message) : message
         let keepRequest = session.pendingRequest
-        session.apply(.claudeHook(event: event, notificationType: notificationType, message: detail), source: "claude hook")
+        session.apply(.claudeHook(event: event, notificationType: notificationType, message: detail), source: source)
         if session.state.needsAttention { session.pendingRequest = keepRequest }
     }
 
@@ -178,8 +186,9 @@ extension SessionStore {
         guard json["tool_name"] as? String == "Bash",
               let command = (json["tool_input"] as? [String: Any])?["command"] as? String,
               TestCommand.matches(command) else { return }
+        // Claude reports {stdout, stderr}; Codex the output as one string.
         let response = json["tool_response"] as? [String: Any]
-        let output = [response?["stdout"] as? String, response?["stderr"] as? String, json["error"] as? String]
+        let output = [response?["stdout"] as? String, response?["stderr"] as? String, json["tool_response"] as? String, json["error"] as? String]
             .compactMap { $0 }.joined(separator: "\n")
         let summary = TestCommand.summary(from: output, passed: !failed)
         session.testEvidence = TestEvidence(passed: !failed, summary: summary, date: Date())
@@ -255,17 +264,15 @@ extension SessionStore {
         }
     }
 
-    // MARK: - Codex usage
+    // MARK: - Usage from the session log
 
-    /// Reads the turn's usage from the Codex session log, off the main thread.
-    func refreshCodexUsage(_ session: TerminalSession) {
-        guard session.kind == .codex, let thread = session.spec.agentSessionId else { return }
-        let root = (AccountStore.shared.account(session.spec.account, kind: .codex)
-            ?? AgentAccount(id: AgentAccount.defaultID, kind: .codex, name: "Default")).homeDirectory
+    /// Reads the turn's usage from the CLI's session log (Codex), off the main thread.
+    func refreshUsage(_ session: TerminalSession) {
+        guard let adapter = session.kind.adapter, let thread = session.spec.agentSessionId else { return }
+        let root = (AccountStore.shared.account(session.spec.account, kind: session.kind)
+            ?? AgentAccount(id: AgentAccount.defaultID, kind: session.kind, name: "Default")).homeDirectory
         Self.parseQueue.async {
-            let reading = CodexUsage.logFile(thread: thread, in: root)
-                .flatMap { CodexUsage.tail(of: $0) }
-                .flatMap { CodexUsage.latest(in: $0) }
+            let reading = adapter.usage(id: thread, root: root)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { [weak self, weak session] in
                     guard let self, let session, let reading else { return }

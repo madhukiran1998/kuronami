@@ -265,8 +265,9 @@ final class SessionStore: ObservableObject {
         sessions.filter { $0.kind == .browser && $0.spec.owner == agent.id }
     }
 
+    /// The organizer has no sidebar row, so its browsers are loose too.
     var looseBrowsers: [TerminalSession] {
-        let agents = Set(sessions.filter(\.kind.isAgent).map(\.id))
+        let agents = Set(sessions.filter { $0.kind.isAgent && !$0.isOrganizer }.map(\.id))
         return sessions.filter { $0.kind == .browser && !($0.spec.owner.map(agents.contains) ?? false) }
     }
 
@@ -366,9 +367,12 @@ final class SessionStore: ObservableObject {
         if !resume { startDevServerIfConfigured(for: session, config: prepared.config) } else { loadTurns(session) }
         // Claude copies `.worktreeinclude` files into its own worktrees.
         if !resume, spec.kind != .claude, spec.worktreeBranch != nil { warmWorktree(session) }
-        // Codex has no prompt hook, and an agent started with a task never rests before its first
-        // turn, so that turn's start is recorded here.
-        if spec.kind == .codex, !resume, let task, !task.isEmpty { checkpoint(session, phase: .start, prompt: task) }
+        // Without a prompt hook (Codex), an agent started with a task never rests before its
+        // first turn, so that turn's start is recorded here.
+        if spec.kind.adapter?.reportsPrompts == false, !resume, let task, !task.isEmpty {
+            checkpoint(session, phase: .start, prompt: task)
+            session.turnOpenedByGuess = true
+        }
         return session
     }
 

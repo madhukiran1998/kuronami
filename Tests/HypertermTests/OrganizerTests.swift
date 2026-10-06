@@ -17,6 +17,20 @@ final class OrganizerTests: XCTestCase {
         XCTAssertNil(api.info().organizer)
     }
 
+    func testOrganizersBrowsersAreListedWithTheLooseOnes() {
+        let api = agent("api"), organizer = agent("organizer", organizer: true)
+        func browser(_ label: String, owner: TerminalSession?) -> TerminalSession {
+            var spec = LaunchSpec(label: label, kind: .browser, cwd: "/workspace/atlas")
+            spec.owner = owner?.id
+            return TerminalSession(spec: spec, resume: false)
+        }
+        let mine = browser("docs", owner: api), its = browser("alpha", owner: organizer), loose = browser("web", owner: nil)
+        let store = SessionStore(previewSessions: [api, organizer, mine, its, loose], previewLayout: .grid)
+
+        XCTAssertEqual(store.browsers(ownedBy: api).map(\.id), [mine.id])
+        XCTAssertEqual(store.looseBrowsers.map(\.id), [its.id, loose.id])
+    }
+
     func testChoosingTheOrganizerOpensItsPanelInsteadOfATile() {
         let api = agent("api"), organizer = agent("organizer", organizer: true)
         let store = SessionStore(previewSessions: [api, organizer], previewLayout: .focus)
@@ -156,6 +170,62 @@ final class OrganizerTests: XCTestCase {
         XCTAssertEqual(store.closedSession(named: "@Bravo")?.id, renamed.id)
         XCTAssertEqual(store.closedSession(named: other.id.uuidString)?.id, other.id)
         XCTAssertNil(store.closedSession(named: "organizer"))
+    }
+
+    // MARK: - Choosing its CLI
+
+    /// Runs `body` with the organizer's choice kept in a throwaway suite, not the app's defaults.
+    private func withOwnDefaults(_ body: (UserDefaults) -> Void) {
+        let name = "OrganizerTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        let saved = SessionStore.organizerDefaults
+        SessionStore.organizerDefaults = defaults
+        defer { SessionStore.organizerDefaults = saved; defaults.removePersistentDomain(forName: name) }
+        body(defaults)
+    }
+
+    func testChooserShowsOnlyUntilACLIIsChosen() {
+        withOwnDefaults { _ in
+            let store = SessionStore(previewSessions: [], previewLayout: .grid)
+            XCTAssertNil(SessionStore.chosenOrganizerKind)
+            XCTAssertTrue(store.organizerNeedsChoice)
+
+            SessionStore.organizerKind = .codex
+            XCTAssertFalse(store.organizerNeedsChoice)
+        }
+    }
+
+    func testAnOrganizerRunningFromBeforeTheChoiceCountsAsChosen() {
+        withOwnDefaults { _ in
+            let store = SessionStore(previewSessions: [agent("organizer", organizer: true)], previewLayout: .grid)
+            XCTAssertNil(SessionStore.chosenOrganizerKind)
+            XCTAssertFalse(store.organizerNeedsChoice)
+        }
+    }
+
+    func testChoosingPersists() {
+        withOwnDefaults { defaults in
+            SessionStore.organizerKind = .codex
+            XCTAssertEqual(defaults.string(forKey: SessionStore.organizerKindKey), "codex")
+            XCTAssertEqual(SessionStore.chosenOrganizerKind, .codex)
+            // Something that can't run it reads as not chosen.
+            defaults.set("shell", forKey: SessionStore.organizerKindKey)
+            XCTAssertNil(SessionStore.chosenOrganizerKind)
+        }
+    }
+
+    func testOrganizerChoicesAreTheAgentKinds() {
+        XCTAssertEqual(SessionStore.organizerChoices, SessionKind.allCases.filter(\.isAgent))
+        XCTAssertTrue(SessionStore.organizerChoices.contains(.claude))
+        XCTAssertFalse(SessionStore.organizerChoices.contains(.shell))
+    }
+
+    func testInstalledCLIsComeFromThePATHWithoutKuronamisWrappers() {
+        let executables: Set<String> = ["/Users/me/.hyperterm/bin/claude", "/Users/me/.hyperterm/bin/codex", "/opt/homebrew/bin/codex"]
+        let installed = InstalledAgents.installed([.claude, .codex], path: "/Users/me/.hyperterm/bin/:/usr/bin:/opt/homebrew/bin",
+                                                  skipping: "/Users/me/.hyperterm/bin", isExecutable: executables.contains)
+        XCTAssertEqual(installed, [.codex])
+        XCTAssertEqual(InstalledAgents.installed([.claude, .codex], path: "", skipping: "/x", isExecutable: { _ in true }), [])
     }
 
     private func agent(_ label: String, organizer: Bool = false, state: AgentState = .idle) -> TerminalSession {

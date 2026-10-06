@@ -172,6 +172,13 @@ final class TerminalAreaView: NSView {
         needsLayout = true
     }
 
+    /// Tiles reach the window's top edge on purpose; the titlebar's safe area must not push
+    /// their headers, address bars and find bars down.
+    override var safeAreaInsets: NSEdgeInsets { NSEdgeInsetsZero }
+
+    /// View › Theme changed: every tile restyles in place.
+    func applyTheme() { tiles.values.forEach { $0.applyTheme() } }
+
     private var multiTile: Bool { mode != .focus && visibleOrder.count > 1 }
 
     override func layout() {

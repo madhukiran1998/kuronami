@@ -60,6 +60,8 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { false }
+    /// Tiles reach under the titlebar band; a press there selects text, it doesn't move the window.
+    override var mouseDownCanMoveWindow: Bool { false }
 
     init(launch: SurfaceLaunch) {
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))

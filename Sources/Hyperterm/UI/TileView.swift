@@ -10,7 +10,7 @@ import SwiftUI
 final class TileView: NSView {
     let session: TerminalSession
     private let content = NSView()
-    private let header: NSHostingView<TileHeader>
+    private let header: TileHeaderHost
     private let model: TileHeaderModel
     private let border = CALayer()
     private let headerRule = CALayer()
@@ -54,18 +54,14 @@ final class TileView: NSView {
     init(session: TerminalSession, actions: TileActions) {
         self.session = session
         self.model = TileHeaderModel(session: session)
-        self.header = NSHostingView(rootView: TileHeader(model: model, actions: actions))
+        self.header = TileHeaderHost(rootView: TileHeader(model: model, actions: actions))
         super.init(frame: .zero)
         wantsLayer = true
         layer?.masksToBounds = false
         header.sizingOptions = []
         content.wantsLayer = true
-        // Translucent: the surface paints its own see-through background; a fill here would double it.
-        content.layer?.backgroundColor = Theme.isTranslucent ? NSColor.clear.cgColor : Theme.terminalBackground.cgColor
-        if Theme.isTranslucent {
-            header.wantsLayer = true
-            header.layer?.backgroundColor = Theme.terminalBackground.withAlphaComponent(Theme.backgroundOpacity).cgColor
-        }
+        header.wantsLayer = true
+        applyTheme()
         content.layer?.cornerCurve = .continuous
         content.layer?.masksToBounds = true
         addSubview(content)
@@ -167,6 +163,13 @@ final class TileView: NSView {
     }
 
     // MARK: - Chrome
+
+    /// The theme's fills; called again when View › Theme changes.
+    func applyTheme() {
+        let fill = Theme.window.tileFill(terminal: Theme.terminalBackground).cgColor
+        content.layer?.backgroundColor = fill
+        header.layer?.backgroundColor = fill
+    }
 
     private func updateChrome() {
         let chrome = Chrome(header: showsHeader, focused: isFocusedTile,
@@ -334,6 +337,12 @@ struct TileActions {
     var dragEnded: () -> Void
 }
 
+/// Tiles reach the window's top edge, under the titlebar band: a press on the header drags the
+/// tile, never the window.
+final class TileHeaderHost: NSHostingView<TileHeader> {
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
 struct TileHeader: View {
     @ObservedObject var model: TileHeaderModel
     let actions: TileActions
@@ -385,8 +394,7 @@ struct TileHeader: View {
         .padding(.leading, Space.m)
         .padding(.trailing, Space.xs)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Translucent: the header layer already carries the see-through fill.
-        .background(Theme.isTranslucent ? Color.clear : Color(nsColor: Theme.terminalBackground))
+        // The fill is the host's layer (TileView.applyTheme), so a theme change needs no re-render.
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(count: 2, perform: actions.zoom)

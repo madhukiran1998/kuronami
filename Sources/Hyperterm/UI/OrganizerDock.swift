@@ -18,6 +18,7 @@ final class OrganizerDock {
     private let button: NSPanel
     private let panel: OrganizerPanel
     private let container = SurfaceContainer()
+    private var chooser: NSView!
     private weak var session: TerminalSession?
 
     /// The mark grows with the screen: 5% of its shorter side, between 40 and 60 points.
@@ -59,7 +60,11 @@ final class OrganizerDock {
         header.sizingOptions = []
         header.translatesAutoresizingMaskIntoConstraints = false
         container.translatesAutoresizingMaskIntoConstraints = false
+        chooser = NSHostingView(rootView: OrganizerChooser(choose: { [weak self] in self?.choose($0) }))
+        chooser.translatesAutoresizingMaskIntoConstraints = false
+        chooser.isHidden = true
         frame.addSubview(container)
+        frame.addSubview(chooser)
         frame.addSubview(header)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: frame.topAnchor),
@@ -70,6 +75,10 @@ final class OrganizerDock {
             container.leadingAnchor.constraint(equalTo: frame.leadingAnchor, constant: Space.xs),
             container.trailingAnchor.constraint(equalTo: frame.trailingAnchor, constant: -Space.xs),
             container.bottomAnchor.constraint(equalTo: frame.bottomAnchor, constant: -Space.xs),
+            chooser.topAnchor.constraint(equalTo: header.bottomAnchor),
+            chooser.leadingAnchor.constraint(equalTo: frame.leadingAnchor),
+            chooser.trailingAnchor.constraint(equalTo: frame.trailingAnchor),
+            chooser.bottomAnchor.constraint(equalTo: frame.bottomAnchor),
         ])
         panel.contentView = frame
         // Clicking anywhere else folds it away, like a popover.
@@ -158,8 +167,16 @@ final class OrganizerDock {
         if let selected = store.selected, selected.surface.window === window { window.makeFirstResponder(selected.surface) }
     }
 
+    /// The first time, the panel asks which CLI to run instead of starting one.
     private func startIfNeeded() {
+        chooser.isHidden = !store.organizerNeedsChoice
+        guard chooser.isHidden else { return }
         store.startOrganizer()
+    }
+
+    private func choose(_ kind: SessionKind) {
+        chooser.isHidden = true
+        store.chooseOrganizer(kind)
     }
 }
 
@@ -204,7 +221,11 @@ private struct OrganizerButton: View {
     @ObservedObject var dock: OrganizerDock.State
     let toggle: () -> Void
     @State private var hovering = false
+    @AppStorage(SessionStore.organizerKindKey, store: SessionStore.organizerDefaults) private var chosen: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Nil until a CLI is chosen; one running from before there was a choice counts.
+    private var kind: SessionKind? { SessionStore.chosenOrganizerKind ?? store.organizer?.kind }
 
     private var mood: KuronamiMark.Mood {
         switch store.organizer?.state {
@@ -225,13 +246,30 @@ private struct OrganizerButton: View {
                         OrganizerDot(session: organizer)
                     }
                 }
+                .overlay(alignment: .bottomTrailing) {
+                    if let kind { CLIBadge(kind: kind) }
+                }
                 .frame(width: dock.markSize + Space.s, height: dock.markSize + Space.s)
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(dock.isOpen ? "Hide the organizer" : "Organizer: start agents, arrange the window, close sessions")
+        .help(dock.isOpen ? "Hide the organizer" : "Organizer\(kind.map { " (\($0.displayName))" } ?? ""): start agents, arrange the window, close sessions")
         .accessibilityLabel(dock.isOpen ? "Hide the organizer" : "Open the organizer")
+    }
+}
+
+/// Which CLI runs the organizer: its monogram in its own color, tucked into the mark's corner.
+private struct CLIBadge: View {
+    let kind: SessionKind
+
+    var body: some View {
+        KindMark(kind: kind, font: Typeface.micro)
+            .foregroundStyle(kind.tint)
+            .frame(width: Size.markBadge, height: Size.markBadge)
+            .background(Tone.deep, in: Circle())
+            .overlay(Circle().strokeBorder(Tone.hairline, lineWidth: Size.hairline))
+            .accessibilityHidden(true)
     }
 }
 
@@ -249,36 +287,40 @@ private struct OrganizerHeader: View {
     @ObservedObject var store: SessionStore
     let collapse: () -> Void
     let start: () -> Void
+    @AppStorage(SessionStore.organizerKindKey, store: SessionStore.organizerDefaults) private var chosen: String?
 
     var body: some View {
+        let choosing = store.organizerNeedsChoice
         HStack(spacing: Space.s) {
             if let organizer = store.organizer {
                 OrganizerTitle(session: organizer)
             } else {
                 Text("Organizer").font(Typeface.headline).foregroundStyle(Tone.text)
                 Text(store.launchingCount > 0 ? "Starting…" : "Not running").font(Typeface.caption).foregroundStyle(Tone.faint)
-                if store.launchingCount == 0 {
+                if store.launchingCount == 0 && !choosing {
                     Button("Start", action: start).buttonStyle(.plain).font(Typeface.caption.weight(.medium)).foregroundStyle(Tone.text)
                 }
             }
             Spacer(minLength: 0)
-            Menu {
-                ForEach([SessionKind.claude, .codex]) { kind in
-                    Button {
-                        store.switchOrganizer(to: kind)
-                    } label: {
-                        if kind == SessionStore.organizerKind { Label(kind.displayName, systemImage: "checkmark") } else { Text(kind.displayName) }
+            if !choosing {
+                Menu {
+                    ForEach(SessionStore.organizerChoices) { kind in
+                        Button {
+                            store.switchOrganizer(to: kind)
+                        } label: {
+                            if kind == SessionStore.organizerKind { Label(kind.displayName, systemImage: "checkmark") } else { Text(kind.displayName) }
+                        }
                     }
+                } label: {
+                    Text(SessionStore.organizerKind.displayName)
+                        .font(Typeface.caption.weight(.medium))
+                        .foregroundStyle(SessionStore.organizerKind.tint)
                 }
-            } label: {
-                Text(SessionStore.organizerKind.displayName)
-                    .font(Typeface.caption.weight(.medium))
-                    .foregroundStyle(SessionStore.organizerKind.tint)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Which agent runs the organizer. Switching restarts it.")
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Which agent runs the organizer. Switching restarts it.")
             Button(action: collapse) {
                 Image(systemName: "chevron.down").font(Typeface.caption.weight(.semibold)).foregroundStyle(Tone.muted)
             }
@@ -306,6 +348,52 @@ private struct OrganizerTitle: View {
         case .working: return session.activity ?? "Working"
         case .idle: return "Full access"
         default: return session.state.phrase
+        }
+    }
+}
+
+/// The first time the panel opens: which CLI runs the organizer. Ones not on the PATH show, greyed.
+private struct OrganizerChooser: View {
+    let choose: (SessionKind) -> Void
+    @ObservedObject private var installed = InstalledAgents.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            Text("Run the organizer with").font(Typeface.headline).foregroundStyle(Tone.text)
+            ForEach(SessionStore.organizerChoices) { kind in
+                let available = installed.isInstalled(kind)
+                Button { choose(kind) } label: {
+                    HStack(spacing: Space.s) {
+                        AgentAvatar(kind: kind, dimmed: !available)
+                        VStack(alignment: .leading, spacing: Space.xxs) {
+                            Text(kind.displayName).font(Typeface.body.weight(.medium)).foregroundStyle(available ? Tone.text : Tone.faint)
+                            Text(available ? kind.organizerNote : "not installed").font(Typeface.caption).foregroundStyle(Tone.faint)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(Space.s)
+                    .frame(width: 300)
+                    .background(Tone.surface, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(!available)
+            }
+            Text("You can change it later in the header or in Settings.").font(Typeface.caption).foregroundStyle(Tone.faint)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Tone.deep)
+        .onAppear { installed.refresh() }
+    }
+}
+
+extension SessionKind {
+    /// One line on the organizer chooser.
+    var organizerNote: String {
+        switch self {
+        case .claude: return "Anthropic's agent, on your Claude plan or API key."
+        case .codex: return "OpenAI's agent, on your ChatGPT plan or API key."
+        default: return displayName
         }
     }
 }

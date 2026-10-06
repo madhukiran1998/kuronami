@@ -338,6 +338,11 @@ final class ProcessInspector: @unchecked Sendable {
         return argv
     }
 
+    /// A process's argv, read fresh.
+    func arguments(_ pid: pid_t) -> [String]? {
+        rawArguments(pid, includeEnvironment: false)?.argv
+    }
+
     private func pruneArgvCache(alive: Set<ArgvKey>) {
         lock.lock()
         argvCache = argvCache.filter { alive.contains($0.key) }
