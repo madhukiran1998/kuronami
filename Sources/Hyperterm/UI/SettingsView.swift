@@ -168,9 +168,6 @@ private struct IntegrationSettings: View {
                     }
             }
             Hairline()
-            row("Codex approvals", detail: "Answer Codex permission prompts from Kuronami's cards and notifications.") {
-                Button("Enable…") { AgentIntegration.installCodexApprovalHook() }
-            }
             row("ht in your shell", detail: "Script Kuronami from any terminal: ht ls, ht send, ht new.") {
                 Button("Set Up…") { NSApp.sendAction(#selector(AppDelegate.installCLI(_:)), to: nil, from: nil) }
             }

@@ -17,17 +17,9 @@ enum AgentTranscript {
 
     /// Rendered lines from the end of the conversation's transcript; empty when it can't be found.
     static func conversation(kind: SessionKind, id: String, cwds: [String], root: URL) -> [String] {
-        guard isSafeIdentifier(id) else { return [] }
-        switch kind {
-        case .claude:
-            return claudeFile(session: id, cwds: cwds, root: root)
-                .flatMap { CodexUsage.tail(of: $0, bytes: 512 * 1024) }.map(renderClaude) ?? []
-        case .codex:
-            return CodexUsage.logFile(thread: id, in: root)
-                .flatMap { CodexUsage.tail(of: $0, bytes: 512 * 1024) }.map(renderCodex) ?? []
-        default:
-            return []
-        }
+        guard isSafeIdentifier(id), let adapter = kind.adapter else { return [] }
+        return adapter.transcriptFile(id: id, cwds: cwds, root: root)
+            .flatMap { CodexUsage.tail(of: $0, bytes: 512 * 1024) }.map(adapter.renderTranscript) ?? []
     }
 
     /// `projects/<cwd with non-alphanumerics as '-'>/<id>.jsonl`, else any project holding the id
@@ -97,6 +89,19 @@ enum AgentTranscript {
             case ("event_msg", "agent_message"):
                 hasEvents = true
                 out += reply(payload["message"] as? String ?? "").map { ($0, false) }
+            case ("event_msg", "item_completed"):
+                // Codex 0.160: messages arrive as completed items instead.
+                let item = payload["item"] as? [String: Any] ?? [:]
+                let text = (item["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined(separator: "\n")
+                switch item["type"] as? String {
+                case "UserMessage":
+                    hasEvents = true
+                    out += prompt(text).map { ($0, false) }
+                case "AgentMessage":
+                    hasEvents = true
+                    out += reply(text).map { ($0, false) }
+                default: break
+                }
             case ("response_item", "message"):
                 let text = (payload["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined(separator: "\n")
                 switch payload["role"] as? String {

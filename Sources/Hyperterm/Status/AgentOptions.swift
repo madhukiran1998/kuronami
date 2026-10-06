@@ -50,11 +50,6 @@ enum ReasoningEffort: String, Codable, CaseIterable, Identifiable {
     var title: String { rawValue.capitalized }
 }
 
-/// The two agent CLIs, as far as their flags are concerned.
-enum AgentCLI {
-    case claude, codex
-}
-
 /// Per-agent launch choices. Nil fields leave the CLI's own configuration in charge.
 struct AgentOptions: Codable, Equatable {
     var mode: PermissionMode?
@@ -68,34 +63,8 @@ struct AgentOptions: Codable, Equatable {
 
     /// CLI arguments for these choices. Every value is a fixed flag or passes the model check,
     /// so nothing here needs shell quoting beyond what `shellQuote` already adds to the model.
-    func arguments(for cli: AgentCLI) -> [String] {
-        var args: [String] = []
-        if let model = model.flatMap(Self.validModel) {
-            args += [cli == .claude ? "--model" : "-m", model]
-        }
-        switch cli {
-        case .claude:
-            if let mode {
-                let value: String
-                switch mode {
-                case .supervised: value = "default"
-                case .acceptEdits: value = "acceptEdits"
-                case .plan: value = "plan"
-                case .fullAccess: value = "bypassPermissions"
-                }
-                args += ["--permission-mode", value]
-            }
-        case .codex:
-            if let effort { args += ["-c", "model_reasoning_effort=\"\(effort.rawValue)\""] }
-            switch mode {
-            case .supervised?: args += ["--ask-for-approval", "untrusted", "--sandbox", "workspace-write"]
-            case .acceptEdits?: args += ["--full-auto"]
-            case .plan?: args += ["--ask-for-approval", "on-request", "--sandbox", "read-only"]
-            case .fullAccess?: args += ["--dangerously-bypass-approvals-and-sandbox"]
-            case nil: break
-            }
-        }
-        return args
+    func arguments(for kind: SessionKind) -> [String] {
+        kind.adapter?.arguments(for: self) ?? []
     }
 
     /// Model names are typed into a shell, so only plain identifiers are accepted:

@@ -131,7 +131,9 @@ final class Steward: ObservableObject {
                 guard let usage = ProcessUsage.read(pid) else { continue }
                 footprint += usage.footprint
                 times[pid] = usage.cpuNanoseconds
-                if !StewardRules.isAgentMachinery(name: ProcessUsage.name(pid), path: ProcessUsage.path(pid)) {
+                let name = ProcessUsage.name(pid)
+                let script = name == "node" ? ProcessInspector.shared.arguments(pid)?.dropFirst().first : nil
+                if !StewardRules.isAgentMachinery(name: name, path: ProcessUsage.path(pid), script: script) {
                     work[pid] = usage.cpuNanoseconds
                 }
             }

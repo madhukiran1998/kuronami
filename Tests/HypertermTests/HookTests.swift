@@ -5,7 +5,7 @@ import XCTest
 @MainActor
 final class HookTests: XCTestCase {
     private func hooks(port: UInt16?) throws -> [String: [[String: Any]]] {
-        let json = try JSONSerialization.jsonObject(with: Data(AgentIntegration.claudeSettings(hookPort: port).utf8)) as? [String: Any]
+        let json = try JSONSerialization.jsonObject(with: Data(ClaudeAdapter.settings(hookPort: port).utf8)) as? [String: Any]
         let hooks = try XCTUnwrap(json?["hooks"] as? [String: [[String: Any]]])
         return hooks.mapValues { groups in groups.flatMap { $0["hooks"] as? [[String: Any]] ?? [] } }
     }

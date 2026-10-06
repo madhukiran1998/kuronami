@@ -71,6 +71,12 @@ final class TerminalSession: ObservableObject, Identifiable {
     var lastHookAt = Date.distantPast
     /// The current turn was started by another agent's message, not the user.
     var turnIsMessage = false
+    /// Its CLI's prompt and stop hooks report turns (a Codex with hooks on), so turns aren't
+    /// guessed from work starting.
+    var reportsTurnsByHook = false
+    /// This turn was opened before any hook could report it (at launch, or from work starting
+    /// before Codex's first hooks), so its prompt hook doesn't open another.
+    var turnOpenedByGuess = false
 
     private(set) var surface: any SessionSurface
     /// Messages for an agent that is blocked on a prompt or mid-turn; delivered when it is free
@@ -99,7 +105,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         self.summary = spec.summary.flatMap { $0.hasPrefix("~") || $0.count < 3 ? nil : $0 }
         if !spec.kind.isAgent { state = .running }
         // A known id makes resume independent of hooks reporting it.
-        if spec.kind == .claude, spec.agentSessionId == nil, spec.forkOf == nil {
+        if spec.kind.adapter?.assignsSessionID == true, spec.agentSessionId == nil, spec.forkOf == nil {
             self.spec.agentSessionId = UUID().uuidString.lowercased()
         }
         if spec.asleep == true, spec.kind.isAgent {
@@ -196,7 +202,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         fellAsleepAt = Date()
         spec.asleep = true
         record(.note, "Asleep: the agent quit to free memory; its conversation resumes on the next message")
-        type(kind == .codex ? "/quit" : "/exit", submit: true, countsAsWork: false)
+        type(kind.adapter?.exitCommand ?? "/exit", submit: true, countsAsWork: false)
     }
 
     /// Resumes the conversation in the same shell, which is back at its prompt.
@@ -292,11 +298,12 @@ final class TerminalSession: ObservableObject, Identifiable {
         stateSource = source
         stateChangedAt = Date()
         if isWaking, next != .starting { finishWaking() }
-        // Codex has no prompt hook: a turn starts when work starts from rest. Claude's turns
-        // come from its UserPromptSubmit and Stop hooks instead.
-        if kind == .codex, next == .working, previous == .idle || previous == .starting,
+        // Without a prompt hook a turn starts when work starts from rest. Claude's turns come
+        // from its UserPromptSubmit and Stop hooks instead.
+        if kind.adapter?.reportsPrompts == false, !reportsTurnsByHook, next == .working, previous == .idle || previous == .starting,
            source != "approval", source != "process" {
             store?.checkpoint(self, phase: .start, prompt: lastPrompt ?? "Turn")
+            turnOpenedByGuess = true
         }
         if previous.needsAttention && !next.needsAttention { flushPendingMessages() }
         if next == .idle {
@@ -326,21 +333,31 @@ final class TerminalSession: ObservableObject, Identifiable {
         return PromptScreen.hasDialog(screen)
     }
 
-    /// Claude Code and Codex ask to trust a new folder before any hook fires, so only the screen
-    /// shows it. Polled; reads the screen only before the first hook (while starting, or in the
-    /// first two minutes) and while the prompt is up.
+    /// Claude Code and Codex ask to trust a new folder, and Codex to sign in, before any hook
+    /// fires, so only the screen shows it. Polled; reads the screen only before the first hook
+    /// (while starting, or in the first two minutes) and while the prompt is up.
     func checkTrustPrompt() {
         guard kind.isAgent, !isAsleep else { return }
         let mayShow = lastHookAt == .distantPast && (state == .starting || Date().timeIntervalSince(createdAt) < 120)
         guard showingTrustPrompt || mayShow else { return }
-        trustPromptSeen(PromptScreen.hasTrustDialog(surface.readViewport()))
+        let screen = surface.readViewport()
+        if PromptScreen.hasSignIn(screen, kind: kind) {
+            trustPromptSeen(true, reason: "Sign in to \(kind.displayName)")
+        } else {
+            trustPromptSeen(PromptScreen.hasTrustDialog(screen))
+        }
     }
 
     static let trustReason = "Trust this folder?"
 
-    func trustPromptSeen(_ onScreen: Bool) {
-        if onScreen, !showingTrustPrompt, !state.needsAttention {
-            apply(.processStarted, source: "trust prompt", force: .needsInput(Self.trustReason))
+    /// Waits only the user can answer: trusting a folder, signing in.
+    static func isUsersOwn(_ reason: String) -> Bool {
+        reason == trustReason || reason.hasPrefix("Sign in to ")
+    }
+
+    func trustPromptSeen(_ onScreen: Bool, reason: String = TerminalSession.trustReason) {
+        if onScreen, state != .needsInput(reason), !state.needsAttention || showingTrustPrompt {
+            apply(.processStarted, source: "trust prompt", force: .needsInput(reason))
         } else if !onScreen, showingTrustPrompt {
             // SessionStart may have come while it showed (and kept "needs you"); otherwise the
             // normal start flow takes it from here.
@@ -349,7 +366,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     }
 
     private var showingTrustPrompt: Bool {
-        stateSource == "trust prompt" && state == .needsInput(Self.trustReason)
+        guard stateSource == "trust prompt", case .needsInput(let reason) = state else { return false }
+        return Self.isUsersOwn(reason)
     }
 
     /// The user typed into this terminal since their last submit. Screen text can't separate a
@@ -441,7 +459,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// at rest with an empty prompt; false when it couldn't be.
     func startFreshConversation() -> Bool {
         guard kind.isAgent, atRest, inputIsEmpty, !dialogOnScreen else { return false }
-        type(kind == .codex ? "/new" : "/clear", submit: true, countsAsWork: false)
+        guard let command = kind.adapter?.newConversationCommand else { return false }
+        type(command, submit: true, countsAsWork: false)
         usage.contextPercent = nil
         return true
     }
@@ -692,20 +711,21 @@ enum PromptScreen {
         return asks && options(screen).count >= 2
     }
 
-    /// Claude Code's "Quick safety check" and Codex's trust prompt (old and new wording).
+    /// Any agent CLI's folder-trust prompt.
     static func hasTrustDialog(_ screen: String) -> Bool {
         let lower = screen.lowercased()
-        return trustMarkers.contains(where: lower.contains)
+        return SessionKind.agentAdapters.contains { $0.trustMarkers.contains(where: lower.contains) }
     }
 
-    private static let trustMarkers = [
-        "yes, i trust this folder", "a project you created or one you trust", "do you trust the files in this folder",
-        "allow codex to work in this folder", "codex can read, edit, and run files here",
-    ]
+    /// The CLI's signed-out screen.
+    static func hasSignIn(_ screen: String, kind: SessionKind) -> Bool {
+        let lower = screen.lowercased()
+        return kind.adapter?.signInMarkers.contains(where: lower.contains) ?? false
+    }
 
     static func inputIsEmpty(_ screen: String, kind: SessionKind) -> Bool {
         let lines = screen.split(separator: "\n", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
-        let marker = kind == .codex ? "›" : "❯"
+        let marker = kind.adapter?.promptMarker ?? "❯"
         guard let prompt = lines.last(where: { $0.hasPrefix(marker) }) else { return true }
         let rest = prompt.dropFirst(marker.count).trimmingCharacters(in: .whitespaces)
         // Claude shows a dim placeholder ("Try …") when empty; it can't be told from typed text
@@ -716,7 +736,7 @@ enum PromptScreen {
     /// Keys that choose `answer` in the dialog on screen, or nil when there is no dialog.
     static func keys(for answer: PromptAnswer, screen: String, kind: SessionKind) -> [String]? {
         let options = options(screen)
-        guard hasDialog(screen) || kind == .codex, !options.isEmpty else { return nil }
+        guard hasDialog(screen) || kind.adapter?.optionsAloneMakeDialog == true, !options.isEmpty else { return nil }
         func pick(_ predicate: (String) -> Bool) -> [String]? {
             options.first { predicate($0.text.lowercased()) }.map { [String($0.number)] }
         }

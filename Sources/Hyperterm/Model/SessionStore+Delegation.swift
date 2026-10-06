@@ -121,7 +121,7 @@ extension SessionStore {
         session.record(.note, "Organizer handling: " + delegation.scopePhrase + (note.map { " (\($0))" } ?? ""))
         if case .until(let end) = scope { scheduleDelegationSweep(after: end.timeIntervalSince(now)) }
         defer { session.delegation = delegation }
-        guard case .needsInput(let reason) = session.state, reason != TerminalSession.trustReason else { return nil }
+        guard case .needsInput(let reason) = session.state, !TerminalSession.isUsersOwn(reason) else { return nil }
         delegation.toldAt = now
         scheduleDelegationSweep(after: Delegation.fallback)
         return waitDescription(session, reason: reason)
@@ -142,8 +142,8 @@ extension SessionStore {
     /// the user should be notified as usual. Folder trust is never delegated.
     func organizerTakesWait(_ session: TerminalSession, reason: String, now: Date = Date()) -> Bool {
         guard var delegation = session.delegation, let organizer, !organizer.isExitedProcess else { return false }
-        guard reason != TerminalSession.trustReason else {
-            session.record(.note, "Left for you: trusting a folder is your call")
+        guard !TerminalSession.isUsersOwn(reason) else {
+            session.record(.note, reason == TerminalSession.trustReason ? "Left for you: trusting a folder is your call" : "Left for you: signing in is your call")
             return false
         }
         delegation.toldAt = now
@@ -209,8 +209,9 @@ extension SessionStore {
         guard case .needsInput(let waiting) = session.state else {
             return .failure(DelegationError("@\(session.label) isn't waiting"))
         }
-        guard waiting != TerminalSession.trustReason else {
-            return .failure(DelegationError("trusting a folder is the user's call; they've been notified"))
+        guard !TerminalSession.isUsersOwn(waiting) else {
+            return .failure(DelegationError(waiting == TerminalSession.trustReason
+                ? "trusting a folder is the user's call; they've been notified" : "signing in is the user's call; they've been notified"))
         }
         let approval = approvals[session.id]
         let pending = session.pendingRequest

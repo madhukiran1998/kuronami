@@ -1039,7 +1039,7 @@ private struct InfoView: View {
                             ActionRow(symbol: copiedResume ? "checkmark" : "doc.on.doc",
                                       title: copiedResume ? "Copied" : "Copy Resume Command",
                                       detail: String(id.prefix(8))) {
-                                let command = session.kind == .claude ? "claude --resume \(id)" : "codex resume \(id)"
+                                let command = session.kind.adapter?.resumeCommand(id) ?? id
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(command, forType: .string)
                                 copiedResume = true

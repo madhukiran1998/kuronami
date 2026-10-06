@@ -239,7 +239,7 @@ struct ControlHandler {
         }
         // An agent CLI run as a server gets none of Kuronami's hooks: no state, no messages, no sleep.
         let program = (command.split(separator: " ").first.map(String.init) ?? "") as NSString
-        if ["claude", "codex"].contains(program.lastPathComponent) {
+        if SessionKind.agentAdapters.contains(where: { $0.command == program.lastPathComponent }) {
             reply(.failure("that's an agent, not a server: resume a conversation with reopen_session (conversation, folder), or start one with start_agent"))
             return
         }
@@ -678,7 +678,7 @@ struct ControlHandler {
     /// tail from the transcript above the screen.
     private func withConversation(of target: TerminalSession, screen: String, lines: Int) -> String {
         let shown = screen.split(separator: "\n", omittingEmptySubsequences: false).count
-        guard lines > shown + 1, target.kind == .claude || target.kind == .codex,
+        guard lines > shown + 1, target.kind.adapter != nil,
               let id = target.spec.agentSessionId else { return screen }
         let root = (AccountStore.shared.account(target.spec.account, kind: target.kind)
             ?? AgentAccount(id: AgentAccount.defaultID, kind: target.kind, name: "Default")).homeDirectory

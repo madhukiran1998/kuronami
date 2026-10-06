@@ -39,7 +39,6 @@ enum MainMenu {
         let channels = item("Deliver Messages via Claude Channels", #selector(AppDelegate.toggleChannels(_:)), target: target)
         channels.state = SessionStore.channelsEnabled ? .on : .off
         menu.addItem(channels)
-        menu.addItem(item("Enable Codex Approvals in Kuronami…", #selector(AppDelegate.enableCodexApprovals(_:)), target: target))
         let outsideChrome = item("Let Agents Use My Chrome", #selector(AppDelegate.toggleOutsideChrome(_:)), target: target)
         outsideChrome.state = AgentBrowser.agentsMayUseOutsideChrome ? .on : .off
         outsideChrome.toolTip = "Off: agents browse only in Kuronami's browsers. On: Claude agents may also use your own Chrome through Claude in Chrome."
