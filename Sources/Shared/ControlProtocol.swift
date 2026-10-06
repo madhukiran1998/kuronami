@@ -29,6 +29,7 @@ enum ControlCommand: String, Codable {
     case detach        // the organizer pops tiles into their own windows: text = out | back, targets
     case machine       // the organizer and the steward: text = status | policy (count = agent cap, targets = pinned)
     case delegate      // the organizer handles target's waits: text = handle | stop | list (label = scope, count, note)
+    case phoneMode     // Phone Mode, from the user or the organizer: text = on | off | status
 }
 
 struct ControlRequest: Codable {
@@ -67,6 +68,8 @@ struct ControlRequest: Codable {
     var pid: Int32?
     /// For `delegate` handle: the user's instructions for the organizer.
     var note: String?
+    /// For `approve` from the organizer in Phone Mode: the user said yes to this request on their phone.
+    var userApproved: Bool?
 }
 
 /// The most agents one start_agent call may start on the same task.

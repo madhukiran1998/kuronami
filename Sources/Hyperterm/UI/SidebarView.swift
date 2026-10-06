@@ -613,6 +613,10 @@ private struct SidebarFooter: View {
             Hairline()
             WindowControls(store: store, actions: actions)
                 .padding(.horizontal, Space.m)
+            if let since = store.phoneModeSince {
+                PhoneModeBanner(since: since, turnOff: { store.setPhoneMode(false) })
+                    .padding(.horizontal, Space.m)
+            }
             // Both meters stack when Claude and Codex are both in use; each is labeled then.
             VStack(alignment: .leading, spacing: Space.s) {
                 let both = store.rateLimits != nil && store.codexRateLimits != nil
@@ -651,6 +655,7 @@ private struct WindowControls: View {
             }
             LayoutPicker(selection: store.layout, choose: store.setLayout)
             IconButton(symbol: "sidebar.right", help: "Show or hide the inspector (⌥⌘I)", action: actions.toggleInspector)
+            PhoneModeButton(store: store)
             Spacer(minLength: Space.xs)
             let waiting = store.attentionCount
             if waiting > 0 { WaitingBadge(count: waiting, action: store.selectNextNeedingAttention) }
@@ -673,6 +678,60 @@ private struct WindowControls: View {
             .help("New terminal (⌘N)")
         }
         .frame(height: Size.iconButton)
+    }
+}
+
+/// Phone Mode's switch: a quiet icon like its neighbors when off, gold while it's on.
+private struct PhoneModeButton: View {
+    @ObservedObject var store: SessionStore
+    @State private var hovering = false
+
+    var body: some View {
+        let on = store.isPhoneModeOn
+        Button { store.setPhoneMode(!on) } label: {
+            Image(systemName: "iphone")
+                .font(Typeface.caption.weight(.semibold))
+                .foregroundStyle(on ? Palette.attention : hovering ? Tone.text : Tone.muted)
+                .frame(width: Size.iconButton, height: Size.iconButton)
+                .background(on ? Palette.attention.opacity(0.14) : hovering ? Tone.raised : .clear,
+                            in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(on ? "Phone Mode is on. Click to turn it off."
+                 : "Phone Mode: while you're away, agents don't wait for you here. Ordinary requests are allowed and the organizer handles the rest with you on your phone.")
+        .accessibilityLabel("Phone Mode")
+        .accessibilityValue(on ? "On" : "Off")
+    }
+}
+
+/// Above the usage meters while Phone Mode is on, so it's never forgotten.
+private struct PhoneModeBanner: View {
+    let since: Date
+    let turnOff: () -> Void
+
+    var body: some View {
+        HStack(spacing: Space.s) {
+            Image(systemName: "iphone").font(Typeface.caption.weight(.semibold))
+            VStack(alignment: .leading, spacing: Space.xxs) {
+                Text("Phone Mode on").font(Typeface.callout.weight(.medium))
+                Text("Organizer answering · \(since.formatted(date: .omitted, time: .shortened))")
+                    .font(Typeface.caption)
+                    .foregroundStyle(Tone.muted)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: Space.xs)
+            Button("Turn Off", action: turnOff)
+                .buttonStyle(PanelButtonStyle())
+                .fixedSize()
+        }
+        .foregroundStyle(Palette.attention)
+        .padding(.horizontal, Space.s)
+        .padding(.vertical, Space.s - Space.xxs)
+        .background(Palette.attention.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+        .help("Since \(since.formatted(date: .omitted, time: .shortened)), agents' ordinary requests are allowed and the organizer handles their questions and risky requests with you on your phone.")
     }
 }
 

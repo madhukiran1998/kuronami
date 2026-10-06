@@ -10,6 +10,8 @@ struct Delegation: Equatable {
         /// The next n waits.
         case count(Int)
         case until(Date)
+        /// Every agent while the user is away in Phone Mode; ends when they turn it off.
+        case phoneMode
     }
 
     var scope: Scope
@@ -25,7 +27,7 @@ struct Delegation: Equatable {
 
     func isUsedUp(at now: Date) -> Bool {
         switch scope {
-        case .turn: return false
+        case .turn, .phoneMode: return false
         case .count(let limit): return handled >= limit
         case .until(let end): return now >= end
         }
@@ -41,6 +43,7 @@ struct Delegation: Equatable {
         case .turn: return "turn"
         case .count(let limit): return "\(max(limit - handled, 0)) left"
         case .until(let end): return "until " + Self.clock(end)
+        case .phoneMode: return "phone"
         }
     }
 
@@ -50,6 +53,7 @@ struct Delegation: Equatable {
         case .turn: return "until it finishes its task"
         case .count(let limit): return limit == 1 ? "for its next wait" : "for its next \(limit) waits"
         case .until(let end): return "until " + Self.clock(end)
+        case .phoneMode: return "while Phone Mode is on"
         }
     }
 
@@ -198,8 +202,11 @@ extension SessionStore {
     }
 
     /// answer_prompt: approve or deny one permission request of a delegated, waiting session.
-    /// Never "always"; risky requests and folder trust go to the user instead.
-    func answerForOrganizer(_ session: TerminalSession, _ answer: PromptAnswer, reason: String?) -> Result<String, DelegationError> {
+    /// Never "always"; risky requests and folder trust go to the user instead. In Phone Mode the
+    /// user is talking to the organizer from their phone, so a risky request it relayed may be
+    /// approved once the user OK'd it there (`userApproved`).
+    func answerForOrganizer(_ session: TerminalSession, _ answer: PromptAnswer, reason: String?,
+                            userApproved: Bool = false) -> Result<String, DelegationError> {
         guard answer != .always else {
             return .failure(DelegationError("never \"always\": approve or deny this one request"))
         }
@@ -221,8 +228,16 @@ extension SessionStore {
         let request = approval?.request ?? pending ?? waiting
         let summary = approval?.summary ?? waiting
         if answer == .approve, let why = RiskyRequest.reason(tool: approval?.toolName, request: request, workspace: session.spec.workPath) {
-            escalate(session, why: "\(why) (\(summary))")
-            return .failure(DelegationError("left for the user: \(why)"))
+            if phoneModeSince != nil {
+                guard userApproved else {
+                    return .failure(DelegationError("\(why): ask the user on their phone about exactly this request (\(summary)); "
+                        + "if they say yes, call answer_prompt again with user_approved true, otherwise deny"))
+                }
+                session.record(.note, "Approved from your phone: \(why) (\(summary))")
+            } else {
+                escalate(session, why: "\(why) (\(summary))")
+                return .failure(DelegationError("left for the user: \(why)"))
+            }
         }
         let denial = answer == .deny ? (reason ?? "The organizer denied this on the user's behalf.") : nil
         switch self.answer(session, answer, reason: denial) {

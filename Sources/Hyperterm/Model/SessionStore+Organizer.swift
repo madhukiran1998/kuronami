@@ -11,7 +11,7 @@ extension SessionStore {
     static let organizerTools = ["list_terminals", "read_terminal", "send_message", "start_agent", "arrange_view",
                                  "close_terminal", "save_layout", "restore_layout", "watch_terminal",
                                  "session_history", "reopen_session", "machine_status", "set_policy", "detach_terminals",
-                                 "handle_waiting", "stop_handling", "answer_prompt"]
+                                 "handle_waiting", "stop_handling", "answer_prompt", "phone_mode"]
         .map { "mcp__hyperterm__" + $0 }
 
     /// Where the organizer runs. Its own folder, trusted once: Claude Code asks to trust the home
@@ -376,6 +376,8 @@ struct OrganizerEvent: Equatable {
         /// A session handed to the organizer is waiting, with the user's note for it.
         case needsYou(String, note: String?)
         case stoppedHandling(String)
+        /// The user turned Phone Mode on or off; not about one terminal.
+        case phoneMode(Bool)
     }
 
     var label: String
@@ -390,6 +392,12 @@ struct OrganizerEvent: Equatable {
             return line + "is waiting: " + reason + (note.map { " (handle per: \($0))" } ?? "")
         case .stoppedHandling(let why):
             return "stopped handling @\(label): " + why
+        case .phoneMode(true):
+            return "Phone Mode is on: the user is away and talks to you from their phone. Kuronami approves agents' "
+                + "ordinary requests itself; you handle every agent's questions and risky requests. Tell the user what's "
+                + "waiting, and approve a risky one with answer_prompt user_approved true only after they say yes to it."
+        case .phoneMode(false):
+            return "Phone Mode is off: the user is back at the Mac, and agents' waits go to them again."
         case .finished(let summary): line += "finished: " + summary
         case .failed(let reason): line += "failed: " + reason
         case .exited: line += "exited"

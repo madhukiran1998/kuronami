@@ -182,6 +182,9 @@ struct ControlHandler {
                 return .failure("only the organizer handles waiting sessions, when the user asks")
             }
             return delegate(request)
+        case .phoneMode:
+            guard callerOrganizer != nil || isUser else { return .failure("only the user or the organizer turns Phone Mode on or off") }
+            return phoneMode(request)
         case .rename:
             return rename(request)
         case .notify:
@@ -248,7 +251,7 @@ struct ControlHandler {
         }
         let label = normalizeLabel(request.label ?? "")
         let cwd = request.cwd ?? agent.spec.cwd
-        store.confirm(
+        store.confirmUnlessPhoneMode(
             "@\(agent.label) wants to start a server",
             "\(label.isEmpty ? "" : "@\(label) · ")\(abbreviateHome(cwd))\n\n\(command)"
         ) { approved in
@@ -284,7 +287,7 @@ struct ControlHandler {
         }
         let cwd = request.cwd ?? parent.spec.workPath
         let worktree = request.worktree ?? true
-        store.confirm(
+        store.confirmUnlessPhoneMode(
             "@\(parent.label) wants to start a \(kind.displayName) agent",
             "\(abbreviateHome(cwd))\(worktree ? " · own worktree" : "")\n\n\(task)"
         ) { [store] approved in
@@ -579,6 +582,22 @@ struct ControlHandler {
         }
     }
 
+    /// Phone Mode: the organizer turns it on when the user, away from the Mac, asks it to.
+    private func phoneMode(_ request: ControlRequest) -> ControlResponse {
+        switch request.text {
+        case "on":
+            store.setPhoneMode(true)
+            return .success(text: "Phone Mode on: Kuronami approves agents' ordinary requests; every agent's questions and risky requests come to you.")
+        case "off":
+            store.setPhoneMode(false)
+            return .success(text: "Phone Mode off: agents' waits go to the user again.")
+        case "status":
+            return .success(text: store.phoneModeSince.map { "Phone Mode on since \($0.formatted(date: .omitted, time: .shortened))" } ?? "Phone Mode off")
+        default:
+            return .failure("phone mode takes on, off, or status")
+        }
+    }
+
     /// answer_prompt: approve or deny a permission request of a session handed to the organizer.
     private func answerForOrganizer(_ request: ControlRequest) -> ControlResponse {
         guard let target = resolve(request.target) else { return notFound(request.target) }
@@ -586,7 +605,7 @@ struct ControlHandler {
             return .failure("answer must be approve or deny; never \"always\"")
         }
         let reason = request.label.map(sanitizeMessage).flatMap { $0.isEmpty ? nil : $0 }
-        switch store.answerForOrganizer(target, answer, reason: reason) {
+        switch store.answerForOrganizer(target, answer, reason: reason, userApproved: request.userApproved == true) {
         case .success(let text): return .success(text: text)
         case .failure(let error): return .failure(error.description)
         }
@@ -596,7 +615,7 @@ struct ControlHandler {
     private func closeForOrganizer(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
         guard let target = resolve(request.target) else { reply(notFound(request.target)); return }
         guard !target.isOrganizer else { reply(.failure("the organizer can't close itself")); return }
-        store.confirm("The organizer wants to close @\(target.label)", abbreviateHome(target.spec.workPath)) { [store] approved in
+        store.confirmUnlessPhoneMode("The organizer wants to close @\(target.label)", abbreviateHome(target.spec.workPath)) { [store] approved in
             guard approved else {
                 reply(.failure("the user kept @\(target.label) open"))
                 return
