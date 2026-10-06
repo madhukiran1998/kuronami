@@ -13,7 +13,9 @@ let chromeDevtoolsMCP = "chrome-devtools-mcp@1.10.1"
 /// - `pageId` defaults to the agent's own browser and stops being required, so agents never act
 ///   on another agent's page by accident; passing another browser's pageId is still allowed.
 /// - `list_pages` names each page's Tako browser, so agents can find others by @label.
-/// - `new_page`/`close_page` are refused: Tako browsers are sessions the user can see.
+/// - `new_page` opens another Tako browser owned by this agent (a tab the user can see under it)
+///   and makes it the default; `close_page` closes only tabs the agent opened, never its first
+///   browser or another agent's.
 func runBrowserMCP(port: Int) -> Never {
     let proxy = BrowserProxy(port: port)
     proxy.run()
@@ -42,6 +44,11 @@ private final class BrowserProxy: @unchecked Sendable {
     private var ownLabel: String?
     /// A different endpoint Tako reported while the server was running; the next call restarts there.
     private var movedEndpoint: String?
+    /// Tabs this agent opened with new_page, and the one tools act on by default (nil: ownLabel).
+    private var openedLabels: Set<String> = []
+    /// Closed tabs whose Chromium page lingers after Tako closes its browser; hidden from list_pages.
+    private var closedLabels: Set<String> = []
+    private var activeLabel: String?
     private var pageScopedTools: Set<String> = []
 
     private var hiddenCounter = 0
@@ -231,10 +238,6 @@ private final class BrowserProxy: @unchecked Sendable {
         var message = message
         var params = message["params"] as? [String: Any] ?? [:]
         let tool = params["name"] as? String ?? ""
-        if tool == "new_page" || tool == "close_page" {
-            replyError(id: id, "Tako browsers are sessions the user can see, so pages aren't opened or closed from here. Navigate your own browser with navigate_page; ask the user to open another browser (⇧⌘B) if you need two.")
-            return
-        }
         startLock.lock()
         guard let (own, fresh) = ensureBrowser(tool: tool) else {
             startLock.unlock()
@@ -248,21 +251,95 @@ private final class BrowserProxy: @unchecked Sendable {
         }
         if fresh { refreshPageMap(alreadyMarked: true) }
         startLock.unlock()
+        if tool == "new_page" {
+            openTab(params["arguments"] as? [String: Any] ?? [:], id: id)
+            return
+        }
+        if tool == "close_page" {
+            closeTab(params["arguments"] as? [String: Any] ?? [:], id: id, own: own)
+            return
+        }
         if tool == "list_pages" {
             refreshPageMap()
             track(id, .listPages)
         } else if pageScoped(tool) {
             var arguments = params["arguments"] as? [String: Any] ?? [:]
-            if staleMap() || ownPage(own) == nil { refreshPageMap() }
+            let active = withState { self.activeLabel } ?? own
+            if staleMap() || ownPage(active) == nil { refreshPageMap() }
             let requested = arguments["pageId"] as? Int
-            // Explicitly naming another Tako browser is allowed; anything else means "mine".
-            if requested == nil || label(ofPage: requested!) == nil, let page = ownPage(own) {
+            if tool == "select_page", let requested, let chosen = label(ofPage: requested),
+               chosen == own || withState({ self.openedLabels.contains(chosen) }) {
+                withState { self.activeLabel = chosen }
+            }
+            // Explicitly naming another Tako browser is allowed; anything else means "mine"
+            // (the tab the agent last opened or selected, else its first browser).
+            if requested == nil || label(ofPage: requested!) == nil, let page = ownPage(active) ?? ownPage(own) {
                 arguments["pageId"] = page
             }
             params["arguments"] = arguments
             message["params"] = params
         }
         forward(message, id: id)
+    }
+
+    /// new_page: Tako opens another browser owned by this agent; it becomes the default page.
+    private func openTab(_ arguments: [String: Any], id: Any) {
+        var req = ControlRequest(cmd: .browser)
+        req.from = callerSession
+        req.text = "new_tab"
+        req.command = arguments["url"] as? String
+        guard let response = try? sendControlRequest(req, timeout: 30), response.ok, let label = response.text else {
+            replyError(id: id, "Couldn't open a tab in Tako. Ask the user to check the browser.")
+            return
+        }
+        withState {
+            self.openedLabels.insert(label)
+            self.closedLabels.remove(label)
+            self.activeLabel = label
+        }
+        // chrome-devtools-mcp only sees the pages that existed when it attached, so it starts
+        // again to pick up the new one (the page map is relearned from the new server).
+        startLock.lock()
+        if let process = withState({ self.child }) { stopServer(process) }
+        let restarted = startServer()
+        startLock.unlock()
+        guard restarted else {
+            replyRPCError(id: id, "Opened @\(label), but couldn't restart the browser tools. Call a tool again to retry.")
+            return
+        }
+        refreshPageMap(alreadyMarked: true)
+        let page = ownPage(label).map { " (pageId \($0))" } ?? ""
+        replyText(id: id, "Opened a new tab @\(label)\(page). It is now your default page; tools act on it unless you pass another pageId.")
+    }
+
+    /// close_page: only tabs this agent opened. Its first browser and other agents' stay.
+    private func closeTab(_ arguments: [String: Any], id: Any, own: String) {
+        refreshPageMap()
+        guard let page = arguments["pageId"] as? Int, let label = label(ofPage: page) else {
+            replyError(id: id, "Pass the pageId of a tab you opened (see list_pages).")
+            return
+        }
+        guard label != own, withState({ self.openedLabels.contains(label) }) else {
+            replyError(id: id, label == own
+                ? "That's your main browser; it stays open. Close only tabs you opened with new_page."
+                : "Page \(page) (@\(label)) isn't a tab you opened, so it can't be closed from here.")
+            return
+        }
+        var req = ControlRequest(cmd: .browser)
+        req.from = callerSession
+        req.text = "close_tab"
+        req.target = label
+        guard let response = try? sendControlRequest(req, timeout: 10), response.ok else {
+            replyError(id: id, "Tako couldn't close @\(label).")
+            return
+        }
+        withState {
+            self.openedLabels.remove(label)
+            self.closedLabels.insert(label)
+            if self.activeLabel == label { self.activeLabel = nil }
+        }
+        refreshPageMap()
+        replyText(id: id, "Closed @\(label).")
     }
 
     /// Sends an agent request to the server, failing it if there is no server to answer.
@@ -404,7 +481,7 @@ private final class BrowserProxy: @unchecked Sendable {
         guard var result = message["result"] as? [String: Any] else { return message }
         switch rewrite {
         case .initialize:
-            let note = "Each Tako agent has its own browser, shown to the user as a session. Tools act on yours by default, so leave out pageId. list_pages names every Tako browser by @label; pass another browser's pageId only when you mean to use it."
+            let note = "Each Tako agent has its own browser, shown to the user as a session. Tools act on yours by default, so leave out pageId. new_page opens another tab (a browser under you in Tako) and makes it the default; close_page closes only tabs you opened. list_pages names every Tako browser by @label; pass another browser's pageId only when you mean to use it."
             let existing = result["instructions"] as? String
             result["instructions"] = existing.map { note + "\n\n" + $0 } ?? note
         case .toolsList:
@@ -413,7 +490,10 @@ private final class BrowserProxy: @unchecked Sendable {
             for index in tools.indices {
                 guard var schema = tools[index]["inputSchema"] as? [String: Any],
                       var properties = schema["properties"] as? [String: Any], properties["pageId"] != nil else { continue }
-                scoped.insert(tools[index]["name"] as? String ?? "")
+                let name = tools[index]["name"] as? String ?? ""
+                // close_page keeps pageId required: defaulting it would close your own browser.
+                if name == "close_page" { continue }
+                scoped.insert(name)
                 schema["required"] = (schema["required"] as? [String] ?? []).filter { $0 != "pageId" }
                 if var pageId = properties["pageId"] as? [String: Any] {
                     pageId["description"] = "Optional. Defaults to your own Tako browser; pass another page's id (see list_pages) to use that browser."
@@ -422,18 +502,34 @@ private final class BrowserProxy: @unchecked Sendable {
                 schema["properties"] = properties
                 tools[index]["inputSchema"] = schema
             }
-            tools.removeAll { ["new_page", "close_page"].contains($0["name"] as? String ?? "") }
+            for index in tools.indices {
+                switch tools[index]["name"] as? String {
+                case "new_page":
+                    tools[index]["description"] = "Open a new tab in your own Tako browser (shown under you in Tako) and load a URL. It becomes your default page."
+                    if var schema = tools[index]["inputSchema"] as? [String: Any], var properties = schema["properties"] as? [String: Any] {
+                        properties["background"] = nil
+                        properties["isolatedContext"] = nil
+                        schema["properties"] = properties
+                        tools[index]["inputSchema"] = schema
+                    }
+                case "close_page":
+                    tools[index]["description"] = "Close a tab you opened with new_page. Your first browser and other agents' browsers can't be closed."
+                default: break
+                }
+            }
             withState { self.pageScopedTools = scoped }
             result["tools"] = tools
         case .listPages:
             let own = withState { self.ownLabel }
+            let (opened, closed) = withState { (self.openedLabels, self.closedLabels) }
             let labels = withState { self.labelsByPage }
             if var content = result["content"] as? [[String: Any]] {
                 for index in content.indices {
                     guard let text = content[index]["text"] as? String else { continue }
-                    content[index]["text"] = text.split(separator: "\n", omittingEmptySubsequences: false).map { line -> String in
+                    content[index]["text"] = text.split(separator: "\n", omittingEmptySubsequences: false).compactMap { line -> String? in
                         guard let page = pageNumber(in: line), let label = labels[page] else { return String(line) }
-                        return line + "  — @\(label)" + (label == own ? " (your browser)" : "")
+                        if closed.contains(label) { return nil }
+                        return line + "  — @\(label)" + (label == own ? " (your browser)" : opened.contains(label) ? " (your tab)" : "")
                     }.joined(separator: "\n")
                 }
                 result["content"] = content
@@ -446,6 +542,10 @@ private final class BrowserProxy: @unchecked Sendable {
     // MARK: - Plumbing
 
     private func track(_ id: Any, _ rewrite: Rewrite) { withState { self.rewrites[mcpRequestKey(id)] = rewrite } }
+
+    private func replyText(id: Any, _ text: String) {
+        writeToAgent(["jsonrpc": "2.0", "id": id, "result": ["content": [["type": "text", "text": text]]]])
+    }
 
     private func replyError(id: Any, _ text: String) {
         writeToAgent(["jsonrpc": "2.0", "id": id, "result": ["content": [["type": "text", "text": text]], "isError": true]])
