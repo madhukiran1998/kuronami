@@ -179,7 +179,7 @@ extension SessionStore {
             session.record(.note, "Subagent finished \(json["agent_type"] as? String ?? "")")
             // The last background subagent finishing after the turn ended is when the work is done.
             if session.runningSubagents.isEmpty, session.state == .idle {
-                reportToOrganizer(session, from: .working)
+                reportToSumi(session, from: .working)
                 markFinished(session)
                 onStatusChange?()
             }

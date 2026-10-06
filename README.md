@@ -188,7 +188,7 @@ ht ls
 - **Permissions, model and effort per agent.** *Ask First*, *Accept Edits*, *Plan* or *Full Access*, translated to each CLI's own flags (`--permission-mode` for Claude; approval and sandbox flags for Codex). Pick a model (Claude's `opus`/`sonnet`/`haiku` aliases, or any name) and, for Codex, reasoning effort. Leave them alone and the agent's own config applies.
 - **Plans you approve.** An agent in plan mode shows *Plan ready* on its card with *Approve Plan* and *Keep Planning*; the inspector's Plan tab shows the whole plan.
 - **Fork a conversation.** Right-click a Claude agent → *Fork Conversation* starts a new agent that continues from this point (`--resume --fork-session`); the original carries on unchanged.
-- **Or ask the organizer.** The Tako mark in the window's corner (⌃⌘O) opens an organizer agent: tell it what you want started, arranged or watched, and it does it with Tako's own tools. It can also answer questions for sessions you hand it, and it remembers past sessions.
+- **Or ask Sumi.** The Tako mark in the window's corner (⌃⌘O) opens Sumi agent: tell it what you want started, arranged or watched, and it does it with Tako's own tools. It can also answer questions for sessions you hand it, and it remembers past sessions.
 - **Reopen closed agents.** Closed agents with a conversation stay under *Recently closed* in the sidebar (and in ⌘P), one click from resuming.
 
 #### Answer approvals from anywhere
@@ -309,7 +309,7 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 | ⌘P | Go to a terminal, run an action, or `@label message` |
 | ⌘J | Jump to the agent waiting longest |
 | ⌥⌘R / ⌥⌘I | Review changes / toggle inspector |
-| ⌃⌘O | Open or hide the organizer |
+| ⌃⌘O | Open or hide Sumi |
 | ⌥⌘O | Open the selected workspace in your editor |
 | ⌘⌥1 · 2 · 3, ⌘⏎ | Focus · split · grid, zoom tile |
 | ⌥⌘0 | Even out tiles |
@@ -363,7 +363,7 @@ Sources/Hyperterm/Status    StatusReducer, ProcessInspector (identity, ports), G
 Sources/Hyperterm/IPC       control socket server and request handler (permissions)
 Sources/Hyperterm/Launch    agent wrappers, per-launch hooks/statusLine/MCP config
 Sources/Hyperterm/Browser   Chromium runtime (lazy start, DevTools port), browser surface and bar, Chrome logins import
-Sources/Hyperterm/UI        Design (tokens + components), LayoutTree, sidebar, organizer, tiles, inspector, switcher, sheets
+Sources/Hyperterm/UI        Design (tokens + components), LayoutTree, sidebar, sumi, tiles, inspector, switcher, sheets
 Sources/HypertermHelper     Chromium helper process (renderer, GPU, utility)
 Sources/ht                  CLI, hook/permission/statusline entry points, stdio MCP server, browser MCP proxy
 Tests/HypertermTests        state machine, layout tree, checkpoints (real Git), agent options, project actions, naming,

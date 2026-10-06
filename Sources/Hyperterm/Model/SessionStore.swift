@@ -13,24 +13,24 @@ final class SessionStore: ObservableObject {
     var onSurfaceChange: ((TerminalSession) -> Void)?
     /// Called whenever the visible set, layout, or focused session changes.
     var onArrangementChange: (() -> Void)?
-    /// The organizer set the grid's tiles; the canvas adopts the shape as if the user had.
+    /// Sumi set the grid's tiles; the canvas adopts the shape as if the user had.
     var onArrangeTiles: ((LayoutNode) -> Void)?
-    /// The organizer is between being asked for and its session existing; one start at a time.
-    var organizerStarting = false
-    /// Phone Mode was switched on while the organizer was still launching; Remote Control opens once it exists.
-    var remoteControlWhenOrganizerUp = false
-    /// Something asked for the organizer (e.g. the switcher); the window opens its panel.
-    var onShowOrganizer: (() -> Void)?
+    /// Sumi is between being asked for and its session existing; one start at a time.
+    var sumiStarting = false
+    /// Phone Mode was switched on while Sumi was still launching; Remote Control opens once it exists.
+    var remoteControlWhenSumiUp = false
+    /// Something asked for Sumi (e.g. the switcher); the window opens its panel.
+    var onShowSumi: (() -> Void)?
     /// A detached session was chosen; the window brings its own window forward.
     var onShowDetached: ((TerminalSession) -> Void)?
-    /// Pop a tile out into its own window, or put it back in the canvas (the organizer asks).
+    /// Pop a tile out into its own window, or put it back in the canvas (Sumi asks).
     var onDetach: ((TerminalSession) -> Void)?
     var onReattach: ((TerminalSession) -> Void)?
-    /// Terminals the organizer waits on, each with the note it left for when that one finishes.
-    var organizerWatches: [UUID: String] = [:]
-    var organizerDigest = OrganizerDigest()
-    /// What the organizer opened in the last few seconds (see showOpenedByOrganizer).
-    var organizerOpened: [(id: UUID, at: Date)] = []
+    /// Terminals Sumi waits on, each with the note it left for when that one finishes.
+    var sumiWatches: [UUID: String] = [:]
+    var sumiDigest = SumiDigest()
+    /// What Sumi opened in the last few seconds (see showOpenedBySumi).
+    var sumiOpened: [(id: UUID, at: Date)] = []
     var overlapWatch = OverlapWatch()
     /// Called when a session's status changes. It can change which tiles show (grid hides exited
     /// sessions) and their chrome, but must not pull keyboard focus away from where the user is.
@@ -175,21 +175,21 @@ final class SessionStore: ObservableObject {
         case .focus:
             // A detached session shows in its own window; the canvas falls back to one it holds.
             guard let selected, selected.isDetached else { return selectedID.map { [$0] } ?? [] }
-            let onCanvas = sessions.filter { !$0.isMinimized && !$0.isOrganizer && !$0.isDetached }
+            let onCanvas = sessions.filter { !$0.isMinimized && !$0.isSumi && !$0.isDetached }
             let ids = Set(onCanvas.map(\.id))
             return (recent.first { ids.contains($0) } ?? onCanvas.first?.id).map { [$0] } ?? []
         case .split:
-            let hidden = Set(sessions.filter { $0.isMinimized || $0.isOrganizer || $0.isDetached }.map(\.id))
+            let hidden = Set(sessions.filter { $0.isMinimized || $0.isSumi || $0.isDetached }.map(\.id))
             let pair = Set(recent.filter { !hidden.contains($0) }.prefix(2))
             return arranged(sessions.filter { pair.contains($0.id) }).map(\.id)
         case .grid:
             // Servers live in the strip below the canvas unless pinned or selected; minimized
-            // sessions wait on the shelf. The organizer answers in the sidebar's box instead, and
+            // sessions wait on the shelf. Sumi answers in the sidebar's box instead, and
             // detached sessions in their own windows.
             return arranged(sessions.filter { session in
                 (session.kind != .server || session.pinnedToGrid || session.id == selectedID)
                     && (!isExited(session) || session.id == selectedID)
-                    && !session.isMinimized && !session.isOrganizer && !session.isDetached
+                    && !session.isMinimized && !session.isSumi && !session.isDetached
             }).map(\.id)
         }
     }
@@ -279,7 +279,7 @@ final class SessionStore: ObservableObject {
     var projects: [(name: String, agents: [TerminalSession])] {
         var order: [String] = []
         var groups: [String: [TerminalSession]] = [:]
-        for session in sessions where session.kind.isAgent && !session.isOrganizer {
+        for session in sessions where session.kind.isAgent && !session.isSumi {
             let name = session.git?.project ?? "Scratch"
             if groups[name] == nil { order.append(name) }
             groups[name, default: []].append(session)
@@ -294,9 +294,9 @@ final class SessionStore: ObservableObject {
         sessions.filter { $0.kind == .browser && $0.spec.owner == agent.id }
     }
 
-    /// The organizer has no sidebar row, so its browsers are loose too.
+    /// Sumi has no sidebar row, so its browsers are loose too.
     var looseBrowsers: [TerminalSession] {
-        let agents = Set(sessions.filter { $0.kind.isAgent && !$0.isOrganizer }.map(\.id))
+        let agents = Set(sessions.filter { $0.kind.isAgent && !$0.isSumi }.map(\.id))
         return sessions.filter { $0.kind == .browser && !($0.spec.owner.map(agents.contains) ?? false) }
     }
 
@@ -433,14 +433,14 @@ final class SessionStore: ObservableObject {
         if session.spec.labelSource == .user || session.spec.labelSource == nil {
             reservedLabels[session.label] = Date()
         }
-        // Its events stop with the process, so a watch or handoff ends here, told to the organizer.
-        let organizerHears = organizer.map { $0.id != session.id && !$0.isExitedProcess } ?? false
-        if organizerWatches.removeValue(forKey: session.id) != nil, organizerHears {
-            addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .exited))
+        // Its events stop with the process, so a watch or handoff ends here, told to Sumi.
+        let sumiHears = sumi.map { $0.id != session.id && !$0.isExitedProcess } ?? false
+        if sumiWatches.removeValue(forKey: session.id) != nil, sumiHears {
+            addToSumiDigest(SumiEvent(label: session.label, kind: .exited))
         }
         if session.delegation != nil {
             session.delegation = nil
-            if organizerHears { addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .stoppedHandling("it was closed"))) }
+            if sumiHears { addToSumiDigest(SumiEvent(label: session.label, kind: .stoppedHandling("it was closed"))) }
         }
         session.terminate()
         channelWaiters.removeValue(forKey: session.id)?(ControlResponse.success())
@@ -455,15 +455,15 @@ final class SessionStore: ObservableObject {
         // Next in view, so closing a tile never brings back one the shelf or a window holds.
         if selectedID == session.id {
             select(visibleIDs.compactMap { id in sessions.first { $0.id == id } }.last
-                ?? sessions.last { !$0.isOrganizer && !$0.isMinimized && !$0.isDetached })
+                ?? sessions.last { !$0.isSumi && !$0.isMinimized && !$0.isDetached })
         }
         persist()
         notifier.updateBadge(count: attentionCount)
     }
 
     func select(_ session: TerminalSession?) {
-        // The organizer has no tile; choosing it opens its panel.
-        if let session, session.isOrganizer { onShowOrganizer?(); return }
+        // Sumi has no tile; choosing it opens its panel.
+        if let session, session.isSumi { onShowSumi?(); return }
         // A detached session is chosen by bringing its window forward.
         if let session, session.isDetached { onShowDetached?(session) }
         if let previous = selected { previous.lastViewedAt = Date() }
@@ -573,15 +573,15 @@ final class SessionStore: ObservableObject {
         notifier.updateBadge(count: attentionCount)
         if previous == .working { markFinished(session) }
         onStatusChange?()
-        reportToOrganizer(session, from: previous)
+        reportToSumi(session, from: previous)
         adoptIntoPhoneMode(session)
         delegationStateChanged(session, from: previous)
         watchOverlaps(session, from: previous)
         let isVisible = userIsLooking(at: session)
         switch session.state {
         case .needsInput(let reason):
-            // Handed to the organizer: it hears instead, and the user only if it doesn't answer.
-            if organizerTakesWait(session, reason: reason) { break }
+            // Handed to Sumi: it hears instead, and the user only if it doesn't answer.
+            if sumiTakesWait(session, reason: reason) { break }
             if !isVisible { session.unread = true }
             notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: !isVisible)
         case .idle where previous == .working && session.kind.isAgent && raceFinished(session):
@@ -687,20 +687,20 @@ final class SessionStore: ObservableObject {
         specs.map { spec -> LaunchSpec in
             var spec = spec
             if spec.summary == spec.label { spec.summary = nil }
-            // An organizer from before it had its own folder starts fresh there; its notes file
+            // Sumi from before it had its own folder starts fresh there; its notes file
             // carries what it knew.
-            if spec.organizer == true, spec.cwd != Self.organizerFolder {
-                spec.cwd = Self.organizerFolder
+            if spec.sumi == true, spec.cwd != Self.sumiFolder {
+                spec.cwd = Self.sumiFolder
                 spec.agentSessionId = nil
             }
             // A model saved for another CLI would fail to launch this one.
-            if spec.organizer == true, let model = spec.options?.model, !Self.isOrganizerModel(model, of: spec.kind) {
+            if spec.sumi == true, let model = spec.options?.model, !Self.isSumiModel(model, of: spec.kind) {
                 spec.options?.model = nil
             }
             return spec
         }.forEach { create($0, resume: true, select: false) }
-        // Never the organizer: selecting it opens its panel instead.
-        select(sessions.first { !$0.isOrganizer })
+        // Never Sumi: selecting it opens its panel instead.
+        select(sessions.first { !$0.isSumi })
         return true
     }
 

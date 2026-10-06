@@ -6,7 +6,7 @@ import Foundation
 func runMCPServer() -> Never {
     let selfLabel = ProcessInfo.processInfo.environment["HT_LABEL"]
     let sessionID = ProcessInfo.processInfo.environment["HT_SESSION_ID"]
-    var isOrganizer = false
+    var isSumi = false
 
     while let line = readLine(strippingNewline: true) {
         guard !line.isEmpty,
@@ -22,17 +22,17 @@ func runMCPServer() -> Never {
             let version = params["protocolVersion"] as? String ?? "2025-06-18"
             if ProcessInfo.processInfo.environment["HT_CHANNELS"] == "1" { startChannelLoop() }
             let me = currentSelf(sessionID)
-            isOrganizer = me?.organizer == true
+            isSumi = me?.sumi == true
             reply(id: id, result: [
                 "protocolVersion": version,
                 "capabilities": ["tools": [:], "experimental": ["claude/channel": [:]]],
                 "serverInfo": ["name": "hyperterm", "version": "0.1.0"],
-                "instructions": isOrganizer ? organizerInstructions : instructions(selfLabel: selfLabel, me: me),
+                "instructions": isSumi ? sumiInstructions : instructions(selfLabel: selfLabel, me: me),
             ])
         case "ping":
             reply(id: id, result: [:])
         case "tools/list":
-            reply(id: id, result: ["tools": isOrganizer ? organizerToolDefinitions : toolDefinitions])
+            reply(id: id, result: ["tools": isSumi ? sumiToolDefinitions : toolDefinitions])
         case "tools/call":
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
@@ -169,8 +169,8 @@ private let toolDefinitions: [[String: Any]] = [
     ],
 ]
 
-private let organizerInstructions = """
-You are the organizer in Tako: the agent behind the round button in the window's bottom-left corner. \
+private let sumiInstructions = """
+You are Sumi, the agent in Tako behind the round button in the window's bottom-left corner. \
 The user opens your terminal from there to run their other terminals, so your job is managing sessions, \
 not doing project work yourself: agents do it. You have full access: read folders and run commands without asking. \
 Start agents in any project with start_agent (always pass folder). Give each a brief: the goal, the files it \
@@ -203,15 +203,15 @@ user is notified after 90 s. Tell the user briefly what you answered on their be
 leaving or are on their phone ("phone mode on"), call phone_mode on; when they're back, phone_mode off. While \
 it's on, every agent's waits come to you: tell the user what's waiting, and approve a risky request only after \
 they say yes to that exact request, with answer_prompt user_approved true. Keep notes in \
-\(ControlPaths.organizerNotes): the user's preferences, project folders and open threads. Read it at the start \
+\(ControlPaths.sumiNotes): the user's preferences, project folders and open threads. Read it at the start \
 of a task when it may help, update it when you learn something durable, keep it under about 200 lines, and \
 never store secrets there. Start only the agents the user asked for. Keep replies short: say what you did in \
 a sentence or two.
 """
 
-/// The organizer's tools: reading and messaging like any agent, plus starting agents anywhere,
-/// arranging the view, and closing terminals. No renaming: it stays @organizer.
-private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
+/// Sumi's tools: reading and messaging like any agent, plus starting agents anywhere,
+/// arranging the view, and closing terminals. No renaming: it stays @sumi.
+private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ["list_terminals", "send_message", "read_terminal", "start_server"].contains($0["name"] as? String)
 } + [
     [
@@ -225,7 +225,7 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
                 "kind": ["type": "string", "enum": ["claude", "codex"], "description": "Which agent (default: the same CLI you run on)"],
                 "label": ["type": "string", "description": "Short kebab-case label, e.g. \"checkout-bug\""],
                 "worktree": ["type": "boolean", "description": "Own worktree and branch when the folder is a repo (default true)"],
-                "count": ["type": "integer", "description": "How many agents take this same task, 1–\(organizerStartCap) (default 1)"],
+                "count": ["type": "integer", "description": "How many agents take this same task, 1–\(sumiStartCap) (default 1)"],
             ],
             "required": ["task", "folder"],
         ],
@@ -536,7 +536,7 @@ private func describe(_ sessions: [SessionInfo], selfID: String?) -> String {
         if info.id == selfID, info.labelSource != "user" { line += " (auto-named: rename_terminal to describe your work)" }
         if let detail = info.stateDetail { line += " (\(detail))" }
         if let count = info.subagents { line += " (\(count) subagent\(count == 1 ? "" : "s") running)" }
-        if let handling = info.delegation { line += " (organizer handling: \(handling))" }
+        if let handling = info.delegation { line += " (sumi handling: \(handling))" }
         if info.detached == true { line += " (in its own window)" }
         if info.id == selfID { line += " ← you" }
         if !info.ports.isEmpty { line += " ports " + info.ports.map { ":\($0)" }.joined(separator: " ") }

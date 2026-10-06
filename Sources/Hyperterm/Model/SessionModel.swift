@@ -151,11 +151,19 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     /// Agents started together on one task share a race id, so the best result can be picked.
     var race: UUID?
     /// The agent behind the sidebar's box: it starts, arranges and closes the other sessions.
-    var organizer: Bool?
+    var sumi: Bool?
     /// What it was for and how it ended. Nil in specs saved before sessions remembered.
     var memory: SessionMemory?
     /// Agents: asleep (CLI quit to free memory), so a restore leaves it asleep instead of relaunching.
     var asleep: Bool?
+
+    /// `sumi` keeps its old saved name, so sessions.json from before the rename still loads.
+    enum CodingKeys: String, CodingKey {
+        case id, label, labelSource, previousLabels, kind, cwd, command, agentSessionId, summary
+        case worktreeBranch, worktreeName, baseBranch, port, portSlot, url, owner, minimized
+        case account, accountKind, options, forkOf, race, memory, asleep, createdAt
+        case sumi = "organizer"
+    }
 
     /// Where the agent's files actually live.
     var workPath: String {

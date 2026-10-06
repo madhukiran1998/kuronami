@@ -86,7 +86,7 @@ struct SidebarView: View {
             .padding(.top, Space.l)
             .padding(.bottom, Space.xs)
             if showsClosed {
-                // The sidebar shows the latest few; the organizer can reach the rest.
+                // The sidebar shows the latest few; Sumi can reach the rest.
                 ForEach(store.recentlyClosed.prefix(15)) { spec in
                     ClosedRow(spec: spec) { store.reopen(spec) }
                 }
@@ -221,7 +221,7 @@ struct AgentRow: View {
         if review != nil || queued > 0 || racing > 0 || overlap != nil || delegation != nil {
             HStack(spacing: Space.xs) {
                 if let delegation {
-                    Tag(text: "Organizer", tint: Palette.accent).help(delegation.help)
+                    Tag(text: "Sumi", tint: Palette.accent).help(delegation.help)
                 }
                 if let overlap {
                     Tag(text: overlap.title, tint: Palette.attention).help(overlap.detail)
@@ -691,7 +691,7 @@ private struct SidebarTopBar: View {
 
 // MARK: - Composer
 
-/// Types a task straight to new agents, no organizer in between. Several agents on one task race,
+/// Types a task straight to new agents, no sumi in between. Several agents on one task race,
 /// each in its own worktree.
 private struct Composer: View {
     @ObservedObject var store: SessionStore
@@ -841,7 +841,7 @@ private struct SidebarFooter: View {
                 if let limits = store.codexRateLimits { UsageMeter(limits: limits, label: both || store.rateLimits == nil ? "Codex" : nil) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            // The organizer's mark floats in this corner (OrganizerDock), so the row starts past it
+            // Sumi's mark floats in this corner (SumiDock), so the row starts past it
             // and is as tall as its button.
             .frame(minHeight: buttonSize)
             .padding(.leading, Space.m + buttonSize + Space.s)
@@ -850,7 +850,7 @@ private struct SidebarFooter: View {
         }
     }
 
-    private var buttonSize: CGFloat { OrganizerDock.markSize(for: NSScreen.main) + Space.s }
+    private var buttonSize: CGFloat { SumiDock.markSize(for: NSScreen.main) + Space.s }
 }
 
 /// The window's actions (there is no toolbar): search, run, editor, layout, inspector, and new.
@@ -1096,7 +1096,7 @@ struct SessionMenu: View {
         Button("Restart") { actions.restart(session) }
         if session.isAsleep {
             Button("Wake") { session.store?.wake(session) }
-        } else if session.kind.isAgent, !session.isOrganizer {
+        } else if session.kind.isAgent, !session.isSumi {
             Button("Sleep") { session.store?.sleep(session) }
                 .disabled(session.store?.canSleep(session) != true)
                 .help("Quit the agent to free its memory; its next message resumes the conversation")

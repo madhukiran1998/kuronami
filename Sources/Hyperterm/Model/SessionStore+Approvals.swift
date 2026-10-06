@@ -7,7 +7,7 @@ extension SessionStore {
     func registerApproval(for session: TerminalSession, source: String, payload: String, reply: @escaping ControlServer.Reply) {
         let json = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any] ?? [:]
         let tool = json["tool_name"] as? String ?? "tool"
-        if session.isOrganizer, Self.organizerTools.contains(tool) {
+        if session.isSumi, Self.sumiTools.contains(tool) {
             let approval = PendingApproval(source: source, toolName: tool, summary: tool, suggestions: nil, reply: reply)
             reply(ControlResponse.success(text: decisionJSON(approval, .approve, reason: nil)))
             return
@@ -32,7 +32,7 @@ extension SessionStore {
         session.record(.approval, "Asked to run \(summary)")
         session.apply(.claudeHook(event: "Notification", notificationType: "permission_prompt", message: summary),
                       source: "permission hook", force: .needsInput(summary))
-        // The organizer was told instead; the user gets this banner if it doesn't answer.
+        // Sumi was told instead; the user gets this banner if it doesn't answer.
         if session.delegation?.toldAt == nil {
             notifier.postApproval(session: session, request: summary, alwaysRule: alwaysRuleText(approval))
         }

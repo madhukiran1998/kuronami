@@ -21,15 +21,15 @@ enum ControlCommand: String, Codable {
     case statusline    // Claude statusLine JSON (cost, context, rate limits)
     case subscribe     // channel long-poll from an agent's MCP server: returns queued messages
     case browser       // start the embedded browser if needed; text = its DevTools endpoint
-    case arrange       // the organizer arranges the view: text = layout, target = focus, tiles
-    case layouts       // the organizer's named layouts: text = save | restore | list, label = name
-    case watch         // the organizer hears when target finishes; text = its note for then
-    case history       // the organizer's closed sessions: text = list | reopen, targets for reopen
+    case arrange       // Sumi arranges the view: text = layout, target = focus, tiles
+    case layouts       // Sumi's named layouts: text = save | restore | list, label = name
+    case watch         // Sumi hears when target finishes; text = its note for then
+    case history       // Sumi's closed sessions: text = list | reopen, targets for reopen
     case heavy         // heavy-job slot: text = acquire (replies when granted) | release, pid = holder
-    case detach        // the organizer pops tiles into their own windows: text = out | back, targets
-    case machine       // the organizer and the steward: text = status | policy (count = agent cap, targets = pinned)
-    case delegate      // the organizer handles target's waits: text = handle | stop | list (label = scope, count, note)
-    case phoneMode     // Phone Mode, from the user or the organizer: text = on | off | status
+    case detach        // Sumi pops tiles into their own windows: text = out | back, targets
+    case machine       // Sumi and the steward: text = status | policy (count = agent cap, targets = pinned)
+    case delegate      // Sumi handles target's waits: text = handle | stop | list (label = scope, count, note)
+    case phoneMode     // Phone Mode, from the user or Sumi: text = on | off | status
 }
 
 struct ControlRequest: Codable {
@@ -60,22 +60,22 @@ struct ControlRequest: Codable {
     var sentAt: UInt64?
     /// For `arrange`: the grid's tiles, as a tree of splits whose leaves are labels.
     var tiles: TileSpec?
-    /// For `new` from the organizer: how many agents take the same task.
+    /// For `new` from Sumi: how many agents take the same task.
     var count: Int?
     /// For `history` reopen: labels or ids of closed sessions.
     var targets: [String]?
     /// For `heavy`: the process holding the slot; it is released when that process exits.
     var pid: Int32?
-    /// For `delegate` handle: the user's instructions for the organizer.
+    /// For `delegate` handle: the user's instructions for Sumi.
     var note: String?
-    /// For `approve` from the organizer in Phone Mode: the user said yes to this request on their phone.
+    /// For `approve` from Sumi in Phone Mode: the user said yes to this request on their phone.
     var userApproved: Bool?
     /// For `browser`: a page to open in the caller's browser (a URL, an address, or a file URL).
     var url: String?
 }
 
 /// The most agents one start_agent call may start on the same task.
-let organizerStartCap = 5
+let sumiStartCap = 5
 
 /// A tile arrangement as an agent describes it: a leaf names a terminal, a split lays its
 /// children side by side (`row`) or stacked (`column`), sized by `sizes` (even when omitted).
@@ -105,17 +105,24 @@ struct SessionInfo: Codable, Equatable {
     var project: String?
     var branch: String?
     /// The agent behind the sidebar's box, which runs the user's other sessions.
-    var organizer: Bool?
+    var sumi: Bool?
     /// Agents whose workspaces would conflict with this one's if merged, by label, with the files.
     var conflicts: [String: [String]]?
     /// The agent CLI quit to free memory; a message or keystroke resumes its conversation.
     var asleep: Bool?
-    /// The organizer handles its waits: "turn", "2 left", "until 14:05".
+    /// Sumi handles its waits: "turn", "2 left", "until 14:05".
     var delegation: String? = nil
     /// Shown in its own window instead of the canvas.
     var detached: Bool? = nil
     /// Claude subagents still running, which may outlast the session's own turn.
     var subagents: Int? = nil
+
+    /// `sumi` keeps its old wire name, so an `ht` from before the rename still reads it.
+    enum CodingKeys: String, CodingKey {
+        case id, label, kind, state, stateDetail, summary, title, cwd, command, ports, unread, agentSessionId
+        case labelSource, activity, project, branch, conflicts, asleep, delegation, detached, subagents
+        case sumi = "organizer"
+    }
 }
 
 struct ControlResponse: Codable {
@@ -155,8 +162,8 @@ enum ControlPaths {
         return supportDirectory.appendingPathComponent("control.sock").path
     }
 
-    /// The organizer's own notes: the user's preferences, project folders and open threads.
-    static var organizerNotes: String {
+    /// Sumi's own notes: the user's preferences, project folders and open threads.
+    static var sumiNotes: String {
         supportDirectory.appendingPathComponent("organizer-notes.md").path
     }
 }

@@ -1,68 +1,68 @@
 import Foundation
 
-/// Phone Mode: the user is away and steers Tako from their phone through the organizer, so
+/// Phone Mode: the user is away and steers Tako from their phone through Sumi, so
 /// nothing should wait on the Mac. While it's on, Tako approves agents' ordinary permission
-/// requests itself, every agent's other waits (questions, risky requests) go to the organizer,
+/// requests itself, every agent's other waits (questions, risky requests) go to Sumi,
 /// and the app's own confirmations are skipped. Risky requests still need the user's yes, given
-/// to the organizer on their phone.
+/// to Sumi on their phone.
 extension SessionStore {
     var isPhoneModeOn: Bool { phoneModeSince != nil }
 
-    /// Phone Mode rides on Claude's Remote Control, so it exists only while Claude runs the organizer.
-    var phoneModeAvailable: Bool { (organizer?.kind ?? Self.chosenOrganizerKind) == .claude }
+    /// Phone Mode rides on Claude's Remote Control, so it exists only while Claude runs Sumi.
+    var phoneModeAvailable: Bool { (sumi?.kind ?? Self.chosenSumiKind) == .claude }
 
-    /// The user's switch: Phone Mode on, and the organizer's session opened to the phone with Remote Control.
+    /// The user's switch: Phone Mode on, and Sumi's session opened to the phone with Remote Control.
     func startPhoneMode() {
         guard phoneModeAvailable else { return }
         setPhoneMode(true)
-        if let organizer { organizer.openRemoteControl() } else { remoteControlWhenOrganizerUp = true }
+        if let sumi { sumi.openRemoteControl() } else { remoteControlWhenSumiUp = true }
     }
 
     func setPhoneMode(_ on: Bool, now: Date = Date()) {
         if on {
             guard phoneModeSince == nil else { return }
             phoneModeSince = now
-            if organizer == nil, !organizerNeedsChoice { startOrganizer() }
-            addToOrganizerDigest(OrganizerEvent(label: "tako", kind: .phoneMode(true)))
-            // What's already waiting: ordinary requests are allowed, the rest go to the organizer.
+            if sumi == nil, !sumiNeedsChoice { startSumi() }
+            addToSumiDigest(SumiEvent(label: "tako", kind: .phoneMode(true)))
+            // What's already waiting: ordinary requests are allowed, the rest go to Sumi.
             for session in sessions where adoptIntoPhoneMode(session) {
                 guard case .needsInput(let reason) = session.state else { continue }
                 if let approval = approvals[session.id], approvesInPhoneMode(session, approval) {
                     _ = answer(session, .approve)
                 } else {
-                    _ = organizerTakesWait(session, reason: reason, now: now)
+                    _ = sumiTakesWait(session, reason: reason, now: now)
                 }
             }
         } else {
             guard phoneModeSince != nil else { return }
             phoneModeSince = nil
             for session in sessions where session.delegation?.scope == .phoneMode {
-                stopDelegating(session, why: "Phone Mode is off", tellOrganizer: false)
+                stopDelegating(session, why: "Phone Mode is off", tellSumi: false)
             }
-            addToOrganizerDigest(OrganizerEvent(label: "tako", kind: .phoneMode(false)))
+            addToSumiDigest(SumiEvent(label: "tako", kind: .phoneMode(false)))
         }
     }
 
-    /// Hands an agent's waits to the organizer for as long as Phone Mode lasts; agents started
+    /// Hands an agent's waits to Sumi for as long as Phone Mode lasts; agents started
     /// while it's on are adopted on their first state change. Agents the user handed over with
     /// their own scope keep it. True when it adopted this one.
     @discardableResult
     func adoptIntoPhoneMode(_ session: TerminalSession) -> Bool {
-        guard isPhoneModeOn, session.kind.isAgent, !session.isOrganizer, session.delegation == nil else { return false }
+        guard isPhoneModeOn, session.kind.isAgent, !session.isSumi, session.delegation == nil else { return false }
         session.delegation = Delegation(scope: .phoneMode, note: nil)
-        session.record(.note, "Organizer handling: while Phone Mode is on")
+        session.record(.note, "Sumi handling: while Phone Mode is on")
         return true
     }
 
-    /// Ordinary requests Tako allows itself in Phone Mode: anything the organizer's guard
+    /// Ordinary requests Tako allows itself in Phone Mode: anything Sumi's guard
     /// wouldn't leave for the user.
     func approvesInPhoneMode(_ session: TerminalSession, _ approval: PendingApproval) -> Bool {
-        isPhoneModeOn && !session.isOrganizer
+        isPhoneModeOn && !session.isSumi
             && RiskyRequest.reason(tool: approval.toolName, request: approval.request, workspace: session.spec.workPath) == nil
     }
 
     /// The app's own confirmations (starting servers and agents, closing terminals) have no one to
-    /// answer them in Phone Mode; the user asked the organizer from their phone instead.
+    /// answer them in Phone Mode; the user asked Sumi from their phone instead.
     func confirmUnlessPhoneMode(_ title: String, _ message: String, completion: @escaping (Bool) -> Void) {
         if isPhoneModeOn { completion(true); return }
         confirm(title, message, completion: completion)

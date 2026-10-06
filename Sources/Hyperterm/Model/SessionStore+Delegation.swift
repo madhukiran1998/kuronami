@@ -1,8 +1,8 @@
 import AppKit
 
-/// A session whose waits the user handed to the organizer, for as long as they said: its
-/// questions and permission prompts wake the organizer instead of the user. The user still hears
-/// about anything the organizer leaves, or doesn't answer within `fallback`.
+/// A session whose waits the user handed to Sumi, for as long as they said: its
+/// questions and permission prompts wake Sumi instead of the user. The user still hears
+/// about anything Sumi leaves, or doesn't answer within `fallback`.
 struct Delegation: Equatable {
     enum Scope: Equatable {
         /// Until the agent finishes its current task: its next working → idle with nothing pending.
@@ -19,10 +19,10 @@ struct Delegation: Equatable {
     var note: String?
     /// Waits handled so far, answered or left for the user.
     var handled = 0
-    /// When the organizer was told of the wait in progress.
+    /// When Sumi was told of the wait in progress.
     var toldAt: Date?
 
-    /// How long the organizer has before the user is notified anyway.
+    /// How long Sumi has before the user is notified anyway.
     static let fallback: TimeInterval = 90
 
     func isUsedUp(at now: Date) -> Bool {
@@ -57,9 +57,9 @@ struct Delegation: Equatable {
         }
     }
 
-    /// The Organizer tag's tooltip.
+    /// Sumi tag's tooltip.
     var help: String {
-        "The organizer answers this session's questions \(scopePhrase)." + (note.map { " Your note: \($0)" } ?? "")
+        "Sumi answers this session's questions \(scopePhrase)." + (note.map { " Your note: \($0)" } ?? "")
     }
 
     private static func clock(_ date: Date) -> String {
@@ -69,8 +69,8 @@ struct Delegation: Equatable {
     }
 }
 
-/// Requests the organizer never approves on the user's behalf. The list lives here, in one
-/// place, and the app checks it: the organizer's instructions alone are not the guard.
+/// Requests Sumi never approves on the user's behalf. The list lives here, in one
+/// place, and the app checks it: Sumi's instructions alone are not the guard.
 enum RiskyRequest {
     /// Each pattern (case-insensitive, against the full request) with what it means.
     static let patterns: [(pattern: String, why: String)] = [
@@ -94,7 +94,7 @@ enum RiskyRequest {
         (try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive])).map { ($0, entry.why) }
     }
 
-    /// Why the organizer must leave this request for the user, or nil when it may approve it.
+    /// Why Sumi must leave this request for the user, or nil when it may approve it.
     static func reason(tool: String?, request: String, workspace: String?) -> String? {
         let range = NSRange(request.startIndex..., in: request)
         if let hit = compiled.first(where: { $0.0.firstMatch(in: request, range: range) != nil }) { return hit.1 }
@@ -118,11 +118,11 @@ enum RiskyRequest {
 }
 
 extension SessionStore {
-    /// handle_waiting: replaces any earlier handoff. A session already waiting is the organizer's
+    /// handle_waiting: replaces any earlier handoff. A session already waiting is Sumi's
     /// from now; the reply describes that wait.
     func delegate(_ session: TerminalSession, scope: Delegation.Scope, note: String?, now: Date = Date()) -> String? {
         var delegation = Delegation(scope: scope, note: note)
-        session.record(.note, "Organizer handling: " + delegation.scopePhrase + (note.map { " (\($0))" } ?? ""))
+        session.record(.note, "Sumi handling: " + delegation.scopePhrase + (note.map { " (\($0))" } ?? ""))
         if case .until(let end) = scope { scheduleDelegationSweep(after: end.timeIntervalSince(now)) }
         defer { session.delegation = delegation }
         guard case .needsInput(let reason) = session.state, !TerminalSession.isUsersOwn(reason) else { return nil }
@@ -131,28 +131,28 @@ extension SessionStore {
         return waitDescription(session, reason: reason)
     }
 
-    /// Ends a handoff. A wait the organizer was told of and didn't answer goes to the user.
-    func stopDelegating(_ session: TerminalSession, why: String, tellOrganizer: Bool) {
+    /// Ends a handoff. A wait Sumi was told of and didn't answer goes to the user.
+    func stopDelegating(_ session: TerminalSession, why: String, tellSumi: Bool) {
         guard let delegation = session.delegation else { return }
         session.delegation = nil
-        session.record(.note, "Organizer stopped handling: " + why)
+        session.record(.note, "Sumi stopped handling: " + why)
         if delegation.toldAt != nil { notifyUserOfWait(session) }
-        if tellOrganizer, organizer != nil {
-            addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .stoppedHandling(why)))
+        if tellSumi, sumi != nil {
+            addToSumiDigest(SumiEvent(label: session.label, kind: .stoppedHandling(why)))
         }
     }
 
-    /// A delegated session started waiting: the organizer hears instead of the user. False when
+    /// A delegated session started waiting: Sumi hears instead of the user. False when
     /// the user should be notified as usual. Folder trust is never delegated.
-    func organizerTakesWait(_ session: TerminalSession, reason: String, now: Date = Date()) -> Bool {
-        guard var delegation = session.delegation, let organizer, !organizer.isExitedProcess else { return false }
+    func sumiTakesWait(_ session: TerminalSession, reason: String, now: Date = Date()) -> Bool {
+        guard var delegation = session.delegation, let sumi, !sumi.isExitedProcess else { return false }
         guard !TerminalSession.isUsersOwn(reason) else {
             session.record(.note, reason == TerminalSession.trustReason ? "Left for you: trusting a folder is your call" : "Left for you: signing in is your call")
             return false
         }
         delegation.toldAt = now
         session.delegation = delegation
-        addToOrganizerDigest(OrganizerEvent(label: session.label,
+        addToSumiDigest(SumiEvent(label: session.label,
                                             kind: .needsYou(waitDescription(session, reason: reason), note: delegation.note)))
         scheduleDelegationSweep(after: Delegation.fallback)
         return true
@@ -168,22 +168,22 @@ extension SessionStore {
         }
         session.delegation = delegation
         if case .exited = session.state {
-            stopDelegating(session, why: "it exited", tellOrganizer: true)
+            stopDelegating(session, why: "it exited", tellSumi: true)
         } else if delegation.isUsedUp(at: now) {
-            stopDelegating(session, why: "scope used up", tellOrganizer: true)
+            stopDelegating(session, why: "scope used up", tellSumi: true)
         } else if delegation.scope == .turn, session.state == .idle, previous == .working {
-            stopDelegating(session, why: "it finished its task", tellOrganizer: true)
+            stopDelegating(session, why: "it finished its task", tellSumi: true)
         }
     }
 
-    /// Waits the organizer hasn't answered in time go to the user; expired handoffs end.
+    /// Waits Sumi hasn't answered in time go to the user; expired handoffs end.
     func sweepDelegations(now: Date = Date()) {
         for session in sessions {
             guard let delegation = session.delegation else { continue }
             if delegation.isOverdue(at: now), session.state.needsAttention {
-                escalate(session, why: "the organizer didn't answer within \(Int(Delegation.fallback)) s", now: now)
+                escalate(session, why: "Sumi didn't answer within \(Int(Delegation.fallback)) s", now: now)
             } else if delegation.isUsedUp(at: now) {
-                stopDelegating(session, why: "scope used up", tellOrganizer: true)
+                stopDelegating(session, why: "scope used up", tellSumi: true)
             }
         }
     }
@@ -198,14 +198,14 @@ extension SessionStore {
         session.delegation = delegation
         session.record(.note, "Left for you: " + why)
         notifyUserOfWait(session)
-        if delegation.isUsedUp(at: now) { stopDelegating(session, why: "scope used up", tellOrganizer: true) }
+        if delegation.isUsedUp(at: now) { stopDelegating(session, why: "scope used up", tellSumi: true) }
     }
 
     /// answer_prompt: approve or deny one permission request of a delegated, waiting session.
     /// Never "always"; risky requests and folder trust go to the user instead. In Phone Mode the
-    /// user is talking to the organizer from their phone, so a risky request it relayed may be
+    /// user is talking to Sumi from their phone, so a risky request it relayed may be
     /// approved once the user OK'd it there (`userApproved`).
-    func answerForOrganizer(_ session: TerminalSession, _ answer: PromptAnswer, reason: String?,
+    func answerForSumi(_ session: TerminalSession, _ answer: PromptAnswer, reason: String?,
                             userApproved: Bool = false) -> Result<String, DelegationError> {
         guard answer != .always else {
             return .failure(DelegationError("never \"always\": approve or deny this one request"))
@@ -239,17 +239,17 @@ extension SessionStore {
                 return .failure(DelegationError("left for the user: \(why)"))
             }
         }
-        let denial = answer == .deny ? (reason ?? "The organizer denied this on the user's behalf.") : nil
+        let denial = answer == .deny ? (reason ?? "Sumi denied this on the user's behalf.") : nil
         switch self.answer(session, answer, reason: denial) {
         case .success(let done):
-            session.record(.note, "Organizer answered: " + (answer == .deny ? "denied " : "allowed ") + summary)
+            session.record(.note, "Sumi answered: " + (answer == .deny ? "denied " : "allowed ") + summary)
             return .success("\(done) @\(session.label): \(summary)")
         case .failure(let error):
             return .failure(DelegationError(error.description))
         }
     }
 
-    /// The normal needs-you, for a wait the organizer didn't take or left.
+    /// The normal needs-you, for a wait Sumi didn't take or left.
     private func notifyUserOfWait(_ session: TerminalSession) {
         guard case .needsInput(let reason) = session.state else { return }
         if !userIsLooking(at: session) { session.unread = true }

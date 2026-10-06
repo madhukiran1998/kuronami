@@ -9,7 +9,7 @@ import AppKit
 /// - Anything else from inside Tako (detached, unknown) gets read-only access.
 /// Only the user may press keys, answer prompts, close terminals, or type raw text: those would
 /// let one agent answer another's permission prompts or run commands outside its own checks.
-/// The organizer (the agent behind the sidebar's box) also starts agents in any folder, arranges
+/// Sumi (the agent behind the sidebar's box) also starts agents in any folder, arranges
 /// the view, and closes terminals once the user confirms. It answers permission prompts only
 /// for sessions the user handed it, never "always", and never past the risky-request guard.
 @MainActor
@@ -27,8 +27,8 @@ struct ControlHandler {
         return session
     }
 
-    private var callerOrganizer: TerminalSession? {
-        guard let agent = callerAgent, agent.isOrganizer else { return nil }
+    private var callerSumi: TerminalSession? {
+        guard let agent = callerAgent, agent.isSumi else { return nil }
         return agent
     }
 
@@ -131,10 +131,10 @@ struct ControlHandler {
         case .subscribe:
             guard let agent = callerAgent, agent.kind == .claude else { reply(.success()); return }
             store.subscribeChannel(agent, reply: reply)
-        case .new where callerOrganizer != nil && (request.kind == SessionKind.claude.rawValue || request.kind == SessionKind.codex.rawValue):
-            startAgentForOrganizer(request, reply: reply)
-        case .close where callerOrganizer != nil:
-            closeForOrganizer(request, reply: reply)
+        case .new where callerSumi != nil && (request.kind == SessionKind.claude.rawValue || request.kind == SessionKind.codex.rawValue):
+            startAgentForSumi(request, reply: reply)
+        case .close where callerSumi != nil:
+            closeForSumi(request, reply: reply)
         case .new where callerAgent != nil && request.kind == SessionKind.server.rawValue:
             startServerForAgent(request, reply: reply)
         case .new where callerAgent != nil && (request.kind == SessionKind.claude.rawValue || request.kind == SessionKind.codex.rawValue):
@@ -177,8 +177,8 @@ struct ControlHandler {
             let text = sanitizeMessage(request.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             me.agentStatus = text.isEmpty ? nil : String(text.prefix(140))
             return .success(text: "status set on @\(me.label)")
-        case .approve where callerOrganizer != nil:
-            return answerForOrganizer(request)
+        case .approve where callerSumi != nil:
+            return answerForSumi(request)
         case .approve:
             guard isUser else { return .failure("only the user can answer prompts") }
             guard let target = resolve(request.target) else { return notFound(request.target) }
@@ -207,31 +207,31 @@ struct ControlHandler {
         case .restart:
             return restart(request)
         case .arrange:
-            guard callerOrganizer != nil else { return .failure("only the organizer arranges the view") }
+            guard callerSumi != nil else { return .failure("only Sumi arranges the view") }
             return arrange(request)
         case .layouts:
-            guard callerOrganizer != nil else { return .failure("only the organizer keeps layouts") }
+            guard callerSumi != nil else { return .failure("only Sumi keeps layouts") }
             return layouts(request)
         case .watch:
-            guard callerOrganizer != nil else { return .failure("only the organizer watches terminals") }
+            guard callerSumi != nil else { return .failure("only Sumi watches terminals") }
             return watch(request)
         case .history:
-            guard callerOrganizer != nil else { return .failure("only the organizer reopens past sessions") }
+            guard callerSumi != nil else { return .failure("only Sumi reopens past sessions") }
             return history(request)
         case .machine:
-            guard callerOrganizer != nil else { return .failure("only the organizer reads the steward") }
+            guard callerSumi != nil else { return .failure("only Sumi reads the steward") }
             return machine(request)
         case .detach:
-            guard callerOrganizer != nil || isUser else { return .failure("only the organizer moves tiles into windows") }
+            guard callerSumi != nil || isUser else { return .failure("only Sumi moves tiles into windows") }
             return detach(request)
         case .delegate:
-            // Only the organizer takes sessions over (when the user asks it to); the user may also stop or list.
-            guard callerOrganizer != nil || (isUser && request.text != "handle") else {
-                return .failure("only the organizer handles waiting sessions, when the user asks")
+            // Only Sumi takes sessions over (when the user asks it to); the user may also stop or list.
+            guard callerSumi != nil || (isUser && request.text != "handle") else {
+                return .failure("only Sumi handles waiting sessions, when the user asks")
             }
             return delegate(request)
         case .phoneMode:
-            guard callerOrganizer != nil || isUser else { return .failure("only the user or the organizer turns Phone Mode on or off") }
+            guard callerSumi != nil || isUser else { return .failure("only the user or Sumi turns Phone Mode on or off") }
             return phoneMode(request)
         case .rename:
             return rename(request)
@@ -361,11 +361,11 @@ struct ControlHandler {
         }
     }
 
-    // MARK: - Organizer
+    // MARK: - Sumi
 
-    /// The user asked the organizer for these agents, so they start without a second prompt, in
+    /// The user asked Sumi for these agents, so they start without a second prompt, in
     /// whatever folder it names, isolated in a worktree where the folder is a repo.
-    private func startAgentForOrganizer(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
+    private func startAgentForSumi(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
         guard let kind = SessionKind(rawValue: request.kind ?? ""), kind.isAgent else {
             reply(.failure("kind must be claude or codex"))
             return
@@ -389,15 +389,15 @@ struct ControlHandler {
             return
         }
         let count = request.count ?? 1
-        guard (1...organizerStartCap).contains(count) else {
-            reply(.failure("count must be 1–\(organizerStartCap)"))
+        guard (1...sumiStartCap).contains(count) else {
+            reply(.failure("count must be 1–\(sumiStartCap)"))
             return
         }
         let base = normalizeLabel(request.label ?? "")
         let isolate = request.worktree ?? true
         let store = self.store
         // One queued launch per agent: each takes its own steward reservation, so the cap holds
-        // for a batch. When anything is held back the organizer hears so right away.
+        // for a batch. When anything is held back Sumi hears so right away.
         let batch = LaunchBatch()
         for index in 1...count {
             Steward.shared.enqueueLaunch { Task { @MainActor in
@@ -406,11 +406,11 @@ struct ControlHandler {
                 if spec.labelSource == .user { spec.labelSource = .agent }
                 spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
                 let child = await store.launch(spec, select: false, isolateIfPossible: isolate, task: task)
-                child.record(.note, "Started by the organizer")
+                child.record(.note, "Started by Sumi")
                 batch.started[index] = child
                 // The user asked for them, so each shows as soon as it's up: one is selected, several
                 // starting together land side by side like a project window opened for them.
-                store.showOpenedByOrganizer([child])
+                store.showOpenedBySumi([child])
                 guard batch.started.count == count, !batch.replied else { return }
                 let ordered = batch.started.sorted { $0.key < $1.key }.map(\.value)
                 let labels = ordered.map { "@" + $0.label }.joined(separator: ", ")
@@ -427,7 +427,7 @@ struct ControlHandler {
         }
     }
 
-    /// The agents of one organizer start request; the reply waits for the last to be up.
+    /// The agents of one sumi start request; the reply waits for the last to be up.
     @MainActor private final class LaunchBatch {
         var started: [Int: TerminalSession] = [:]
         var replied = false
@@ -467,7 +467,7 @@ struct ControlHandler {
                 let renamed = session.label == spec.label ? "" : " (was @\(spec.label))"
                 lines.append("@\(session.label)\(renamed) " + (spec.agentSessionId == nil ? "started fresh" : "resumed its conversation"))
             }
-            store.showOpenedByOrganizer(reopened)
+            store.showOpenedBySumi(reopened)
             let text = lines.joined(separator: "\n")
             guard !reopened.isEmpty else { return .failure(text) }
             var response = ControlResponse.success(text: text)
@@ -503,8 +503,8 @@ struct ControlHandler {
         spec.agentSessionId = id
         spec.options = AppSettings.defaultMode.map { AgentOptions(mode: $0) }
         let session = store.create(spec, resume: true, select: false)
-        session.record(.note, "Resumed by the organizer")
-        store.showOpenedByOrganizer([session])
+        session.record(.note, "Resumed by Sumi")
+        store.showOpenedBySumi([session])
         var response = ControlResponse.success(text: "resumed @\(session.label) in \(abbreviateHome(folder))")
         response.session = session.info()
         return response
@@ -518,7 +518,7 @@ struct ControlHandler {
         var moved: [String] = []
         for name in names {
             guard let session = resolve(name) else { return notFound(name) }
-            guard !session.isOrganizer else { return .failure("the organizer has its own panel") }
+            guard !session.isSumi else { return .failure("Sumi has its own panel") }
             if back {
                 guard session.isDetached else { continue }
                 store.onReattach?(session)
@@ -590,27 +590,27 @@ struct ControlHandler {
         }
     }
 
-    /// One report per watch: the organizer hears when the terminal ends its next turn.
+    /// One report per watch: Sumi hears when the terminal ends its next turn.
     private func watch(_ request: ControlRequest) -> ControlResponse {
         guard let target = resolve(request.target) else { return notFound(request.target) }
-        guard target.kind.isAgent, !target.isOrganizer else { return .failure("only other agents can be watched") }
+        guard target.kind.isAgent, !target.isSumi else { return .failure("only other agents can be watched") }
         let note = sanitizeMessage(request.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        store.organizerWatches[target.id] = String(note.prefix(1000))
+        store.sumiWatches[target.id] = String(note.prefix(1000))
         return .success(text: "you'll get a message when @\(target.label) finishes its turn")
     }
 
-    /// The user handed a session's waits to the organizer: take them over, stop, or list.
+    /// The user handed a session's waits to Sumi: take them over, stop, or list.
     private func delegate(_ request: ControlRequest) -> ControlResponse {
         if request.text == "list" {
             let handled = store.sessions.compactMap { session in
                 session.delegation.map { "@\(session.label): \($0.scopePhrase)" + ($0.note.map { " (note: \($0))" } ?? "") }
             }
-            return .success(text: handled.isEmpty ? "No sessions are handed to the organizer." : handled.joined(separator: "\n"))
+            return .success(text: handled.isEmpty ? "No sessions are handed to Sumi." : handled.joined(separator: "\n"))
         }
         guard let target = resolve(request.target) else { return notFound(request.target) }
         switch request.text {
         case "handle":
-            guard target.kind.isAgent, !target.isOrganizer else { return .failure("only other agents' waits can be handed over") }
+            guard target.kind.isAgent, !target.isSumi else { return .failure("only other agents' waits can be handed over") }
             let scope: Delegation.Scope
             switch request.label {
             case "turn":
@@ -631,15 +631,15 @@ struct ControlHandler {
             if let waiting { text += " It is waiting now: \(waiting). read_terminal it, then answer." }
             return .success(text: text)
         case "stop":
-            guard target.delegation != nil else { return .failure("@\(target.label) isn't handed to the organizer") }
-            store.stopDelegating(target, why: isUser ? "the user stopped it" : "the organizer stopped", tellOrganizer: isUser)
+            guard target.delegation != nil else { return .failure("@\(target.label) isn't handed to Sumi") }
+            store.stopDelegating(target, why: isUser ? "the user stopped it" : "Sumi stopped", tellSumi: isUser)
             return .success(text: "stopped handling @\(target.label)")
         default:
             return .failure("delegate takes handle, stop, or list")
         }
     }
 
-    /// Phone Mode: the organizer turns it on when the user, away from the Mac, asks it to.
+    /// Phone Mode: Sumi turns it on when the user, away from the Mac, asks it to.
     private func phoneMode(_ request: ControlRequest) -> ControlResponse {
         switch request.text {
         case "on":
@@ -655,23 +655,23 @@ struct ControlHandler {
         }
     }
 
-    /// answer_prompt: approve or deny a permission request of a session handed to the organizer.
-    private func answerForOrganizer(_ request: ControlRequest) -> ControlResponse {
+    /// answer_prompt: approve or deny a permission request of a session handed to Sumi.
+    private func answerForSumi(_ request: ControlRequest) -> ControlResponse {
         guard let target = resolve(request.target) else { return notFound(request.target) }
         guard let answer = PromptAnswer(rawValue: request.text ?? ""), answer != .always else {
             return .failure("answer must be approve or deny; never \"always\"")
         }
         let reason = request.label.map(sanitizeMessage).flatMap { $0.isEmpty ? nil : $0 }
-        switch store.answerForOrganizer(target, answer, reason: reason, userApproved: request.userApproved == true) {
+        switch store.answerForSumi(target, answer, reason: reason, userApproved: request.userApproved == true) {
         case .success(let text): return .success(text: text)
         case .failure(let error): return .failure(error.description)
         }
     }
 
     /// Closing ends a process and whatever it hadn't saved, so the user confirms each one.
-    private func closeForOrganizer(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
+    private func closeForSumi(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
         guard let target = resolve(request.target) else { reply(notFound(request.target)); return }
-        guard !target.isOrganizer else { reply(.failure("the organizer can't close itself")); return }
+        guard !target.isSumi else { reply(.failure("Sumi can't close itself")); return }
         // Work that isn't merged or committed is never closed from here: the user decides on the agent itself.
         let spec = target.spec
         guard spec.isWorktree else { confirmClose(target, reply: reply); return }
@@ -690,7 +690,7 @@ struct ControlHandler {
     }
 
     private func confirmClose(_ target: TerminalSession, reply: @escaping ControlServer.Reply) {
-        store.confirmUnlessPhoneMode("The organizer wants to close @\(target.label)", abbreviateHome(target.spec.workPath)) { [store] approved in
+        store.confirmUnlessPhoneMode("Sumi wants to close @\(target.label)", abbreviateHome(target.spec.workPath)) { [store] approved in
             guard approved else {
                 reply(.failure("the user kept @\(target.label) open"))
                 return
@@ -715,7 +715,7 @@ struct ControlHandler {
         var focus: TerminalSession?
         if let target = request.target, !target.isEmpty {
             guard let session = resolve(target) else { return notFound(target) }
-            guard !session.isOrganizer else { return .failure("the organizer stays in the sidebar; focus another terminal") }
+            guard !session.isSumi else { return .failure("Sumi stays in the sidebar; focus another terminal") }
             focus = session
         }
         var tiles: LayoutNode?
@@ -737,11 +737,11 @@ struct ControlHandler {
 
     private struct TileError: Error { let message: String }
 
-    /// Labels resolve to sessions; each may appear once, and the organizer never takes a tile.
+    /// Labels resolve to sessions; each may appear once, and Sumi never takes a tile.
     private func tileNode(_ spec: TileSpec, seen: inout Set<UUID>) -> Result<LayoutNode, TileError> {
         if let label = spec.terminal {
             guard let session = resolve(label) else { return .failure(TileError(message: notFound(label).error ?? "unknown terminal")) }
-            guard !session.isOrganizer else { return .failure(TileError(message: "the organizer stays in the sidebar; leave it out of the tiles")) }
+            guard !session.isSumi else { return .failure(TileError(message: "Sumi stays in the sidebar; leave it out of the tiles")) }
             guard !session.isDetached else { return .failure(TileError(message: "@\(session.label) is in its own window; detach_terminals back first")) }
             guard seen.insert(session.id).inserted else { return .failure(TileError(message: "@\(session.label) appears twice")) }
             return .success(.leaf(session.id))
@@ -779,9 +779,9 @@ struct ControlHandler {
             }
             let framed = agentMessagePrefix + "\(sender.label) (\(sender.kind.displayName), via Tako): \(singleLine(text))"
             let result = target.deliver(framed, from: sender.label)
-            // The organizer hears the reply to what it sent, without having to ask for a watch.
-            if sender.isOrganizer, !target.isOrganizer, store.organizerWatches[target.id] == nil {
-                store.organizerWatches[target.id] = ""
+            // Sumi hears the reply to what it sent, without having to ask for a watch.
+            if sender.isSumi, !target.isSumi, store.sumiWatches[target.id] == nil {
+                store.sumiWatches[target.id] = ""
             }
             return .success(text: result)
         }

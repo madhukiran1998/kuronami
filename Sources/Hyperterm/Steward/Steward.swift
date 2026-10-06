@@ -19,7 +19,7 @@ struct StewardPolicy: Codable, Equatable {
     }
 }
 
-/// The machine and every session as the steward sees them, for the organizer.
+/// The machine and every session as the steward sees them, for Sumi.
 struct MachineStatus: Codable, Equatable {
     struct Session: Codable, Equatable {
         var id: String
@@ -192,12 +192,12 @@ final class Steward: ObservableObject {
         sleepTracker.forget(id.uuidString)
     }
 
-    /// On screen, selected, the organizer, or pinned by the policy.
+    /// On screen, selected, Sumi, or pinned by the policy.
     private func focusedIDs(_ store: SessionStore) -> Set<UUID> {
         heldAwakeIDs(store).union(store.visibleIDs)
     }
 
-    /// What sleep leaves alone: the selected tile, the organizer and pinned sessions. A tile that
+    /// What sleep leaves alone: the selected tile, Sumi and pinned sessions. A tile that
     /// is merely on screen can sleep, since it keeps showing its last screen and wakes on a key.
     private func heldAwakeIDs(_ store: SessionStore) -> Set<UUID> {
         var ids = Set<UUID>()
@@ -206,7 +206,7 @@ final class Steward: ObservableObject {
         for session in store.sessions where session.isDetached && session.surface.window?.isVisible == true {
             ids.insert(session.id)
         }
-        for session in store.sessions where session.isOrganizer || policy.pinned.contains(session.label)
+        for session in store.sessions where session.isSumi || policy.pinned.contains(session.label)
             || policy.pinned.contains(session.id.uuidString) {
             ids.insert(session.id)
         }
@@ -270,11 +270,11 @@ final class Steward: ObservableObject {
     /// policy's agent cap isn't reached.
     func canLaunchAgent() -> Bool { launchBlocker() == nil }
 
-    /// Why a new agent would wait right now, or nil. The organizer doesn't count toward the cap,
+    /// Why a new agent would wait right now, or nil. Sumi doesn't count toward the cap,
     /// and a launch stops being reserved once its session is starting (it's counted there).
     func launchBlocker() -> String? {
         reservations.removeAll { Date().timeIntervalSince($0) > 10 }
-        let sessions = (store?.sessions ?? []).filter { $0.kind.isAgent && !$0.isOrganizer }
+        let sessions = (store?.sessions ?? []).filter { $0.kind.isAgent && !$0.isSumi }
         let footprints = sessions.compactMap { samples[$0.id]?.footprint }
         let active = sessions.filter { $0.state == .working || $0.state == .starting }.count
         let recent = sessions.filter { Date().timeIntervalSince($0.createdAt) < 10 }.count

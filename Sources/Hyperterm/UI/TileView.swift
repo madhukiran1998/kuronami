@@ -366,7 +366,7 @@ struct TileHeaderSnapshot: Equatable {
     let asleep: Bool
     /// Finished and not yet looked at.
     let finished: Bool
-    /// The organizer handles its waits; the tag's tooltip.
+    /// Sumi handles its waits; the tag's tooltip.
     let delegation: String?
 
     @MainActor init(session: TerminalSession) {
@@ -448,7 +448,7 @@ struct TileHeader: View {
                 Tag(text: overlap.title, tint: Palette.attention).help(overlap.detail)
             }
             if let delegation = snapshot.delegation, !compact {
-                Tag(text: "Organizer", tint: Palette.accent).help(delegation)
+                Tag(text: "Sumi", tint: Palette.accent).help(delegation)
             }
             if !snapshot.ports.isEmpty, !compact { PortChips(ports: snapshot.ports, compact: true) }
             if snapshot.kind == .browser {

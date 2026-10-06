@@ -79,7 +79,7 @@ struct PendingApproval {
     let source: String
     let toolName: String
     let summary: String
-    /// The whole request (full command, absolute path), which the organizer's guard checks.
+    /// The whole request (full command, absolute path), which Sumi's guard checks.
     var request = ""
     let suggestions: Any?
     let createdAt = Date()

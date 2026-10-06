@@ -197,9 +197,9 @@ extension SessionStore {
         return (try? decoder.decode([LaunchSpec].self, from: data)) ?? []
     }
 
-    /// Every agent but the organizer is kept for reopening, with what it did and how it ended.
+    /// Every agent but Sumi is kept for reopening, with what it did and how it ended.
     func rememberClosed(_ session: TerminalSession) {
-        guard session.kind.isAgent, !session.isOrganizer else { return }
+        guard session.kind.isAgent, !session.isSumi else { return }
         var spec = session.spec
         spec.minimized = nil
         spec.asleep = nil

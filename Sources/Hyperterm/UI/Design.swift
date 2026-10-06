@@ -725,9 +725,9 @@ struct WindowDragArea: NSViewRepresentable {
     func updateNSView(_ view: WindowDragView, context: Context) {}
 }
 
-// MARK: - Organizer
+// MARK: - Sumi
 
 extension Size {
-    /// The organizer CLI's badge in the corner of the Tako mark.
+    /// Sumi CLI's badge in the corner of the Tako mark.
     static let markBadge: CGFloat = 14
 }

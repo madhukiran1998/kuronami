@@ -1,64 +1,64 @@
 import Foundation
 
-/// The organizer: one agent (Claude or Codex) behind the round button in the window's corner that
+/// Sumi: one agent (Claude or Codex) behind the round button in the window's corner that
 /// runs the user's other sessions. It starts agents in any project, arranges the tiles, and closes
 /// what's done. It takes no tile and no card; its terminal opens in a floating panel.
 extension SessionStore {
-    var organizer: TerminalSession? { sessions.first(where: \.isOrganizer) }
+    var sumi: TerminalSession? { sessions.first(where: \.isSumi) }
 
     /// Its own Tako tools run without a permission prompt; the app still checks each call,
     /// and closing a terminal still asks.
-    static let organizerTools = ["list_terminals", "read_terminal", "send_message", "start_agent", "arrange_view",
+    static let sumiTools = ["list_terminals", "read_terminal", "send_message", "start_agent", "arrange_view",
                                  "close_terminal", "save_layout", "restore_layout", "watch_terminal",
                                  "session_history", "reopen_session", "machine_status", "set_policy", "detach_terminals",
                                  "handle_waiting", "stop_handling", "answer_prompt", "phone_mode"]
         .map { "mcp__hyperterm__" + $0 }
 
-    /// Where the organizer runs. Its own folder, trusted once: Claude Code asks to trust the home
-    /// folder again on every launch, and the organizer reaches every project with absolute paths.
-    static var organizerFolder: String {
+    /// Where Sumi runs. Its own folder, trusted once: Claude Code asks to trust the home
+    /// folder again on every launch, and Sumi reaches every project with absolute paths.
+    static var sumiFolder: String {
         let folder = ControlPaths.supportDirectory.appendingPathComponent("organizer")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder.path
     }
 
-    static let organizerKindKey = "organizerKind"
+    static let sumiKindKey = "organizerKind"
     /// Where the choice is kept. A variable so tests can use their own suite.
-    static var organizerDefaults = UserDefaults.standard
+    static var sumiDefaults = UserDefaults.standard
 
-    /// The CLIs that can run the organizer: every agent kind.
-    static var organizerChoices: [SessionKind] { SessionKind.allCases.filter(\.isAgent) }
+    /// The CLIs that can run Sumi: every agent kind.
+    static var sumiChoices: [SessionKind] { SessionKind.allCases.filter(\.isAgent) }
 
-    /// The CLI the user picked to run the organizer; nil until they first do.
-    static var chosenOrganizerKind: SessionKind? {
-        organizerDefaults.string(forKey: organizerKindKey).flatMap(SessionKind.init(rawValue:)).flatMap { $0.isAgent ? $0 : nil }
+    /// The CLI the user picked to run Sumi; nil until they first do.
+    static var chosenSumiKind: SessionKind? {
+        sumiDefaults.string(forKey: sumiKindKey).flatMap(SessionKind.init(rawValue:)).flatMap { $0.isAgent ? $0 : nil }
     }
 
-    /// Which CLI runs the organizer: picked the first time its panel opens, then in its header or Settings.
-    static var organizerKind: SessionKind {
-        get { chosenOrganizerKind ?? .claude }
-        set { organizerDefaults.set(newValue.rawValue, forKey: organizerKindKey) }
+    /// Which CLI runs Sumi: picked the first time its panel opens, then in its header or Settings.
+    static var sumiKind: SessionKind {
+        get { chosenSumiKind ?? .claude }
+        set { sumiDefaults.set(newValue.rawValue, forKey: sumiKindKey) }
     }
 
     /// The panel asks which CLI, then which model, instead of starting one. One already running
     /// (from before there was a choice) counts as chosen.
-    var organizerNeedsChoice: Bool {
-        guard organizer == nil else { return false }
-        guard let kind = Self.chosenOrganizerKind else { return true }
-        return Self.chosenOrganizerModel(for: kind) == nil
+    var sumiNeedsChoice: Bool {
+        guard sumi == nil else { return false }
+        guard let kind = Self.chosenSumiKind else { return true }
+        return Self.chosenSumiModel(for: kind) == nil
     }
 
-    /// The first-run choice: remembered, then the organizer starts on it once its model is picked.
-    func chooseOrganizer(_ kind: SessionKind) {
-        Self.organizerKind = kind
-        if Self.chosenOrganizerModel(for: kind) != nil { startOrganizer() }
+    /// The first-run choice: remembered, then Sumi starts on it once its model is picked.
+    func chooseSumi(_ kind: SessionKind) {
+        Self.sumiKind = kind
+        if Self.chosenSumiModel(for: kind) != nil { startSumi() }
     }
 
     // MARK: - Its model
 
-    /// A model the organizer can run on. Its work is starting, arranging and watching agents, so
+    /// A model Sumi can run on. Its work is starting, arranging and watching agents, so
     /// a small model does it well for far fewer tokens.
-    struct OrganizerModel: Equatable, Identifiable {
+    struct SumiModel: Equatable, Identifiable {
         /// Passed to the CLI as its model; nil leaves the CLI's own default.
         var name: String?
         var title: String
@@ -69,115 +69,115 @@ extension SessionStore {
     }
 
     /// Smallest first. Codex's names come from its model catalog (`codex debug models`).
-    static func organizerModels(for kind: SessionKind) -> [OrganizerModel] {
+    static func sumiModels(for kind: SessionKind) -> [SumiModel] {
         switch kind {
         case .claude: return [
-            OrganizerModel(name: "haiku", title: "Haiku", detail: "Smallest and fastest. Plenty for starting, arranging and watching agents.", recommended: true),
-            OrganizerModel(name: "sonnet", title: "Sonnet", detail: "Mid-size, for long plans across many agents."),
-            OrganizerModel(name: nil, title: "Claude Code's default", detail: "Usually Opus: the most tokens per turn."),
+            SumiModel(name: "haiku", title: "Haiku", detail: "Smallest and fastest. Plenty for starting, arranging and watching agents.", recommended: true),
+            SumiModel(name: "sonnet", title: "Sonnet", detail: "Mid-size, for long plans across many agents."),
+            SumiModel(name: nil, title: "Claude Code's default", detail: "Usually Opus: the most tokens per turn."),
         ]
         case .codex: return [
-            OrganizerModel(name: "gpt-6-luna", title: "GPT-6-Luna", detail: "Fast and affordable. Plenty for starting, arranging and watching agents.", recommended: true),
-            OrganizerModel(name: nil, title: "Codex's default", detail: "Its workhorse model: more tokens per turn."),
+            SumiModel(name: "gpt-6-luna", title: "GPT-6-Luna", detail: "Fast and affordable. Plenty for starting, arranging and watching agents.", recommended: true),
+            SumiModel(name: nil, title: "Codex's default", detail: "Its workhorse model: more tokens per turn."),
         ]
         default: return []
         }
     }
 
-    private static func organizerModelKey(_ kind: SessionKind) -> String { "organizerModel." + kind.rawValue }
+    private static func sumiModelKey(_ kind: SessionKind) -> String { "organizerModel." + kind.rawValue }
 
     /// Whether `name` is one of `kind`'s own models: a model from another CLI (Codex's `gpt-6-luna` on
     /// Claude) is never launched, and "" is the CLI's own default.
-    static func isOrganizerModel(_ name: String, of kind: SessionKind) -> Bool {
-        name.isEmpty || organizerModels(for: kind).contains { $0.name == name }
+    static func isSumiModel(_ name: String, of kind: SessionKind) -> Bool {
+        name.isEmpty || sumiModels(for: kind).contains { $0.name == name }
     }
 
     /// The model picked for `kind`: nil until picked, "" for the CLI's own default. One saved for
     /// another CLI is dropped, so the panel asks again instead of launching a CLI with it.
-    static func chosenOrganizerModel(for kind: SessionKind) -> String? {
-        guard let name = organizerDefaults.string(forKey: organizerModelKey(kind)) else { return nil }
-        guard isOrganizerModel(name, of: kind) else {
-            organizerDefaults.removeObject(forKey: organizerModelKey(kind))
+    static func chosenSumiModel(for kind: SessionKind) -> String? {
+        guard let name = sumiDefaults.string(forKey: sumiModelKey(kind)) else { return nil }
+        guard isSumiModel(name, of: kind) else {
+            sumiDefaults.removeObject(forKey: sumiModelKey(kind))
             return nil
         }
         return name
     }
 
-    static func setOrganizerModel(_ name: String?, for kind: SessionKind) {
-        organizerDefaults.set(name ?? "", forKey: organizerModelKey(kind))
+    static func setSumiModel(_ name: String?, for kind: SessionKind) {
+        sumiDefaults.set(name ?? "", forKey: sumiModelKey(kind))
     }
 
     /// A model that didn't start: forgotten, so the panel asks again.
-    static func forgetOrganizerModel(for kind: SessionKind) {
-        organizerDefaults.removeObject(forKey: organizerModelKey(kind))
+    static func forgetSumiModel(for kind: SessionKind) {
+        sumiDefaults.removeObject(forKey: sumiModelKey(kind))
     }
 
-    /// What the organizer is launched with: nil for the CLI's default.
-    static func organizerModel(for kind: SessionKind) -> String? {
-        chosenOrganizerModel(for: kind).flatMap { $0.isEmpty ? nil : $0 }
+    /// What Sumi is launched with: nil for the CLI's default.
+    static func sumiModel(for kind: SessionKind) -> String? {
+        chosenSumiModel(for: kind).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// The model step's choice for `kind`, the CLI whose models were shown: remembered, then the
-    /// organizer starts on that CLI and model, replacing one running.
-    func chooseOrganizerModel(_ name: String?, for kind: SessionKind) {
-        guard Self.isOrganizerModel(name ?? "", of: kind) else { return }
-        Self.organizerKind = kind
-        Self.setOrganizerModel(name, for: kind)
-        if let organizer, !organizer.isExitedProcess { close(organizer) }
-        startOrganizer()
+    /// sumi starts on that CLI and model, replacing one running.
+    func chooseSumiModel(_ name: String?, for kind: SessionKind) {
+        guard Self.isSumiModel(name ?? "", of: kind) else { return }
+        Self.sumiKind = kind
+        Self.setSumiModel(name, for: kind)
+        if let sumi, !sumi.isExitedProcess { close(sumi) }
+        startSumi()
     }
 
-    /// A running organizer that isn't on the CLI chosen (a choice made while another was starting,
+    /// A running sumi that isn't on the CLI chosen (a choice made while another was starting,
     /// or one left from an earlier run) moves to the chosen CLI.
-    func reconcileOrganizerKind() {
-        guard !organizerStarting, let organizer, organizer.kind != Self.organizerKind else { return }
-        switchOrganizer(to: Self.organizerKind)
+    func reconcileSumiKind() {
+        guard !sumiStarting, let sumi, sumi.kind != Self.sumiKind else { return }
+        switchSumi(to: Self.sumiKind)
     }
 
-    /// Starts the organizer in `cwd`, replacing one that has exited. It runs with full access:
+    /// Starts Sumi in `cwd`, replacing one that has exited. It runs with full access:
     /// its work spans every project, so it never stops to ask before reading or running something.
-    func startOrganizer(task: String? = nil) {
-        guard !organizerStarting else { return }
-        if let organizer {
-            guard organizer.isExitedProcess else { return }
-            close(organizer)
+    func startSumi(task: String? = nil) {
+        guard !sumiStarting else { return }
+        if let sumi {
+            guard sumi.isExitedProcess else { return }
+            close(sumi)
         }
-        var spec = LaunchSpec(label: "organizer", kind: Self.organizerKind, cwd: Self.organizerFolder)
-        spec.organizer = true
-        spec.options = AgentOptions(mode: .fullAccess, model: Self.organizerModel(for: Self.organizerKind))
-        organizerStarting = true
+        var spec = LaunchSpec(label: "sumi", kind: Self.sumiKind, cwd: Self.sumiFolder)
+        spec.sumi = true
+        spec.options = AgentOptions(mode: .fullAccess, model: Self.sumiModel(for: Self.sumiKind))
+        sumiStarting = true
         Task { @MainActor [spec] in
             await self.launch(spec, select: false, task: task)
-            self.organizerStarting = false
-            if self.remoteControlWhenOrganizerUp, let organizer = self.organizer {
-                self.remoteControlWhenOrganizerUp = false
-                if self.isPhoneModeOn { organizer.openRemoteControl() }
+            self.sumiStarting = false
+            if self.remoteControlWhenSumiUp, let sumi = self.sumi {
+                self.remoteControlWhenSumiUp = false
+                if self.isPhoneModeOn { sumi.openRemoteControl() }
             }
             // The CLI was switched while this one was starting.
-            if let organizer = self.organizer, organizer.kind != Self.organizerKind { self.switchOrganizer(to: Self.organizerKind) }
+            if let sumi = self.sumi, sumi.kind != Self.sumiKind { self.switchSumi(to: Self.sumiKind) }
         }
     }
 
-    /// Runs the organizer on another CLI: the current one closes and a new one starts where it was.
+    /// Runs Sumi on another CLI: the current one closes and a new one starts where it was.
     /// A CLI it hasn't run on yet waits in the panel for its model to be picked.
-    func switchOrganizer(to kind: SessionKind) {
-        guard kind != organizer?.kind || organizer == nil else { Self.organizerKind = kind; return }
-        Self.organizerKind = kind
+    func switchSumi(to kind: SessionKind) {
+        guard kind != sumi?.kind || sumi == nil else { Self.sumiKind = kind; return }
+        Self.sumiKind = kind
         if kind != .claude { setPhoneMode(false) }
-        if let organizer { close(organizer) }
-        if Self.chosenOrganizerModel(for: kind) != nil { startOrganizer() }
+        if let sumi { close(sumi) }
+        if Self.chosenSumiModel(for: kind) != nil { startSumi() }
     }
 
     // MARK: - Arranging
 
-    /// Sessions the organizer just started, reopened or resumed. Opening several takes several
+    /// Sessions Sumi just started, reopened or resumed. Opening several takes several
     /// calls, so whatever it opened in the last 20 s shows together: one fills the view, two or
     /// three sit side by side, more go in rows of three.
-    func showOpenedByOrganizer(_ opened: [TerminalSession]) {
+    func showOpenedBySumi(_ opened: [TerminalSession]) {
         let now = Date()
-        organizerOpened.removeAll { entry in now.timeIntervalSince(entry.at) > 20 || !sessions.contains { $0.id == entry.id } }
-        organizerOpened += opened.map { (id: $0.id, at: now) }
-        let group = organizerOpened.compactMap { entry in sessions.first { $0.id == entry.id } }
+        sumiOpened.removeAll { entry in now.timeIntervalSince(entry.at) > 20 || !sessions.contains { $0.id == entry.id } }
+        sumiOpened += opened.map { (id: $0.id, at: now) }
+        let group = sumiOpened.compactMap { entry in sessions.first { $0.id == entry.id } }
         guard group.count > 1 else {
             if let only = group.first { select(only) }
             return
@@ -190,12 +190,12 @@ extension SessionStore {
         arrange(layout: .grid, focus: opened.last, tiles: tiles)
     }
 
-    /// The organizer's view request. `tiles` sets the grid exactly: the sessions it names show in
+    /// Sumi's view request. `tiles` sets the grid exactly: the sessions it names show in
     /// that shape, servers it leaves out go to the strip, and everything else to the shelf.
     func arrange(layout: LayoutMode?, focus: TerminalSession?, tiles: LayoutNode?) {
         if let tiles {
             let shown = Set(tiles.leaves)
-            for session in sessions where !session.isOrganizer {
+            for session in sessions where !session.isSumi {
                 if session.kind == .server {
                     session.pinnedToGrid = shown.contains(session.id)
                     if shown.contains(session.id) { session.spec.minimized = nil }
@@ -245,7 +245,7 @@ extension SessionStore {
         guard let saved = savedLayouts[name] else { return nil }
         let tiles = saved.tiles.flatMap(layoutNode)
         var focus = saved.focus.flatMap(find)
-        if let shown = focus, shown.isOrganizer || tiles.map({ !$0.contains(shown.id) }) == true { focus = nil }
+        if let shown = focus, shown.isSumi || tiles.map({ !$0.contains(shown.id) }) == true { focus = nil }
         if saved.tiles != nil && tiles == nil && focus == nil { return nil }
         arrange(layout: saved.layout, focus: focus, tiles: tiles)
         let shown = tiles?.leaves ?? focus.map { [$0.id] } ?? []
@@ -268,7 +268,7 @@ extension SessionStore {
         var seen = Set<UUID>()
         func build(_ spec: TileSpec) -> LayoutNode? {
             if let label = spec.terminal {
-                guard let session = find(label), !session.isOrganizer, seen.insert(session.id).inserted else { return nil }
+                guard let session = find(label), !session.isSumi, seen.insert(session.id).inserted else { return nil }
                 return .leaf(session.id)
             }
             let axis: LayoutAxis = spec.split == "column" ? .vertical : .horizontal
@@ -282,11 +282,11 @@ extension SessionStore {
     // MARK: - History
 
     /// Closed agents it can reopen, newest first, in `folder` or below. Its own past runs are
-    /// left out: reopening one would start a second organizer.
+    /// left out: reopening one would start a second sumi.
     func closedSessions(in folder: String? = nil) -> [LaunchSpec] {
         let root = folder.map { (expandTilde($0) as NSString).standardizingPath }
         return recentlyClosed.filter { spec in
-            guard spec.organizer != true else { return false }
+            guard spec.sumi != true else { return false }
             guard let root else { return true }
             let path = (expandTilde(spec.cwd) as NSString).standardizingPath
             return path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
@@ -327,46 +327,46 @@ extension SessionStore {
 
     // MARK: - Watching
 
-    /// Above this much context in use, the organizer starts a fresh conversation before a digest.
-    static let organizerClearPercent: Double = 60
+    /// Above this much context in use, Sumi starts a fresh conversation before a digest.
+    static let sumiClearPercent: Double = 60
 
-    /// Gathers what the organizer should hear about this change, so one agent's finished work can
+    /// Gathers what Sumi should hear about this change, so one agent's finished work can
     /// start the next. It wakes once for the digest, not once per event.
-    func reportToOrganizer(_ session: TerminalSession, from previous: AgentState) {
-        guard let organizer else { return }
-        if organizer.id == session.id { flushOrganizerDigest(); return }
-        // An exited organizer would drop the event; the watch keeps until it can hear.
-        guard !organizer.isExitedProcess else { return }
+    func reportToSumi(_ session: TerminalSession, from previous: AgentState) {
+        guard let sumi else { return }
+        if sumi.id == session.id { flushSumiDigest(); return }
+        // An exited sumi would drop the event; the watch keeps until it can hear.
+        guard !sumi.isExitedProcess else { return }
         // An agent launched by an agent can stop at the folder-trust prompt; only the user can
-        // answer it, so the organizer is told, to pass that on rather than wait for it.
+        // answer it, so Sumi is told, to pass that on rather than wait for it.
         if session.spec.labelSource == .agent, session.state == .needsInput(TerminalSession.trustReason), previous != session.state {
-            addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .needsYou(
+            addToSumiDigest(SumiEvent(label: session.label, kind: .needsYou(
                 "it's asking whether to trust this folder. Only the user can answer: they've been notified and can press Trust Folder on its card. Don't send it input", note: nil)))
         }
-        guard let event = organizerEvent(session, from: previous) else { return }
-        addToOrganizerDigest(event)
+        guard let event = sumiEvent(session, from: previous) else { return }
+        addToSumiDigest(event)
     }
 
-    /// The steward saw something it won't act on alone; the organizer checks and tells the user.
-    func reportToOrganizer(_ escalation: Escalation) {
-        guard organizer != nil else { return }
-        addToOrganizerDigest(OrganizerEvent(label: escalation.label, kind: .steward(escalation.message)))
+    /// The steward saw something it won't act on alone; Sumi checks and tells the user.
+    func reportToSumi(_ escalation: Escalation) {
+        guard sumi != nil else { return }
+        addToSumiDigest(SumiEvent(label: escalation.label, kind: .steward(escalation.message)))
     }
 
-    func addToOrganizerDigest(_ event: OrganizerEvent) {
-        if organizerDigest.isEmpty {
-            DispatchQueue.main.asyncAfter(deadline: .now() + OrganizerDigest.window) { [weak self] in
-                self?.flushOrganizerDigest()
+    func addToSumiDigest(_ event: SumiEvent) {
+        if sumiDigest.isEmpty {
+            DispatchQueue.main.asyncAfter(deadline: .now() + SumiDigest.window) { [weak self] in
+                self?.flushSumiDigest()
             }
         }
-        organizerDigest.add(event)
+        sumiDigest.add(event)
     }
 
-    /// What this change means for the organizer, if anything. A watched terminal ending its turn
+    /// What this change means for Sumi, if anything. A watched terminal ending its turn
     /// uses up the watch; other kinds of event go here.
-    private func organizerEvent(_ session: TerminalSession, from previous: AgentState) -> OrganizerEvent? {
-        guard let note = organizerWatches[session.id] else { return nil }
-        let kind: OrganizerEvent.Kind
+    private func sumiEvent(_ session: TerminalSession, from previous: AgentState) -> SumiEvent? {
+        guard let note = sumiWatches[session.id] else { return nil }
+        let kind: SumiEvent.Kind
         switch session.state {
         // Background subagents outlive the turn; their last SubagentStop reports it instead.
         case .idle where previous == .working && session.runningSubagents.isEmpty:
@@ -375,44 +375,44 @@ extension SessionStore {
         case .exited: kind = .exited
         default: return nil
         }
-        organizerWatches[session.id] = nil
-        return OrganizerEvent(label: session.label, kind: kind, note: note.isEmpty ? nil : note)
+        sumiWatches[session.id] = nil
+        return SumiEvent(label: session.label, kind: kind, note: note.isEmpty ? nil : note)
     }
 
-    /// Sends the digest once its window has passed and the organizer isn't mid-turn; the
-    /// organizer's own next state change tries again. A mostly full context is cleared first.
-    func flushOrganizerDigest(now: Date = Date()) {
-        guard let organizer, !organizer.isExitedProcess else { organizerDigest = OrganizerDigest(); return }
-        guard organizerDigest.isDue(at: now), !organizerDigest.clearing,
-              organizer.atRest || organizer.state.needsAttention else { return }
-        if organizer.usage.contextPercent ?? 0 >= Self.organizerClearPercent, organizer.startFreshConversation() {
-            organizerDigest.clearing = true
+    /// Sends the digest once its window has passed and Sumi isn't mid-turn; the
+    /// sumi's own next state change tries again. A mostly full context is cleared first.
+    func flushSumiDigest(now: Date = Date()) {
+        guard let sumi, !sumi.isExitedProcess else { sumiDigest = SumiDigest(); return }
+        guard sumiDigest.isDue(at: now), !sumiDigest.clearing,
+              sumi.atRest || sumi.state.needsAttention else { return }
+        if sumi.usage.contextPercent ?? 0 >= Self.sumiClearPercent, sumi.startFreshConversation() {
+            sumiDigest.clearing = true
             deliverDigestAfterClear(attempts: 10)
             return
         }
-        if let message = organizerDigest.take() { _ = organizer.deliver(message, from: nil) }
+        if let message = sumiDigest.take() { _ = sumi.deliver(message, from: nil) }
     }
 
-    /// Waits for the organizer to be back at an empty prompt after clearing, then sends the digest.
+    /// Waits for Sumi to be back at an empty prompt after clearing, then sends the digest.
     private func deliverDigestAfterClear(attempts: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self else { return }
-            guard let organizer = self.organizer else { self.organizerDigest = OrganizerDigest(); return }
-            if attempts > 1, !(organizer.atRest && organizer.inputIsEmpty && !organizer.dialogOnScreen) {
+            guard let sumi = self.sumi else { self.sumiDigest = SumiDigest(); return }
+            if attempts > 1, !(sumi.atRest && sumi.inputIsEmpty && !sumi.dialogOnScreen) {
                 self.deliverDigestAfterClear(attempts: attempts - 1)
                 return
             }
-            self.organizerDigest.clearing = false
-            if let message = self.organizerDigest.take(cleared: true) { _ = organizer.deliver(message, from: nil) }
+            self.sumiDigest.clearing = false
+            if let message = self.sumiDigest.take(cleared: true) { _ = sumi.deliver(message, from: nil) }
         }
     }
 }
 
-/// Something the organizer should hear about.
-struct OrganizerEvent: Equatable {
+/// Something Sumi should hear about.
+struct SumiEvent: Equatable {
     enum Kind: Equatable {
         case finished(String), failed(String), exited, steward(String)
-        /// A session handed to the organizer is waiting, with the user's note for it.
+        /// A session handed to Sumi is waiting, with the user's note for it.
         case needsYou(String, note: String?)
         case stoppedHandling(String)
         /// The user turned Phone Mode on or off; not about one terminal.
@@ -447,19 +447,19 @@ struct OrganizerEvent: Equatable {
     }
 }
 
-/// Events gathered for a few seconds, and while the organizer is mid-turn, so it wakes once for
+/// Events gathered for a few seconds, and while Sumi is mid-turn, so it wakes once for
 /// all of them. The message stays on one line: a typed newline would submit it early.
-struct OrganizerDigest {
+struct SumiDigest {
     static let window: TimeInterval = 3
 
-    private(set) var events: [OrganizerEvent] = []
+    private(set) var events: [SumiEvent] = []
     private var since: Date?
-    /// The organizer is starting a fresh conversation; the digest waits for it.
+    /// Sumi is starting a fresh conversation; the digest waits for it.
     var clearing = false
 
     var isEmpty: Bool { events.isEmpty }
 
-    mutating func add(_ event: OrganizerEvent, at now: Date = Date()) {
+    mutating func add(_ event: SumiEvent, at now: Date = Date()) {
         if events.isEmpty { since = now }
         events.append(event)
     }
@@ -476,9 +476,9 @@ struct OrganizerDigest {
         return Self.message(events, cleared: cleared)
     }
 
-    static func message(_ events: [OrganizerEvent], cleared: Bool = false) -> String {
+    static func message(_ events: [SumiEvent], cleared: Bool = false) -> String {
         var text = "Tako: "
-        if cleared { text += "Context was cleared. Read \(ControlPaths.organizerNotes) if you need earlier context. " }
+        if cleared { text += "Context was cleared. Read \(ControlPaths.sumiNotes) if you need earlier context. " }
         if events.count == 1 {
             text += events[0].line
         } else {

@@ -88,17 +88,17 @@ private struct GeneralSettings: View {
     @State private var autoSleep = AppSettings.autoSleepEnabled
     @State private var mode = AppSettings.defaultMode
     @State private var editor = Editors.preferred?.id ?? ""
-    @AppStorage(SessionStore.organizerKindKey, store: SessionStore.organizerDefaults) private var organizerRaw: String?
+    @AppStorage(SessionStore.sumiKindKey, store: SessionStore.sumiDefaults) private var sumiRaw: String?
     @ObservedObject private var installed = InstalledAgents.shared
 
-    /// Shared with the organizer panel's header: a running organizer restarts on the new CLI.
-    private var organizerKind: Binding<SessionKind?> {
-        Binding(get: { TerminalSessionFactory.store?.organizer?.kind ?? SessionStore.chosenOrganizerKind }, set: { kind in
+    /// Shared with Sumi panel's header: a running sumi restarts on the new CLI.
+    private var sumiKind: Binding<SessionKind?> {
+        Binding(get: { TerminalSessionFactory.store?.sumi?.kind ?? SessionStore.chosenSumiKind }, set: { kind in
             guard let kind else { return }
-            if let store = TerminalSessionFactory.store, store.organizer != nil {
-                store.switchOrganizer(to: kind)
+            if let store = TerminalSessionFactory.store, store.sumi != nil {
+                store.switchSumi(to: kind)
             } else {
-                SessionStore.organizerKind = kind
+                SessionStore.sumiKind = kind
             }
         })
     }
@@ -124,10 +124,10 @@ private struct GeneralSettings: View {
                 .fixedSize()
                 .onChange(of: editor) { UserDefaults.standard.set(editor, forKey: "preferredEditor") }
             }
-            setting("Run the organizer with", detail: "Switching restarts it in its own folder. Its notes file carries over, so it keeps what it learned.") {
-                Picker("", selection: organizerKind) {
-                    if organizerKind.wrappedValue == nil { Text("Not Chosen").tag(SessionKind?.none) }
-                    ForEach(SessionStore.organizerChoices) { kind in
+            setting("Run Sumi with", detail: "Switching restarts it in its own folder. Its notes file carries over, so it keeps what it learned.") {
+                Picker("", selection: sumiKind) {
+                    if sumiKind.wrappedValue == nil { Text("Not Chosen").tag(SessionKind?.none) }
+                    ForEach(SessionStore.sumiChoices) { kind in
                         Text(installed.isInstalled(kind) ? kind.displayName : kind.displayName + " (not installed)")
                             .tag(SessionKind?.some(kind))
                             .selectionDisabled(!installed.isInstalled(kind))

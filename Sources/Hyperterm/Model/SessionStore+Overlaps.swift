@@ -65,7 +65,7 @@ extension SessionStore {
     /// An agent finished a turn: compare its workspace with every other live agent's in the
     /// same repository, a few seconds later so turns ending together share one scan.
     func watchOverlaps(_ session: TerminalSession, from previous: AgentState) {
-        guard session.state == .idle, previous == .working, session.kind.isAgent, !session.isOrganizer,
+        guard session.state == .idle, previous == .working, session.kind.isAgent, !session.isSumi,
               let repo = session.git?.mainRoot else { return }
         let due = overlapWatch.pending[repo] != nil
         overlapWatch.pending[repo, default: []].insert(session.id)
@@ -103,10 +103,10 @@ extension SessionStore {
         }
     }
 
-    /// Agents the conflict watch compares: live, and not the organizer.
+    /// Agents the conflict watch compares: live, and not Sumi.
     private var watchedAgents: [TerminalSession] {
         sessions.filter { session in
-            guard session.kind.isAgent, !session.isOrganizer else { return false }
+            guard session.kind.isAgent, !session.isSumi else { return false }
             if case .exited = session.state { return false }
             return true
         }

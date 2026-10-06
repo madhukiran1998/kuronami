@@ -8,7 +8,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let store: SessionStore
     private let terminalArea = TerminalAreaView()
     private var sheetWindow: NSWindow?
-    private lazy var organizerDock = OrganizerDock(store: store)
+    private lazy var sumiDock = SumiDock(store: store)
     private let detachedTiles = DetachedTiles()
     private lazy var projectActionsMenu = ProjectActionsMenu(store: store)
 
@@ -54,8 +54,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             MainActor.assumeIsolated { self?.applyTheme() }
         }
         bindStore()
-        organizerDock.install(in: window)
-        organizerDock.keepsOpenForClicks = { [weak self] clicked in
+        sumiDock.install(in: window)
+        sumiDock.keepsOpenForClicks = { [weak self] clicked in
             guard let self else { return false }
             return clicked === self.switcher || clicked === self.mentionPicker || self.detachedTiles.owns(clicked)
         }
@@ -213,7 +213,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         canvasSidebarButton?.isHidden = !band
     }
 
-    func toggleOrganizer() { organizerDock.toggle() }
+    func toggleSumi() { sumiDock.toggle() }
 
     func toggleInspector() {
         guard let inspectorItem else { return }
@@ -241,19 +241,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] error in MainActor.assumeIsolated { self?.reportLaunchError(error) } }
             .store(in: &subscriptions)
-        // The organizer's terminal lives in its floating panel; every other session gets a tile.
+        // Sumi's terminal lives in its floating panel; every other session gets a tile.
         // Detached sessions live in their own windows.
         store.onSurfaceChange = { [weak self] session in
-            if session.isOrganizer { self?.organizerDock.attach(session) }
+            if session.isSumi { self?.sumiDock.attach(session) }
             else if session.isDetached { self?.detachedTiles.attachSurface(session) }
             else { self?.terminalArea.mount(session) }
         }
         store.onRemove = { [weak self] session in
-            if session.isOrganizer { self?.organizerDock.detach(session) }
+            if session.isSumi { self?.sumiDock.detach(session) }
             else if session.isDetached { self?.detachedTiles.close(session) }
             else { self?.terminalArea.unmount(session) }
         }
-        store.onShowOrganizer = { [weak self] in self?.organizerDock.open() }
+        store.onShowSumi = { [weak self] in self?.sumiDock.open() }
         store.onShowDetached = { [weak self] session in self?.detachedTiles.show(session) }
         store.onDetach = { [weak self] session in self?.detach(session) }
         store.onReattach = { [weak self] session in self?.reattach(session) }
@@ -313,7 +313,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     /// Pops a tile out of the canvas into its own window, opening where the tile was.
     func detach(_ session: TerminalSession) {
-        guard !session.isDetached, !session.isOrganizer else { return }
+        guard !session.isDetached, !session.isSumi else { return }
         let frame = terminalArea.screenFrame(of: session.id)
         session.isDetached = true
         terminalArea.unmount(session)
@@ -716,8 +716,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// The red button hides the window like any Mac app; sessions keep running, the Dock icon
     /// brings it back, and ⌘Q quits.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        // The organizer's panel is the window's child and would be left open with nothing under it.
-        organizerDock.close(restoreFocus: false)
+        // Sumi's panel is the window's child and would be left open with nothing under it.
+        sumiDock.close(restoreFocus: false)
         sender.orderOut(nil)
         return false
     }
@@ -743,11 +743,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidExitFullScreen(_ notification: Notification) { updateCanvasBand() }
 
-    func windowDidResize(_ notification: Notification) { organizerDock.reposition() }
+    func windowDidResize(_ notification: Notification) { sumiDock.reposition() }
 
     func windowDidBecomeKey(_ notification: Notification) {
-        // Hiding the window drops its child windows; bring the organizer's button back with it.
-        if let window { organizerDock.install(in: window) }
+        // Hiding the window drops its child windows; bring Sumi's button back with it.
+        if let window { sumiDock.install(in: window) }
         guard let window, window.firstResponder == nil || window.firstResponder === window else { return }
         if let session = store.selected, session.surface.window === window { window.makeFirstResponder(session.surface) }
     }

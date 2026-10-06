@@ -6,7 +6,7 @@ extension SessionStore {
     /// Only an idle agent at an empty prompt, with a conversation to resume and no subagents or
     /// background shells still running (quitting would end them), can sleep.
     func canSleep(_ session: TerminalSession) -> Bool {
-        guard session.kind.isAgent, !session.isOrganizer, !session.isAsleep, !session.isWaking,
+        guard session.kind.isAgent, !session.isSumi, !session.isAsleep, !session.isWaking,
               session.state == .idle, session.runningSubagents.isEmpty, session.backgroundShells == 0, session.pendingMessages.isEmpty, session.inputIsEmpty,
               let id = session.spec.agentSessionId, isSafeIdentifier(id) else { return false }
         if session.kind.adapter?.canSleep(session.spec) == false { return false }

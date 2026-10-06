@@ -49,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBar = StatusBarController(store: store)
         startControlServer()
         Steward.shared.start(store: store)
-        Steward.shared.onEscalation = { [weak store] in store?.reportToOrganizer($0) }
+        Steward.shared.onEscalation = { [weak store] in store?.reportToSumi($0) }
         Steward.shared.onSleepCandidate = { [weak store] in
             guard AppSettings.autoSleepEnabled, let store else { return false }
             store.sleep($0)
@@ -361,7 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func cleanUpWorktrees(_ sender: Any?) { windowController?.presentWorktreeCleanup() }
     @objc func toggleInspectorPane(_ sender: Any?) { windowController?.toggleInspector() }
     @objc func toggleSidebarPane(_ sender: Any?) { windowController?.toggleSidebar() }
-    @objc func toggleOrganizer(_ sender: Any?) { windowController?.toggleOrganizer() }
+    @objc func toggleSumi(_ sender: Any?) { windowController?.toggleSumi() }
     @objc func newBrowser(_ sender: Any?) { store.openBrowser() }
     @objc func minimizeTile(_ sender: Any?) {
         guard let session = store.selected else { NSSound.beep(); return }

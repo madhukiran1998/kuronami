@@ -40,7 +40,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var pendingRequest: String?
     /// What the agent asked with AskUserQuestion, while it waits for the answer.
     @Published var pendingQuestion: PendingQuestion?
-    /// The user handed this session's waits to the organizer (in memory only).
+    /// The user handed this session's waits to Sumi (in memory only).
     @Published var delegation: Delegation?
     /// True while a PermissionRequest hook is held open, so approvals go through the CLI's API.
     @Published var hasHookApproval = false
@@ -120,7 +120,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     var label: String { spec.label }
     var kind: SessionKind { spec.kind }
     var isMinimized: Bool { spec.minimized == true }
-    var isOrganizer: Bool { spec.organizer == true }
+    var isSumi: Bool { spec.sumi == true }
 
     init(spec: LaunchSpec, resume: Bool, task: String? = nil) {
         self.id = spec.id
@@ -625,7 +625,7 @@ final class TerminalSession: ObservableObject, Identifiable {
             cwd: abbreviateHome(spec.cwd), command: spec.command, ports: ports, unread: unread,
             agentSessionId: spec.agentSessionId, labelSource: (spec.labelSource ?? .user).rawValue,
             activity: activity, project: git?.project, branch: git?.branch,
-            organizer: isOrganizer ? true : nil, conflicts: conflictsByLabel, asleep: isAsleep ? true : nil,
+            sumi: isSumi ? true : nil, conflicts: conflictsByLabel, asleep: isAsleep ? true : nil,
             delegation: delegation?.shortScope, detached: isDetached ? true : nil,
             subagents: runningSubagents.isEmpty ? nil : runningSubagents.count)
     }

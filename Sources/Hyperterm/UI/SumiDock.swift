@@ -2,12 +2,12 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// The organizer's place in the window: a round button in the bottom-left corner. Clicking it
-/// opens the organizer's terminal in a panel floating above it; clicking again folds it back in.
+/// Sumi's place in the window: a round button in the bottom-left corner. Clicking it
+/// opens Sumi's terminal in a panel floating above it; clicking again folds it back in.
 /// Both float as child windows, so they ride over the sidebar and the canvas alike and move
 /// with the window.
 @MainActor
-final class OrganizerDock {
+final class SumiDock {
     final class State: ObservableObject {
         @Published var isOpen = false
         @Published var markSize: CGFloat = 40
@@ -17,15 +17,15 @@ final class OrganizerDock {
     private let state = State()
     private weak var window: NSWindow?
     private let button: NSPanel
-    private let panel: OrganizerPanel
+    private let panel: SumiPanel
     private let container = SurfaceContainer()
-    private var chooser: ChooserHostingView<OrganizerChooser>!
-    private let chooserState = OrganizerChooserState()
+    private var chooser: ChooserHostingView<SumiChooser>!
+    private let chooserState = SumiChooserState()
     private var installedWatch: AnyCancellable?
     private var startWatch: Task<Void, Never>?
     private weak var session: TerminalSession?
     private var choiceWatch: AnyCancellable?
-    /// Windows whose clicks leave the organizer open (popped-out tiles, the switcher, the mention picker).
+    /// Windows whose clicks leave Sumi open (popped-out tiles, the switcher, the mention picker).
     var keepsOpenForClicks: (NSWindow) -> Bool = { _ in false }
 
     /// The mark grows with the screen: 5% of its shorter side, between 40 and 60 points.
@@ -43,7 +43,7 @@ final class OrganizerDock {
         self.store = store
         button = NSPanel(contentRect: NSRect(x: 0, y: 0, width: state.markSize + Space.s, height: state.markSize + Space.s),
                          styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel = OrganizerPanel(contentRect: NSRect(origin: .zero, size: Self.panelSize),
+        panel = SumiPanel(contentRect: NSRect(origin: .zero, size: Self.panelSize),
                                styleMask: [.borderless], backing: .buffered, defer: false)
         for floating in [button, panel] as [NSPanel] {
             floating.isOpaque = false
@@ -52,7 +52,7 @@ final class OrganizerDock {
             floating.isReleasedWhenClosed = false
         }
         button.hasShadow = false
-        button.contentView = NSHostingView(rootView: OrganizerButton(store: store, dock: state, toggle: { [weak self] in self?.toggle() }))
+        button.contentView = NSHostingView(rootView: SumiButton(store: store, dock: state, toggle: { [weak self] in self?.toggle() }))
         panel.hasShadow = true
 
         let frame = NSView()
@@ -62,12 +62,12 @@ final class OrganizerDock {
         frame.layer?.borderColor = Ink.hairline.cgColor
         frame.layer?.borderWidth = Size.hairline
         frame.layer?.masksToBounds = true
-        let header = NSHostingView(rootView: OrganizerHeader(store: store, collapse: { [weak self] in self?.close() },
+        let header = NSHostingView(rootView: SumiHeader(store: store, collapse: { [weak self] in self?.close() },
                                                              start: { [weak self] in self?.startIfNeeded() }))
         header.sizingOptions = []
         header.translatesAutoresizingMaskIntoConstraints = false
         container.translatesAutoresizingMaskIntoConstraints = false
-        chooser = ChooserHostingView(rootView: OrganizerChooser(state: chooserState,
+        chooser = ChooserHostingView(rootView: SumiChooser(state: chooserState,
                                                                 pick: { [weak self] in self?.pick($0) },
                                                                 back: { [weak self] in self?.goBack() }))
         chooser.onKey = { [weak self] in self?.handleKey($0) ?? false }
@@ -91,7 +91,7 @@ final class OrganizerDock {
             chooser.bottomAnchor.constraint(equalTo: frame.bottomAnchor),
         ])
         panel.contentView = frame
-        // Switching to a CLI it hasn't run on yet (here or in Settings) closes the organizer and
+        // Switching to a CLI it hasn't run on yet (here or in Settings) closes Sumi and
         // asks for a model.
         choiceWatch = store.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.syncChooser() }
@@ -100,7 +100,7 @@ final class OrganizerDock {
             DispatchQueue.main.async { self?.skipCLIStepIfSole() }
         }
         // Clicking anywhere else in Tako folds it away, like a popover. Only a click: the
-        // organizer's own work (a confirm sheet, a popped-out tile, an app it opens) also takes
+        // sumi's own work (a confirm sheet, a popped-out tile, an app it opens) also takes
         // focus from the panel, and must not fold it.
         NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             MainActor.assumeIsolated { self?.closeOnClickAway(event); self?.focusOnClickIn(event) }
@@ -132,9 +132,9 @@ final class OrganizerDock {
         panel.setFrame(NSRect(origin: NSPoint(x: origin.x, y: bottom), size: size), display: true)
     }
 
-    // MARK: - The organizer's surface
+    // MARK: - Sumi's surface
 
-    /// Called when the organizer starts or restarts: its terminal lives in the panel, not a tile.
+    /// Called when Sumi starts or restarts: its terminal lives in the panel, not a tile.
     func attach(_ session: TerminalSession) {
         self.session = session
         container.show(session.surface)
@@ -154,7 +154,7 @@ final class OrganizerDock {
         state.isOpen ? close() : open()
     }
 
-    /// A click outside the panel and its button, except in a sheet (a confirm the organizer asked for).
+    /// A click outside the panel and its button, except in a sheet (a confirm Sumi asked for).
     private func closeOnClickAway(_ event: NSEvent) {
         guard state.isOpen, let clicked = event.window, clicked !== panel, clicked !== button,
               clicked.sheetParent == nil, !keepsOpenForClicks(clicked) else { return }
@@ -181,9 +181,10 @@ final class OrganizerDock {
         // The panel is the window's child: with the window hidden it would show nothing.
         if window.isMiniaturized { window.deminiaturize(nil) }
         if !window.isVisible { window.makeKeyAndOrderFront(nil) }
-        store.reconcileOrganizerKind()
+        store.reconcileSumiKind()
         startIfNeeded()
         state.isOpen = true
+        session?.unread = false
         if panel.parent !== window { window.addChildWindow(panel, ordered: .above) }
         reposition()
         panel.makeKeyAndOrderFront(nil)
@@ -197,6 +198,8 @@ final class OrganizerDock {
 
     func close(restoreFocus: Bool = true) {
         state.isOpen = false
+        // A reply that arrived while the panel was open was seen.
+        session?.unread = false
         session?.surface.setOccluded(true)
         window?.removeChildWindow(panel)
         panel.orderOut(nil)
@@ -207,9 +210,9 @@ final class OrganizerDock {
 
     /// The first time, the panel asks which CLI and model to run instead of starting one.
     private func startIfNeeded() {
-        guard store.organizerNeedsChoice else {
+        guard store.sumiNeedsChoice else {
             chooser.isHidden = true
-            store.startOrganizer()
+            store.startSumi()
             return
         }
         showChooser()
@@ -221,8 +224,8 @@ final class OrganizerDock {
         InstalledAgents.shared.refresh()
         if chooserState.model.notice == nil {
             let installed = InstalledAgents.shared
-            if let kind = SessionStore.chosenOrganizerKind ?? OrganizerOnboarding.soleCLI(installed: installed.kinds) {
-                SessionStore.organizerKind = kind
+            if let kind = SessionStore.chosenSumiKind ?? SumiOnboarding.soleCLI(installed: installed.kinds) {
+                SessionStore.sumiKind = kind
                 chooserState.model = .models(for: kind)
             } else {
                 chooserState.model = .clis(isEnabled: installed.isInstalled)
@@ -235,17 +238,17 @@ final class OrganizerDock {
     /// Installed CLIs just became known: with only one, its model step replaces the CLI step.
     private func skipCLIStepIfSole() {
         guard !chooser.isHidden, chooserState.model.step == nil,
-              let kind = OrganizerOnboarding.soleCLI(installed: InstalledAgents.shared.kinds) else { return }
+              let kind = SumiOnboarding.soleCLI(installed: InstalledAgents.shared.kinds) else { return }
         choose(kind)
     }
 
     private var rows: (count: Int, isEnabled: (Int) -> Bool) {
-        if let kind = chooserState.model.step { return (SessionStore.organizerModels(for: kind).count, { _ in true }) }
-        let choices = SessionStore.organizerChoices
+        if let kind = chooserState.model.step { return (SessionStore.sumiModels(for: kind).count, { _ in true }) }
+        let choices = SessionStore.sumiChoices
         return (choices.count, { InstalledAgents.shared.isInstalled(choices[$0]) })
     }
 
-    private func handleKey(_ key: OrganizerChooserKey) -> Bool {
+    private func handleKey(_ key: SumiChooserKey) -> Bool {
         let rows = rows
         switch chooserState.model.handle(key, count: rows.count, isEnabled: rows.isEnabled) {
         case .pick(let index): pick(index)
@@ -257,17 +260,17 @@ final class OrganizerDock {
 
     private func pick(_ index: Int) {
         if let kind = chooserState.model.step {
-            let models = SessionStore.organizerModels(for: kind)
+            let models = SessionStore.sumiModels(for: kind)
             if models.indices.contains(index) { chooseModel(models[index].name, of: kind) }
         } else {
-            let choices = SessionStore.organizerChoices
+            let choices = SessionStore.sumiChoices
             if choices.indices.contains(index) { choose(choices[index]) }
         }
     }
 
     /// One step back; on the first step (or with no CLI to go back to), folds the panel away.
     private func goBack() {
-        if chooserState.model.step != nil, OrganizerOnboarding.soleCLI(installed: InstalledAgents.shared.kinds) == nil {
+        if chooserState.model.step != nil, SumiOnboarding.soleCLI(installed: InstalledAgents.shared.kinds) == nil {
             chooserState.model = .clis(isEnabled: InstalledAgents.shared.isInstalled)
         } else {
             close()
@@ -275,7 +278,7 @@ final class OrganizerDock {
     }
 
     private func choose(_ kind: SessionKind) {
-        store.chooseOrganizer(kind)
+        store.chooseSumi(kind)
         chooserState.model = .models(for: kind)
         syncChooser()
     }
@@ -283,12 +286,12 @@ final class OrganizerDock {
     private func chooseModel(_ name: String?, of kind: SessionKind) {
         chooserState.model.notice = nil
         chooser.isHidden = true
-        store.chooseOrganizerModel(name, for: kind)
+        store.chooseSumiModel(name, for: kind)
         watchStart(kind: kind, name: name)
     }
 
     /// A model the CLI won't run, or a CLI that isn't there, would otherwise leave "Not running".
-    /// Within a few seconds of a choice, an organizer that is gone or has exited sends the user
+    /// Within a few seconds of a choice, Sumi that is gone or has exited sends the user
     /// back to the model step with a note.
     private func watchStart(kind: SessionKind, name: String?) {
         startWatch?.cancel()
@@ -298,18 +301,18 @@ final class OrganizerDock {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 guard let self, !Task.isCancelled else { return }
                 // The user switched CLI or model since: another watch or no watch applies.
-                guard SessionStore.organizerKind == kind, SessionStore.chosenOrganizerModel(for: kind) == (name ?? "") else { return }
-                let organizer = store.organizer
-                let exited = organizer.map { $0.isExitedProcess || { if case .failed = $0.state { return true } else { return false } }($0) }
-                switch OrganizerOnboarding.startVerdict(exited: exited, launching: store.organizerStarting || store.launchingCount > 0,
+                guard SessionStore.sumiKind == kind, SessionStore.chosenSumiModel(for: kind) == (name ?? "") else { return }
+                let sumi = store.sumi
+                let exited = sumi.map { $0.isExitedProcess || { if case .failed = $0.state { return true } else { return false } }($0) }
+                switch SumiOnboarding.startVerdict(exited: exited, launching: store.sumiStarting || store.launchingCount > 0,
                                                         elapsed: Date().timeIntervalSince(began)) {
                 case .waiting: continue
                 case .started: return
                 case .failed:
-                    if let organizer { store.close(organizer) }
-                    SessionStore.forgetOrganizerModel(for: kind)
-                    let title = SessionStore.organizerModels(for: kind).first { $0.name == name }?.title ?? name ?? "its default model"
-                    chooserState.model = .models(for: kind, notice: OrganizerOnboarding.failureMessage(kind: kind, modelTitle: title), avoiding: name)
+                    if let sumi { store.close(sumi) }
+                    SessionStore.forgetSumiModel(for: kind)
+                    let title = SessionStore.sumiModels(for: kind).first { $0.name == name }?.title ?? name ?? "its default model"
+                    chooserState.model = .models(for: kind, notice: SumiOnboarding.failureMessage(kind: kind, modelTitle: title), avoiding: name)
                     showChooser()
                     return
                 }
@@ -318,7 +321,7 @@ final class OrganizerDock {
     }
 
     private func syncChooser() {
-        let hidden = !store.organizerNeedsChoice
+        let hidden = !store.sumiNeedsChoice
         guard chooser.isHidden != hidden else { return }
         if hidden { chooser.isHidden = true } else { showChooser() }
     }
@@ -326,20 +329,20 @@ final class OrganizerDock {
 
 /// Takes the keyboard while the chooser shows, so keys never reach a terminal surface behind it.
 private final class ChooserHostingView<Content: View>: NSHostingView<Content> {
-    var onKey: ((OrganizerChooserKey) -> Bool)?
+    var onKey: ((SumiChooserKey) -> Bool)?
 
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func keyDown(with event: NSEvent) {
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
-              let key = OrganizerChooserKey.from(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers),
+              let key = SumiChooserKey.from(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers),
               onKey?(key) == true else { return super.keyDown(with: event) }
     }
 }
 
-/// Borderless, but takes the keyboard: you type into the organizer's terminal here.
-final class OrganizerPanel: NSPanel {
+/// Borderless, but takes the keyboard: you type into Sumi's terminal here.
+final class SumiPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
@@ -373,41 +376,33 @@ extension TerminalSession {
 
 // MARK: - Views
 
-/// The round button: the Tako mark, moving with what the organizer is doing.
-private struct OrganizerButton: View {
+/// The round button: the Tako mark, moving with what Sumi is doing.
+private struct SumiButton: View {
     @ObservedObject var store: SessionStore
-    @ObservedObject var dock: OrganizerDock.State
+    @ObservedObject var dock: SumiDock.State
     let toggle: () -> Void
     @State private var hovering = false
-    @AppStorage(SessionStore.organizerKindKey, store: SessionStore.organizerDefaults) private var chosen: String?
+    @AppStorage(SessionStore.sumiKindKey, store: SessionStore.sumiDefaults) private var chosen: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Nil until a CLI is chosen; one running from before there was a choice counts.
-    private var kind: SessionKind? { store.organizer?.kind ?? SessionStore.chosenOrganizerKind }
-
-    private var mood: KuronamiMark.Mood {
-        switch store.organizer?.state {
-        case .working?, .starting?: return .working
-        case .needsInput?: return .needsYou
-        default: return .resting
-        }
-    }
+    private var kind: SessionKind? { store.sumi?.kind ?? SessionStore.chosenSumiKind }
 
     var body: some View {
         Button(action: toggle) {
-            KuronamiMark(mood: mood)
+            SumiMark(sumi: store.sumi, isOpen: dock.isOpen)
                 .frame(width: dock.markSize, height: dock.markSize)
                 .scaleEffect(hovering || dock.isOpen ? 1.08 : 1)
                 .animation(Motion.animation(reduceMotion, Motion.quick), value: hovering || dock.isOpen)
                 .overlay(alignment: .topTrailing) {
-                    if let organizer = store.organizer {
-                        OrganizerDot(session: organizer)
+                    if let sumi = store.sumi {
+                        SumiDot(session: sumi)
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
                     if let kind { CLIBadge(kind: kind) }
                 }
-                // Phone Mode: the organizer is answering for the user.
+                // Phone Mode: Sumi is answering for the user.
                 .overlay {
                     if store.isPhoneModeOn {
                         Circle().strokeBorder(Palette.attention, lineWidth: Size.hairline * 2)
@@ -421,13 +416,35 @@ private struct OrganizerButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help((store.isPhoneModeOn ? "Phone Mode on: the organizer answers agents for you. " : "")
-              + (dock.isOpen ? "Hide the organizer (⌃⌘O)" : "Organizer\(kind.map { " (\($0.displayName))" } ?? ""): start agents, arrange the window, close sessions (⌃⌘O)"))
-        .accessibilityLabel(dock.isOpen ? "Hide the organizer" : "Open the organizer")
+        .help((store.isPhoneModeOn ? "Phone Mode on: Sumi answers agents for you. " : "")
+              + (dock.isOpen ? "Hide Sumi (⌃⌘O)" : "Sumi\(kind.map { " (\($0.displayName))" } ?? ""): start agents, arrange the window, close sessions (⌃⌘O)"))
+        .accessibilityLabel(dock.isOpen ? "Hide Sumi" : "Open Sumi")
     }
 }
 
-/// Which CLI runs the organizer: its monogram in its own color, tucked into the mark's corner.
+/// The mark, moving with Sumi's own state. It fills with the sun's color when the
+/// sumi is blocked on you, or has replied while its panel was closed.
+private struct SumiMark: View {
+    let sumi: TerminalSession?
+    let isOpen: Bool
+
+    var body: some View {
+        if let sumi {
+            Live(session: sumi, isOpen: isOpen)
+        } else {
+            KuronamiMark(mood: .resting)
+        }
+    }
+
+    private struct Live: View {
+        @ObservedObject var session: TerminalSession
+        let isOpen: Bool
+
+        var body: some View { KuronamiMark(mood: KuronamiMark.sumiMood(session.state, unread: session.unread, isOpen: isOpen)) }
+    }
+}
+
+/// Which CLI runs Sumi: its monogram in its own color, tucked into the mark's corner.
 private struct CLIBadge: View {
     let kind: SessionKind
 
@@ -454,7 +471,7 @@ private struct PhoneBadge: View {
 }
 
 /// Failure is the one state the mark's motion doesn't say.
-private struct OrganizerDot: View {
+private struct SumiDot: View {
     @ObservedObject var session: TerminalSession
 
     var body: some View {
@@ -462,65 +479,32 @@ private struct OrganizerDot: View {
     }
 }
 
-/// The panel's title row: what the organizer is doing, which CLI runs it, and the fold button.
-private struct OrganizerHeader: View {
+/// The panel's title row: what Sumi is doing, which CLI runs it, and the fold button.
+private struct SumiHeader: View {
     @ObservedObject var store: SessionStore
     let collapse: () -> Void
     let start: () -> Void
-    @AppStorage(SessionStore.organizerKindKey, store: SessionStore.organizerDefaults) private var chosen: String?
-
-    /// The CLI actually running, so the label never says Codex over a Claude terminal.
-    private var shown: SessionKind { store.organizer?.kind ?? SessionStore.organizerKind }
 
     var body: some View {
-        let choosing = store.organizerNeedsChoice
+        let choosing = store.sumiNeedsChoice
         HStack(spacing: Space.s) {
-            if let organizer = store.organizer {
-                OrganizerTitle(session: organizer)
+            if let sumi = store.sumi {
+                SumiTitle(session: sumi)
             } else {
-                Text("Organizer").font(Typeface.headline).foregroundStyle(Tone.text)
+                Text("Sumi").font(Typeface.headline).foregroundStyle(Tone.text)
                 Text(choosing ? "Setup" : store.launchingCount > 0 ? "Starting…" : "Not running").font(Typeface.caption).foregroundStyle(Tone.faint)
                 if store.launchingCount == 0 && !choosing {
                     Button("Start", action: start).buttonStyle(.plain).font(Typeface.caption.weight(.medium)).foregroundStyle(Tone.text)
                 }
             }
             Spacer(minLength: 0)
-            if !choosing {
-                Menu {
-                    ForEach(SessionStore.organizerChoices) { kind in
-                        Button {
-                            store.switchOrganizer(to: kind)
-                        } label: {
-                            if kind == shown { Label(kind.displayName, systemImage: "checkmark") } else { Text(kind.displayName) }
-                        }
-                    }
-                    Section("Model") {
-                        let current = SessionStore.organizerModel(for: shown)
-                        ForEach(SessionStore.organizerModels(for: shown)) { model in
-                            let title = model.title + (model.recommended ? " (Recommended)" : "")
-                            Button {
-                                store.chooseOrganizerModel(model.name, for: shown)
-                            } label: {
-                                if model.name == current { Label(title, systemImage: "checkmark") } else { Text(title) }
-                            }
-                        }
-                    }
-                } label: {
-                    Text(shown.displayName)
-                        .font(Typeface.caption.weight(.medium))
-                        .foregroundStyle(shown.tint)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Which agent and model run the organizer. Switching restarts it.")
-            }
+            if !choosing { SumiCLIMenu(store: store) }
             Button(action: collapse) {
                 Image(systemName: "chevron.down").font(Typeface.caption.weight(.semibold)).foregroundStyle(Tone.muted)
             }
             .buttonStyle(.plain)
-            .help("Hide the organizer")
-            .accessibilityLabel("Hide the organizer")
+            .help("Hide Sumi")
+            .accessibilityLabel("Hide Sumi")
         }
         .padding(.horizontal, Space.m)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -528,12 +512,61 @@ private struct OrganizerHeader: View {
     }
 }
 
-private struct OrganizerTitle: View {
+/// The CLI and model menu. It shows the CLI that was chosen, not the one still running: while a
+/// switch or launch is in flight the two differ, and a model picked from the running CLI's list
+/// would write that CLI back as the choice. It holds the store without observing it, so the
+/// menu isn't rebuilt (and dismissed) by every session update; it redraws only when the saved
+/// choice changes.
+private struct SumiCLIMenu: View {
+    let store: SessionStore
+    /// The saved CLI and model this menu last drew; only a change in it redraws the menu.
+    @State private var drawn = ""
+
+    var body: some View {
+        let shown = SessionStore.sumiKind
+        let current = SessionStore.sumiModel(for: shown)
+        let _ = drawn
+        Menu {
+            ForEach(SessionStore.sumiChoices) { kind in
+                Button {
+                    store.switchSumi(to: kind)
+                } label: {
+                    if kind == shown { Label(kind.displayName, systemImage: "checkmark") } else { Text(kind.displayName) }
+                }
+            }
+            Section("Model") {
+                ForEach(SessionStore.sumiModels(for: shown)) { model in
+                    let title = model.title + (model.recommended ? " (Recommended)" : "")
+                    Button {
+                        store.chooseSumiModel(model.name, for: shown)
+                    } label: {
+                        if model.name == current { Label(title, systemImage: "checkmark") } else { Text(title) }
+                    }
+                }
+            }
+        } label: {
+            Text(shown.displayName)
+                .font(Typeface.caption.weight(.medium))
+                .foregroundStyle(shown.tint)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Which agent and model run Sumi. Switching restarts it.")
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification, object: SessionStore.sumiDefaults)) { _ in
+            let kind = SessionStore.sumiKind
+            let saved = "\(kind.rawValue)|\(SessionStore.sumiModel(for: kind) ?? "")"
+            if saved != drawn { drawn = saved }
+        }
+    }
+}
+
+private struct SumiTitle: View {
     @ObservedObject var session: TerminalSession
 
     var body: some View {
         StatusDot(state: session.state)
-        Text("Organizer").font(Typeface.headline).foregroundStyle(Tone.text)
+        Text("Sumi").font(Typeface.headline).foregroundStyle(Tone.text)
         Text(line).font(Typeface.caption).foregroundStyle(Tone.faint).lineLimit(1).truncationMode(.tail)
     }
 
@@ -542,7 +575,7 @@ private struct OrganizerTitle: View {
         case .working: return session.activity ?? "Working"
         case .idle:
             let model = session.spec.options?.model
-            let title = model.map { name in SessionStore.organizerModels(for: session.kind).first { $0.name == name }?.title ?? name }
+            let title = model.map { name in SessionStore.sumiModels(for: session.kind).first { $0.name == name }?.title ?? name }
             return [title, "Full access"].compactMap { $0 }.joined(separator: " · ")
         default: return session.state.phrase
         }
@@ -550,14 +583,14 @@ private struct OrganizerTitle: View {
 }
 
 @MainActor
-final class OrganizerChooserState: ObservableObject {
-    @Published var model = OrganizerChooserModel()
+final class SumiChooserState: ObservableObject {
+    @Published var model = SumiChooserModel()
 }
 
-/// The first time the panel opens: which CLI runs the organizer, then which of its models. Ones
-/// not on the PATH show, greyed. Keys drive it (see OrganizerChooserKey); the selected row has a ring.
-private struct OrganizerChooser: View {
-    @ObservedObject var state: OrganizerChooserState
+/// The first time the panel opens: which CLI runs Sumi, then which of its models. Ones
+/// not on the PATH show, greyed. Keys drive it (see SumiChooserKey); the selected row has a ring.
+private struct SumiChooser: View {
+    @ObservedObject var state: SumiChooserState
     let pick: (Int) -> Void
     let back: () -> Void
     @ObservedObject private var installed = InstalledAgents.shared
@@ -586,15 +619,15 @@ private struct OrganizerChooser: View {
     }
 
     @ViewBuilder private var clis: some View {
-        Text("Run the organizer with").font(Typeface.headline).foregroundStyle(Tone.text)
-        ForEach(Array(SessionStore.organizerChoices.enumerated()), id: \.element) { index, kind in
+        Text("Run Sumi with").font(Typeface.headline).foregroundStyle(Tone.text)
+        ForEach(Array(SessionStore.sumiChoices.enumerated()), id: \.element) { index, kind in
             let available = installed.isInstalled(kind)
             Button { pick(index) } label: {
                 HStack(spacing: Space.s) {
                     AgentAvatar(kind: kind, dimmed: !available)
                     VStack(alignment: .leading, spacing: Space.xxs) {
                         Text(kind.displayName).font(Typeface.body.weight(.medium)).foregroundStyle(available ? Tone.text : Tone.faint)
-                        Text(available ? kind.organizerNote : "not installed").font(Typeface.caption).foregroundStyle(Tone.faint)
+                        Text(available ? kind.sumiNote : "not installed").font(Typeface.caption).foregroundStyle(Tone.faint)
                     }
                     Spacer(minLength: 0)
                     Text("\(index + 1)").font(Typeface.caption).foregroundStyle(Tone.faint)
@@ -608,9 +641,9 @@ private struct OrganizerChooser: View {
         Text("You can change it later in the header or in Settings.").font(Typeface.caption).foregroundStyle(Tone.faint)
     }
 
-    /// The second step: a small model is recommended, since the organizer wakes on every update.
+    /// The second step: a small model is recommended, since Sumi wakes on every update.
     @ViewBuilder private func models(_ kind: SessionKind) -> some View {
-        let models = SessionStore.organizerModels(for: kind)
+        let models = SessionStore.sumiModels(for: kind)
         Text("Pick \(kind.displayName)'s model").font(Typeface.headline).foregroundStyle(Tone.text)
         Text("It wakes on every update it watches, so a smaller model saves the most tokens.")
             .font(Typeface.caption).foregroundStyle(Tone.faint).frame(width: 300, alignment: .leading)
@@ -641,7 +674,7 @@ private struct OrganizerChooser: View {
             }
             .buttonStyle(.plain)
         }
-        if OrganizerOnboarding.soleCLI(installed: installed.kinds) == nil {
+        if SumiOnboarding.soleCLI(installed: installed.kinds) == nil {
             Button("Choose another CLI", action: back)
                 .buttonStyle(.plain).font(Typeface.caption).foregroundStyle(Tone.muted)
         }
@@ -665,8 +698,8 @@ private struct ChoiceRow: ViewModifier {
 }
 
 extension SessionKind {
-    /// One line on the organizer chooser.
-    var organizerNote: String {
+    /// One line on Sumi chooser.
+    var sumiNote: String {
         switch self {
         case .claude: return "Anthropic's agent, on your Claude plan or API key."
         case .codex: return "OpenAI's agent, on your ChatGPT plan or API key."

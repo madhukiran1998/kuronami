@@ -33,7 +33,7 @@ struct PhoneModeButton: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(on ? "Phone Mode is on. Click for details or to turn it off."
-                 : "Phone Mode: connects the organizer to your phone with Claude Remote Control. While you're away, agents don't wait for you here. Ordinary requests are allowed and the organizer handles the rest.")
+                 : "Phone Mode: connects Sumi to your phone with Claude Remote Control. While you're away, agents don't wait for you here. Ordinary requests are allowed and Sumi handles the rest.")
         .accessibilityLabel("Phone Mode")
         .accessibilityValue(on ? "On" : "Off")
         .popover(isPresented: $showing, arrowEdge: .bottom) {
@@ -69,7 +69,7 @@ private struct PhoneLiveDot: View {
 }
 
 /// What Phone Mode is doing, and the off switch. There is no Copy link: Claude prints the Remote
-/// Control link only in the organizer's terminal, and the app does not read it from there.
+/// Control link only in Sumi's terminal, and the app does not read it from there.
 struct PhoneModePopover: View {
     let since: Date
     let turnOff: () -> Void
