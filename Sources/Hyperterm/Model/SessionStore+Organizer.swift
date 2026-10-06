@@ -132,6 +132,7 @@ extension SessionStore {
     func switchOrganizer(to kind: SessionKind) {
         guard kind != organizer?.kind || organizer == nil else { Self.organizerKind = kind; return }
         Self.organizerKind = kind
+        if kind != .claude { setPhoneMode(false) }
         if let organizer { close(organizer) }
         if Self.chosenOrganizerModel(for: kind) != nil { startOrganizer() }
     }

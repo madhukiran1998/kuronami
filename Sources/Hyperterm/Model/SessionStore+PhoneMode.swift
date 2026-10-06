@@ -8,6 +8,16 @@ import Foundation
 extension SessionStore {
     var isPhoneModeOn: Bool { phoneModeSince != nil }
 
+    /// Phone Mode rides on Claude's Remote Control, so it exists only while Claude runs the organizer.
+    var phoneModeAvailable: Bool { (organizer?.kind ?? Self.chosenOrganizerKind) == .claude }
+
+    /// The user's switch: Phone Mode on, and the organizer's session opened to the phone with Remote Control.
+    func startPhoneMode() {
+        guard phoneModeAvailable else { return }
+        setPhoneMode(true)
+        organizer?.openRemoteControl()
+    }
+
     func setPhoneMode(_ on: Bool, now: Date = Date()) {
         if on {
             guard phoneModeSince == nil else { return }

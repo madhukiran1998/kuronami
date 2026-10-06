@@ -709,7 +709,7 @@ private struct WindowControls: View {
             }
             LayoutPicker(selection: store.layout, choose: store.setLayout)
             IconButton(symbol: "sidebar.right", help: "Show or hide the inspector (⌥⌘I)", action: actions.toggleInspector)
-            PhoneModeButton(store: store)
+            if store.phoneModeAvailable || store.isPhoneModeOn { PhoneModeButton(store: store) }
             Spacer(minLength: Space.xs)
             let waiting = store.attentionCount
             if waiting > 0 { WaitingBadge(count: waiting, action: store.selectNextNeedingAttention) }
@@ -742,7 +742,7 @@ private struct PhoneModeButton: View {
 
     var body: some View {
         let on = store.isPhoneModeOn
-        Button { store.setPhoneMode(!on) } label: {
+        Button { if on { store.setPhoneMode(false) } else { store.startPhoneMode() } } label: {
             Image(systemName: "iphone")
                 .font(Typeface.caption.weight(.semibold))
                 .foregroundStyle(on ? Palette.attention : hovering ? Tone.text : Tone.muted)
@@ -754,7 +754,7 @@ private struct PhoneModeButton: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(on ? "Phone Mode is on. Click to turn it off."
-                 : "Phone Mode: while you're away, agents don't wait for you here. Ordinary requests are allowed and the organizer handles the rest with you on your phone.")
+                 : "Phone Mode: connects the organizer to your phone with Claude Remote Control. While you're away, agents don't wait for you here. Ordinary requests are allowed and the organizer handles the rest.")
         .accessibilityLabel("Phone Mode")
         .accessibilityValue(on ? "On" : "Off")
     }
@@ -767,10 +767,14 @@ private struct PhoneModeBanner: View {
 
     var body: some View {
         HStack(spacing: Space.s) {
-            Image(systemName: "iphone").font(Typeface.caption.weight(.semibold))
+            Image(systemName: "iphone")
+                .font(Typeface.caption.weight(.bold))
+                .foregroundStyle(Tone.deep)
+                .frame(width: Size.iconButton, height: Size.iconButton)
+                .background(Palette.attention, in: Circle())
             VStack(alignment: .leading, spacing: Space.xxs) {
-                Text("Phone Mode on").font(Typeface.callout.weight(.medium))
-                Text("Organizer answering · \(since.formatted(date: .omitted, time: .shortened))")
+                Text("Phone Mode on").font(Typeface.callout.weight(.medium)).foregroundStyle(Tone.text)
+                Text("Remote Control · since \(since.formatted(date: .omitted, time: .shortened))")
                     .font(Typeface.caption)
                     .foregroundStyle(Tone.muted)
                     .lineLimit(1)
@@ -778,14 +782,14 @@ private struct PhoneModeBanner: View {
             }
             Spacer(minLength: Space.xs)
             Button("Turn Off", action: turnOff)
-                .buttonStyle(PanelButtonStyle())
+                .buttonStyle(PanelButtonStyle(prominent: true, tint: Palette.attention))
                 .fixedSize()
         }
-        .foregroundStyle(Palette.attention)
         .padding(.horizontal, Space.s)
         .padding(.vertical, Space.s - Space.xxs)
-        .background(Palette.attention.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
-        .help("Since \(since.formatted(date: .omitted, time: .shortened)), agents' ordinary requests are allowed and the organizer handles their questions and risky requests with you on your phone.")
+        .background(Palette.attention.opacity(0.10), in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous).strokeBorder(Palette.attention.opacity(0.35), lineWidth: Size.hairline))
+        .help("Since \(since.formatted(date: .omitted, time: .shortened)), the organizer is open to your phone through Claude Remote Control. Agents' ordinary requests are allowed and it handles their questions and risky requests with you.")
     }
 }
 
