@@ -17,6 +17,8 @@ final class SessionStore: ObservableObject {
     var onArrangeTiles: ((LayoutNode) -> Void)?
     /// The organizer is between being asked for and its session existing; one start at a time.
     var organizerStarting = false
+    /// Phone Mode was switched on while the organizer was still launching; Remote Control opens once it exists.
+    var remoteControlWhenOrganizerUp = false
     /// Something asked for the organizer (e.g. the switcher); the window opens its panel.
     var onShowOrganizer: (() -> Void)?
     /// A detached session was chosen; the window brings its own window forward.

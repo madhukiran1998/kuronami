@@ -596,7 +596,7 @@ struct ControlHandler {
         switch request.text {
         case "on":
             store.setPhoneMode(true)
-            return .success(text: "Phone Mode on: Kuronami approves agents' ordinary requests; every agent's questions and risky requests come to you.")
+            return .success(text: "Phone Mode on: Tako approves agents' ordinary requests; every agent's questions and risky requests come to you.")
         case "off":
             store.setPhoneMode(false)
             return .success(text: "Phone Mode off: agents' waits go to the user again.")

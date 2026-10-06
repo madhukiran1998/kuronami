@@ -362,7 +362,7 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "phone_mode",
-        "description": "Turn Phone Mode on when the user says they're away or on their phone, and off when they're back. While it's on, Kuronami approves agents' ordinary requests itself, every agent's questions and risky requests come to you, and starting or closing terminals needs no confirmation on the Mac.",
+        "description": "Turn Phone Mode on when the user says they're away or on their phone, and off when they're back. While it's on, Tako approves agents' ordinary requests itself, every agent's questions and risky requests come to you, and starting or closing terminals needs no confirmation on the Mac.",
         "inputSchema": [
             "type": "object",
             "properties": ["on": ["type": "boolean", "description": "true to turn on, false to turn off"]],
