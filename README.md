@@ -234,7 +234,7 @@ Servers open on the shelf on the agent's own `$PORT`; other commands open a shel
 
 #### Browsers agents can drive
 - **Real Chromium inside Tako.** Browsers are sessions like terminals: labeled (`@api-web`), in the sidebar under their agent, tiled in split and grid, and restored where they left off. ⇧⌘B opens one, on the selected terminal's dev server when it has one.
-- **Every agent gets its own.** An agent's first browser action opens `@<agent>-web` next to it, and its tools act on that browser by default, so parallel agents never fight over a page. `list_pages` names every Tako browser by label, and an agent can use another one by passing its page id.
+- **Every agent gets its own.** An agent's first browser action opens `@<agent>-web` next to it, and its tools act on that browser by default, so parallel agents never fight over a page. `list_pages` names every Tako browser by label, and an agent can use another one by passing its page id. `new_page` opens an extra tab: another browser the agent owns, shown under it in the sidebar and made its default page. `close_page` closes only tabs the agent opened, never its first browser or another agent's.
 - **Watch and step in.** The tile shows who is driving (`@api · click`), and you can click, type, and log in yourself at any time.
 - **Your logins, if you want them.** *Import Chrome Logins…* (in a browser's ⋯ menu) copies your Chrome cookies into Tako's browser profile, which is kept separate from your own Chrome (`~/.hyperterm/browser`).
 - **Scoped by default.** Agents started in Tako use Tako's browsers, not your everyday Chrome. App menu → *Let Agents Use My Chrome* re-enables Claude in Chrome for them.
@@ -383,7 +383,7 @@ Tako is young and moves fast. On macOS 26 with Claude Code 2.1, it builds from s
 - accounts (`ht new --account`)
 - the security boundary, tested against key presses, double-fork escapes, environment stripping and shell injection
 
-Browsers are verified by driving `ht browser-mcp` directly: lazy start, per-agent default page, labeled `list_pages`, cross-browser access, and refused `new_page`. Importing Chrome logins is implemented but not yet verified end to end.
+Browsers are verified by driving `ht browser-mcp` directly: lazy start, per-agent default page, labeled `list_pages`, cross-browser access, `new_page` opening an owned tab, and `close_page` refusing anything but tabs the agent opened. Importing Chrome logins is implemented but not yet verified end to end.
 
 Codex is integrated throughout, but its live paths have had less hands-on time than Claude's. Issues and pull requests are very welcome.
 
