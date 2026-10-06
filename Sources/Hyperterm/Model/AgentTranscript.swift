@@ -89,6 +89,19 @@ enum AgentTranscript {
             case ("event_msg", "agent_message"):
                 hasEvents = true
                 out += reply(payload["message"] as? String ?? "").map { ($0, false) }
+            case ("event_msg", "item_completed"):
+                // Codex 0.160: messages arrive as completed items instead.
+                let item = payload["item"] as? [String: Any] ?? [:]
+                let text = (item["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined(separator: "\n")
+                switch item["type"] as? String {
+                case "UserMessage":
+                    hasEvents = true
+                    out += prompt(text).map { ($0, false) }
+                case "AgentMessage":
+                    hasEvents = true
+                    out += reply(text).map { ($0, false) }
+                default: break
+                }
             case ("response_item", "message"):
                 let text = (payload["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined(separator: "\n")
                 switch payload["role"] as? String {

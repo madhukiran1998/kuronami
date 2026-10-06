@@ -174,12 +174,16 @@ struct ClaudeAdapter: AgentAdapter {
 
     /// "Quick safety check" (new) and "Do you trust the files in this folder?" (old).
     let trustMarkers = ["yes, i trust this folder", "a project you created or one you trust", "do you trust the files in this folder"]
+    /// Not checked against a signed-out Claude Code yet.
+    let signInMarkers: [String] = []
     let promptMarker = "❯"
     let optionsAloneMakeDialog = false
 
     /// Claude's native install runs a file named for its version (…/claude/versions/2.1.289), so
-    /// the kernel's name for it is "2.1.289"; its path gives it away.
-    func isCLIProcess(name: String, path: String?) -> Bool {
+    /// the kernel's name for it is "2.1.289"; its path gives it away. An npm install is node
+    /// running the package's cli.js.
+    func isCLIProcess(name: String, path: String?, script: String?) -> Bool {
         name == command || (path.map { $0.contains("/claude/versions/") } ?? false)
+            || Self.isScript(script, package: "@anthropic-ai/claude-code", command: command)
     }
 }

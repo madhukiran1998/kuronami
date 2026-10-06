@@ -336,7 +336,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sender.state = enabling ? .on : .off
         }
     }
-    @objc func enableCodexApprovals(_ sender: Any?) { CodexAdapter.installApprovalHook() }
     @objc func cleanUpWorktrees(_ sender: Any?) { windowController?.presentWorktreeCleanup() }
     @objc func toggleInspectorPane(_ sender: Any?) { windowController?.toggleInspector() }
     @objc func newBrowser(_ sender: Any?) { store.openBrowser() }

@@ -71,6 +71,12 @@ final class TerminalSession: ObservableObject, Identifiable {
     var lastHookAt = Date.distantPast
     /// The current turn was started by another agent's message, not the user.
     var turnIsMessage = false
+    /// Its CLI's prompt and stop hooks report turns (a Codex with hooks on), so turns aren't
+    /// guessed from work starting.
+    var reportsTurnsByHook = false
+    /// This turn was opened before any hook could report it (at launch, or from work starting
+    /// before Codex's first hooks), so its prompt hook doesn't open another.
+    var turnOpenedByGuess = false
 
     private(set) var surface: any SessionSurface
     /// Messages for an agent that is blocked on a prompt or mid-turn; delivered when it is free
@@ -294,9 +300,10 @@ final class TerminalSession: ObservableObject, Identifiable {
         if isWaking, next != .starting { finishWaking() }
         // Without a prompt hook a turn starts when work starts from rest. Claude's turns come
         // from its UserPromptSubmit and Stop hooks instead.
-        if kind.adapter?.reportsPrompts == false, next == .working, previous == .idle || previous == .starting,
+        if kind.adapter?.reportsPrompts == false, !reportsTurnsByHook, next == .working, previous == .idle || previous == .starting,
            source != "approval", source != "process" {
             store?.checkpoint(self, phase: .start, prompt: lastPrompt ?? "Turn")
+            turnOpenedByGuess = true
         }
         if previous.needsAttention && !next.needsAttention { flushPendingMessages() }
         if next == .idle {
@@ -326,21 +333,31 @@ final class TerminalSession: ObservableObject, Identifiable {
         return PromptScreen.hasDialog(screen)
     }
 
-    /// Claude Code and Codex ask to trust a new folder before any hook fires, so only the screen
-    /// shows it. Polled; reads the screen only before the first hook (while starting, or in the
-    /// first two minutes) and while the prompt is up.
+    /// Claude Code and Codex ask to trust a new folder, and Codex to sign in, before any hook
+    /// fires, so only the screen shows it. Polled; reads the screen only before the first hook
+    /// (while starting, or in the first two minutes) and while the prompt is up.
     func checkTrustPrompt() {
         guard kind.isAgent, !isAsleep else { return }
         let mayShow = lastHookAt == .distantPast && (state == .starting || Date().timeIntervalSince(createdAt) < 120)
         guard showingTrustPrompt || mayShow else { return }
-        trustPromptSeen(PromptScreen.hasTrustDialog(surface.readViewport()))
+        let screen = surface.readViewport()
+        if PromptScreen.hasSignIn(screen, kind: kind) {
+            trustPromptSeen(true, reason: "Sign in to \(kind.displayName)")
+        } else {
+            trustPromptSeen(PromptScreen.hasTrustDialog(screen))
+        }
     }
 
     static let trustReason = "Trust this folder?"
 
-    func trustPromptSeen(_ onScreen: Bool) {
-        if onScreen, !showingTrustPrompt, !state.needsAttention {
-            apply(.processStarted, source: "trust prompt", force: .needsInput(Self.trustReason))
+    /// Waits only the user can answer: trusting a folder, signing in.
+    static func isUsersOwn(_ reason: String) -> Bool {
+        reason == trustReason || reason.hasPrefix("Sign in to ")
+    }
+
+    func trustPromptSeen(_ onScreen: Bool, reason: String = TerminalSession.trustReason) {
+        if onScreen, state != .needsInput(reason), !state.needsAttention || showingTrustPrompt {
+            apply(.processStarted, source: "trust prompt", force: .needsInput(reason))
         } else if !onScreen, showingTrustPrompt {
             // SessionStart may have come while it showed (and kept "needs you"); otherwise the
             // normal start flow takes it from here.
@@ -349,7 +366,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     }
 
     private var showingTrustPrompt: Bool {
-        stateSource == "trust prompt" && state == .needsInput(Self.trustReason)
+        guard stateSource == "trust prompt", case .needsInput(let reason) = state else { return false }
+        return Self.isUsersOwn(reason)
     }
 
     /// The user typed into this terminal since their last submit. Screen text can't separate a
@@ -697,6 +715,12 @@ enum PromptScreen {
     static func hasTrustDialog(_ screen: String) -> Bool {
         let lower = screen.lowercased()
         return SessionKind.agentAdapters.contains { $0.trustMarkers.contains(where: lower.contains) }
+    }
+
+    /// The CLI's signed-out screen.
+    static func hasSignIn(_ screen: String, kind: SessionKind) -> Bool {
+        let lower = screen.lowercased()
+        return kind.adapter?.signInMarkers.contains(where: lower.contains) ?? false
     }
 
     static func inputIsEmpty(_ screen: String, kind: SessionKind) -> Bool {

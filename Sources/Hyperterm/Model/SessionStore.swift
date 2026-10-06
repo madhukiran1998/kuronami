@@ -365,7 +365,10 @@ final class SessionStore: ObservableObject {
         if !resume, spec.kind != .claude, spec.worktreeBranch != nil { warmWorktree(session) }
         // Without a prompt hook (Codex), an agent started with a task never rests before its
         // first turn, so that turn's start is recorded here.
-        if spec.kind.adapter?.reportsPrompts == false, !resume, let task, !task.isEmpty { checkpoint(session, phase: .start, prompt: task) }
+        if spec.kind.adapter?.reportsPrompts == false, !resume, let task, !task.isEmpty {
+            checkpoint(session, phase: .start, prompt: task)
+            session.turnOpenedByGuess = true
+        }
         return session
     }
 

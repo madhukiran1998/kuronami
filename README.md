@@ -191,7 +191,7 @@ ht ls
 #### Answer approvals from anywhere
 - **Real approvals, not keystrokes.** Kuronami installs Claude's `PermissionRequest` hook (per launch, never in your global settings). The moment an agent asks, its card shows the exact command with **Allow / Always / Deny**. Always saves the rule Claude suggested, and Deny can carry a reason the agent sees. Claude's own dialog still works in the terminal, and whichever answer comes first wins.
 - **From the notification banner.** Allow or Deny straight from macOS notifications. The menu bar shows the waiting count.
-- **Codex:** approvals from Kuronami work after you enable the hook once (App menu → *Enable Codex Approvals in Kuronami…*). Until then, Codex prompts are answered by choosing the numbered option on screen.
+- **Codex:** approvals from Kuronami work through Codex's `PermissionRequest` hook, attached per launch with the rest of Kuronami's hooks (each passed with its own trust hash, so there's nothing to review in `/hooks`). With hooks turned off in your Codex config, prompts are answered by choosing the numbered option on screen.
 
 #### Review the work
 - **Ready for review.** When an agent finishes with changes, its card shows *Review +128 −41*. The inspector (⌥⌘R) shows the diff.
@@ -280,7 +280,7 @@ Only you can press keys, answer prompts, type raw text, open shells, or close te
 
 ### Nothing global is modified
 
-Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.hyperterm/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Claude agents also get `--no-chrome` per launch, so they use Kuronami's browsers rather than your Chrome (App menu → *Let Agents Use My Chrome* drops it). Your Chrome profile is only read when you choose *Import Chrome Logins…*. Two opt-in menu items write config, and each asks first: channels (`claude mcp add --scope user hyperterm`) and Codex approvals (`~/.codex/hooks.json`).
+Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.hyperterm/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Claude agents also get `--no-chrome` per launch, so they use Kuronami's browsers rather than your Chrome (App menu → *Let Agents Use My Chrome* drops it). Your Chrome profile is only read when you choose *Import Chrome Logins…*. One opt-in menu item writes config, and asks first: channels (`claude mcp add --scope user hyperterm`). Codex runs with `--no-daemon`, so its hooks and MCP servers stay in the agent's own terminal.
 
 ### `ht` CLI
 
@@ -322,7 +322,9 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 |---|---|
 | Claude hooks: `UserPromptSubmit`, `PreToolUse`, `PostToolUse(Failure)`, `PermissionRequest`, `Notification`, `Stop`, `StopFailure`, `TaskCreated/Completed` | Turn state, the exact request being approved, activity, tests, todo progress, failure reasons |
 | Claude statusLine | Cost, context, 5-hour/weekly usage |
-| Codex `notify` + OSC 9 | Turn complete (summary, thread id), approval requests |
+| Codex hooks: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `Stop`, `Interrupt` | The same as Claude's: turn state, thread id, the exact request being approved, activity, tests |
+| Codex `notify` + OSC 9 | Fallback when Codex hooks are off: turn complete (summary, thread id), approval requests |
+| The first screen | Folder-trust prompts; Codex's sign-in screen ("needs you: Sign in to Codex") |
 | `~/.claude/sessions/<pid>.json` | Corrects a stale "working" after an interrupt |
 | Process tree + libproc sockets | Ports, foreground command, an agent quitting back to its shell, server crashes |
 | Browser tool calls (through `ht browser-mcp`) | Which agent is driving which browser, shown on its tile and sidebar row |

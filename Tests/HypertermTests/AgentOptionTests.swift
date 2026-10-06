@@ -18,7 +18,8 @@ final class AgentOptionTests: XCTestCase {
     }
 
     func testCodexModesUseApprovalAndSandboxFlags() {
-        XCTAssertEqual(AgentOptions(mode: .acceptEdits).arguments(for: .codex), ["--full-auto"])
+        XCTAssertEqual(AgentOptions(mode: .acceptEdits).arguments(for: .codex),
+                       ["--ask-for-approval", "on-request", "--sandbox", "workspace-write"])
         XCTAssertEqual(AgentOptions(mode: .plan).arguments(for: .codex),
                        ["--ask-for-approval", "on-request", "--sandbox", "read-only"])
         XCTAssertEqual(AgentOptions(mode: .fullAccess).arguments(for: .codex), ["--dangerously-bypass-approvals-and-sandbox"])

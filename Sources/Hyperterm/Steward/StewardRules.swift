@@ -145,10 +145,11 @@ struct EscalationTracker {
 
 extension StewardRules {
     /// The agent CLI, its shells and Kuronami's own helpers: always there, never the agent's work.
-    static func isAgentMachinery(name: String?, path: String?) -> Bool {
+    /// `script` is what a node process runs (its argv[1]).
+    static func isAgentMachinery(name: String?, path: String?, script: String? = nil) -> Bool {
         guard let name else { return true }
         if ["ht", "caffeinate", "login", "zsh", "bash", "sh", "fish"].contains(name) { return true }
-        return SessionKind.agentAdapters.contains { $0.isCLIProcess(name: name, path: path) }
+        return SessionKind.agentAdapters.contains { $0.isCLIProcess(name: name, path: path, script: script) }
     }
 }
 

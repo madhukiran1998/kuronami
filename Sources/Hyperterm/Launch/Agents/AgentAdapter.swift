@@ -60,13 +60,16 @@ protocol AgentAdapter: Sendable {
 
     /// Lowercased phrases of its folder-trust prompt.
     var trustMarkers: [String] { get }
+    /// Lowercased phrases of the screen it shows while signed out.
+    var signInMarkers: [String] { get }
     /// The glyph its input line starts with.
     var promptMarker: String { get }
     /// Its approval prompts don't use the question wording `PromptScreen.hasDialog` looks for, so
     /// numbered options alone count as a prompt.
     var optionsAloneMakeDialog: Bool { get }
-    /// Whether a process (by kernel name and executable path) is the CLI itself.
-    func isCLIProcess(name: String, path: String?) -> Bool
+    /// Whether a process is the CLI itself, by kernel name, executable path, and (for script
+    /// interpreters like node) the script it runs.
+    func isCLIProcess(name: String, path: String?, script: String?) -> Bool
 }
 
 extension SessionKind {
@@ -85,4 +88,10 @@ extension SessionKind {
 extension AgentAdapter {
     /// Its wrapper in ~/.hyperterm/bin, shell-quoted.
     var wrapper: String { shellQuote(AgentIntegration.binDirectory.appendingPathComponent(command).path) }
+
+    /// An npm install runs `node <script>`: the package's own file, or its bin link named for the command.
+    static func isScript(_ script: String?, package: String, command: String) -> Bool {
+        guard let script else { return false }
+        return script.contains("/\(package)/") || (script as NSString).lastPathComponent == command
+    }
 }
