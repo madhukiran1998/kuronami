@@ -177,6 +177,17 @@ private final class BrowserProxy: @unchecked Sendable {
         childGone(process)
     }
 
+    /// Starts the server again so it sees pages opened since it attached. The agent's calls in
+    /// flight get up to 10 seconds to be answered first, since stopping the server fails them.
+    private func restartServer() -> Bool {
+        let deadline = Date().addingTimeInterval(10)
+        while withState({ !self.pending.isEmpty }), Date() < deadline { usleep(50_000) }
+        startLock.lock()
+        defer { startLock.unlock() }
+        if let process = withState({ self.child }) { stopServer(process) }
+        return startServer()
+    }
+
     /// The server exited: fail what it was asked and let the next call start a new one.
     private func childGone(_ process: Process) {
         let (orphans, waiters) = withState { () -> ([Any], [DispatchSemaphore]) in
@@ -187,6 +198,8 @@ private final class BrowserProxy: @unchecked Sendable {
             guard self.child == nil else { return ([], []) }
             let orphans = Array(self.pending.values), waiters = Array(self.hiddenWaiters.values)
             for key in self.pending.keys { self.rewrites[key] = nil }
+            // A new server numbers its pages afresh.
+            self.labelsByPage = [:]
             self.pending = [:]
             self.hiddenWaiters = [:]
             return (orphans, waiters)
@@ -265,15 +278,39 @@ private final class BrowserProxy: @unchecked Sendable {
         } else if pageScoped(tool) {
             var arguments = params["arguments"] as? [String: Any] ?? [:]
             let active = withState { self.activeLabel } ?? own
-            if staleMap() || ownPage(active) == nil { refreshPageMap() }
+            let labelBefore = withState { self.ownLabel }
+            var untagged = 0
+            if staleMap() || ownPage(active) == nil { untagged = refreshPageMap() }
+            // The refresh's mark names the agent's browser anew (another one if the user closed it).
+            let mine = withState { self.ownLabel } ?? own
             let requested = arguments["pageId"] as? Int
+            // Selecting another agent's browser is allowed (like naming it in any call), but only
+            // the agent's own tabs become its default page.
             if tool == "select_page", let requested, let chosen = label(ofPage: requested),
-               chosen == own || withState({ self.openedLabels.contains(chosen) }) {
+               chosen == mine || withState({ self.openedLabels.contains(chosen) }) {
                 withState { self.activeLabel = chosen }
             }
             // Explicitly naming another Tako browser is allowed; anything else means "mine"
             // (the tab the agent last opened or selected, else its first browser).
-            if requested == nil || label(ofPage: requested!) == nil, let page = ownPage(active) ?? ownPage(own) {
+            if requested == nil || label(ofPage: requested!) == nil {
+                var found = ownPage(active) ?? ownPage(mine)
+                // A page mid-load has no tag yet: give it a moment rather than restarting the server.
+                if found == nil, untagged > 0 {
+                    Thread.sleep(forTimeInterval: 0.3)
+                    untagged = refreshPageMap(alreadyMarked: true)
+                    found = ownPage(active) ?? ownPage(mine)
+                }
+                // A browser Tako made since the server attached is invisible to it until it restarts.
+                let newBrowser = withState { self.ownLabel } != labelBefore
+                if found == nil, untagged == 0 || newBrowser, restartServer() {
+                    refreshPageMap(alreadyMarked: true)
+                    found = ownPage(active) ?? ownPage(mine)
+                }
+                // Without a pageId the server would act on whichever page is selected, maybe another agent's.
+                guard let page = found else {
+                    replyError(id: id, "Couldn't find your Tako browser. Call the tool again; if it keeps failing, ask the user to check the browser in Tako.")
+                    return
+                }
                 arguments["pageId"] = page
             }
             params["arguments"] = arguments
@@ -299,11 +336,7 @@ private final class BrowserProxy: @unchecked Sendable {
         }
         // chrome-devtools-mcp only sees the pages that existed when it attached, so it starts
         // again to pick up the new one (the page map is relearned from the new server).
-        startLock.lock()
-        if let process = withState({ self.child }) { stopServer(process) }
-        let restarted = startServer()
-        startLock.unlock()
-        guard restarted else {
+        guard restartServer() else {
             replyRPCError(id: id, "Opened @\(label), but couldn't restart the browser tools. Call a tool again to retry.")
             return
         }
@@ -395,23 +428,36 @@ private final class BrowserProxy: @unchecked Sendable {
 
     /// Learns which chrome-devtools-mcp page number is which Tako browser: Tako tags
     /// each page with its label, and each page is asked for its tag.
-    private func refreshPageMap(alreadyMarked: Bool = false) {
+    /// Returns how many listed pages had no readable tag (usually still loading).
+    @discardableResult
+    private func refreshPageMap(alreadyMarked: Bool = false) -> Int {
         if !alreadyMarked {
             var req = ControlRequest(cmd: .browser)
             req.from = callerSession
             req.text = "mark"
-            _ = try? sendControlRequest(req, timeout: 5)
+            // It replies with the agent's browser, which Tako makes again if the user closed it.
+            if let response = try? sendControlRequest(req, timeout: 5), response.ok, let label = response.text {
+                withState { self.ownLabel = label }
+            }
         }
-        guard let listing = hiddenCall("list_pages", [:]) else { return }
+        guard let listing = hiddenCall("list_pages", [:]) else { return 0 }
+        let previous = withState { self.labelsByPage }
         var map: [Int: String] = [:]
+        var untagged = 0
         for page in pageNumbers(in: listing) {
-            let reply = hiddenCall("evaluate_script", ["pageId": page, "function": "() => window.__hyperterm ?? null"])
-            if let reply, let tag = firstQuotedString(in: reply) { map[page] = tag }
+            // Only reads the tag, so there's no DOM to wait for.
+            let reply = hiddenCall("evaluate_script", ["pageId": page, "function": "() => window.__hyperterm ?? null",
+                                                       "waitForStableDom": false], timeout: 5)
+            if let reply, let tag = pageTag(in: reply) { map[page] = tag; continue }
+            // Navigation wipes the tag until the load ends; keep what the page was known as.
+            untagged += 1
+            if let known = previous[page] { map[page] = known }
         }
         withState {
             self.labelsByPage = map
             self.mapRefreshedAt = Date()
         }
+        return untagged
     }
 
     private func staleMap() -> Bool { withState { Date().timeIntervalSince(self.mapRefreshedAt) > 15 } }
@@ -422,7 +468,7 @@ private final class BrowserProxy: @unchecked Sendable {
     // MARK: - Hidden calls
 
     /// A tool call of our own; its reply is consumed here, never shown to the agent.
-    private func hiddenCall(_ tool: String, _ arguments: [String: Any]) -> String? {
+    private func hiddenCall(_ tool: String, _ arguments: [String: Any], timeout: Double = 15) -> String? {
         let id = withState { () -> String in
             self.hiddenCounter += 1
             return "ht-\(self.hiddenCounter)"
@@ -430,7 +476,7 @@ private final class BrowserProxy: @unchecked Sendable {
         let semaphore = DispatchSemaphore(value: 0)
         withState { self.hiddenWaiters[id] = semaphore }
         let message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": "tools/call", "params": ["name": tool, "arguments": arguments]]
-        guard sendToChild(message), semaphore.wait(timeout: .now() + 15) == .success else {
+        guard sendToChild(message), semaphore.wait(timeout: .now() + timeout) == .success else {
             withState { self.hiddenWaiters[id] = nil }
             return nil
         }
@@ -591,8 +637,11 @@ private let supportedProtocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26
 
 // MARK: - Parsing chrome-devtools-mcp's text output
 
+/// Nil for an error reply: its message is not the tool's output.
 private func text(of message: [String: Any]?) -> String? {
-    let content = (message?["result"] as? [String: Any])?["content"] as? [[String: Any]]
+    let result = message?["result"] as? [String: Any]
+    if result?["isError"] as? Bool == true { return nil }
+    let content = result?["content"] as? [[String: Any]]
     return content?.compactMap { $0["text"] as? String }.joined(separator: "\n")
 }
 
@@ -607,7 +656,16 @@ private func pageNumbers(in listing: String) -> [Int] {
     listing.split(separator: "\n").compactMap(pageNumber(in:))
 }
 
-/// evaluate_script replies with the value as JSON in a code block: `"charlie"` or `null`.
+/// evaluate_script replies with the value as JSON in a ```json code block: `"charlie"` or `null`.
+/// Without that block, falls back to the first quoted string.
+private func pageTag(in text: String) -> String? {
+    guard let fence = text.range(of: "```json") else { return firstQuotedString(in: text) }
+    let body = text[fence.upperBound...]
+    let json = body.range(of: "```").map { body[..<$0.lowerBound] } ?? body
+    let value = (try? JSONSerialization.jsonObject(with: Data(json.utf8), options: .fragmentsAllowed)) as? String
+    return value?.isEmpty == false ? value : nil
+}
+
 private func firstQuotedString(in text: String) -> String? {
     guard let start = text.firstIndex(of: "\"") else { return nil }
     let rest = text[text.index(after: start)...]

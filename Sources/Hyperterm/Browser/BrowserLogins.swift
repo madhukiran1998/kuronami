@@ -30,25 +30,32 @@ enum BrowserLogins {
             alert("Browser unavailable", AgentBrowser.shared.startError ?? "Chromium didn't start, so there's nowhere to import to.")
             return
         }
-        let endpoint = AgentBrowser.endpoint
-        Task {
-            let outcome = await Task.detached { () -> Result<Int, ImportError> in
-                do {
-                    let cookies = try ChromeCookies.read(profile: profile)
-                    try await DevTools.setCookies(cookies, endpoint: endpoint)
-                    return .success(cookies.count)
-                } catch let error as ImportError {
-                    return .failure(error)
-                } catch {
-                    return .failure(.devTools(error.localizedDescription))
+        // Chromium opens its DevTools port a moment after starting.
+        AgentBrowser.waitUntilReady({ true }) { ready in
+            guard ready else {
+                alert("Browser unavailable", "Tako's browser didn't come up, so there's nowhere to import to. Try again in a moment.")
+                return
+            }
+            let endpoint = AgentBrowser.endpoint
+            Task {
+                let outcome = await Task.detached { () -> Result<Int, ImportError> in
+                    do {
+                        let cookies = try ChromeCookies.read(profile: profile)
+                        try await DevTools.setCookies(cookies, endpoint: endpoint)
+                        return .success(cookies.count)
+                    } catch let error as ImportError {
+                        return .failure(error)
+                    } catch {
+                        return .failure(.devTools(error.localizedDescription))
+                    }
+                }.value
+                switch outcome {
+                case .success(let count):
+                    alert("Imported \(count) cookies", "Every Tako browser is now signed in where your Chrome is.")
+                    page.reload()
+                case .failure(let error):
+                    alert("Couldn't import Chrome logins", error.description)
                 }
-            }.value
-            switch outcome {
-            case .success(let count):
-                alert("Imported \(count) cookies", "Every Tako browser is now signed in where your Chrome is.")
-                page.reload()
-            case .failure(let error):
-                alert("Couldn't import Chrome logins", error.description)
             }
         }
     }
@@ -260,8 +267,32 @@ enum DevTools {
             let batch = Array(cookies[start..<min(start + 400, cookies.count)])
             let message = try JSONEncoder().encode(Command(id: index + 1, params: .init(cookies: batch)))
             try await socket.send(.string(String(decoding: message, as: UTF8.self)))
-            if case .string(let reply) = try await socket.receive(), reply.contains("\"error\"") { failures += 1 }
+            if try await receive(from: socket).contains("\"error\"") { failures += 1 }
         }
         if failures > 0 && failures * 400 >= cookies.count { throw ImportError.devTools("every batch was rejected") }
+    }
+
+    /// The next text reply, or an error if the browser says nothing for 10 seconds.
+    private static func receive(from socket: URLSessionWebSocketTask) async throws -> String {
+        try await withThrowingTaskGroup(of: String.self) { group in
+            let timedOut = ImportError.devTools("the browser didn't answer within 10 seconds")
+            group.addTask {
+                do {
+                    if case .string(let reply) = try await socket.receive() { return reply }
+                    return ""
+                } catch let error as URLError where error.code == .cancelled {
+                    // Our own timeout cancelled the socket: report the timeout, not "cancelled".
+                    throw timedOut
+                }
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(10))
+                // Cancelling the socket ends the receive above, so the group can finish.
+                socket.cancel(with: .goingAway, reason: nil)
+                throw timedOut
+            }
+            defer { group.cancelAll() }
+            return try await group.next() ?? ""
+        }
     }
 }
