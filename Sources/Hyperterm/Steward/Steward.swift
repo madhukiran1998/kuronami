@@ -202,6 +202,10 @@ final class Steward: ObservableObject {
     private func heldAwakeIDs(_ store: SessionStore) -> Set<UUID> {
         var ids = Set<UUID>()
         if let selected = store.selectedID { ids.insert(selected) }
+        // A detached window that is on screen is being watched even when it isn't the selection.
+        for session in store.sessions where session.isDetached && session.surface.window?.isVisible == true {
+            ids.insert(session.id)
+        }
         for session in store.sessions where session.isOrganizer || policy.pinned.contains(session.label)
             || policy.pinned.contains(session.id.uuidString) {
             ids.insert(session.id)

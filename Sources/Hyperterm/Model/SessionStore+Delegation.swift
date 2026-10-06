@@ -252,7 +252,7 @@ extension SessionStore {
     /// The normal needs-you, for a wait the organizer didn't take or left.
     private func notifyUserOfWait(_ session: TerminalSession) {
         guard case .needsInput(let reason) = session.state else { return }
-        if !(visibleIDs.contains(session.id) && NSApp.isActive) { session.unread = true }
+        if !userIsLooking(at: session) { session.unread = true }
         guard notifiesUser else { return }
         notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: true)
         if let approval = approvals[session.id] {

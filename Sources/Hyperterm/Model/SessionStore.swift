@@ -573,8 +573,7 @@ final class SessionStore: ObservableObject {
         adoptIntoPhoneMode(session)
         delegationStateChanged(session, from: previous)
         watchOverlaps(session, from: previous)
-        let isVisible = (visibleIDs.contains(session.id) && NSApp.isActive)
-            || (session.isDetached && session.surface.window?.isKeyWindow == true)
+        let isVisible = userIsLooking(at: session)
         switch session.state {
         case .needsInput(let reason):
             // Handed to the organizer: it hears instead, and the user only if it doesn't answer.
@@ -616,8 +615,15 @@ final class SessionStore: ObservableObject {
     }
 
     func sessionWantsAttention(_ session: TerminalSession, title: String, body: String) {
-        guard !visibleIDs.contains(session.id) || !NSApp.isActive else { return }
+        guard !userIsLooking(at: session) else { return }
         session.unread = true
+    }
+
+    /// The user is looking at this session: on the canvas while the app is active, or in a
+    /// detached window that is the key window.
+    func userIsLooking(at session: TerminalSession) -> Bool {
+        (visibleIDs.contains(session.id) && NSApp.isActive)
+            || (session.isDetached && session.surface.window?.isKeyWindow == true)
     }
 
     /// Clicking into a tile's terminal makes it the selected session.
