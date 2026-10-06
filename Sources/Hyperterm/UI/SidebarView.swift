@@ -118,8 +118,9 @@ private struct RowChrome: ViewModifier {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(selected ? Tone.raised : hovering ? Tone.surface : .clear,
                         in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
-            .background(waiting ? Palette.attention.opacity(0.07) : .clear,
-                        in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous)
+                .strokeBorder(Palette.attention.opacity(0.55), lineWidth: Size.hairline)
+                .opacity(waiting ? 1 : 0))
             .contentShape(RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)
@@ -172,13 +173,11 @@ struct AgentRow: View {
         }
         .modifier(RowChrome(selected: selected, waiting: session.state.needsAttention) { store.select(session) })
         .contextMenu { SessionMenu(session: session, actions: actions) }
-        .opacity(session.isMinimized ? 0.6 : isDone && !session.unread && !selected ? 0.62 : 1)
+        .opacity(session.isMinimized ? 0.6 : 1)
         .help(tooltip)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(session.label), \(session.statusWord)")
     }
-
-    private var isDone: Bool { session.state == .idle && session.statusWord == "Done" }
 
     private var isExited: Bool {
         if case .exited = session.state { return true }
