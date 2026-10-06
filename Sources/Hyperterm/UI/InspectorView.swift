@@ -416,7 +416,7 @@ private struct ChangesView: View {
                     Button("Open in \(Editors.preferred?.name ?? "Editor")") { Editors.open(path) }
                     if isWorktree {
                         Divider()
-                        Button("Archive Worktree…") { archive() }
+                        Button("Archive Worktree") { store.onArchiveRequest?(session) }
                     }
                 }
                 .menuStyle(.borderlessButton)
@@ -528,21 +528,6 @@ private struct ChangesView: View {
             guard alert.runModal() == .alertFirstButtonReturn else { result = nil; return }
             let finalTitle = field.stringValue, body = request?.body ?? "Opened from Tako."
             run { Review.openPullRequest(at: directory, base: base, title: finalTitle, body: body).map { "Opened \($0)" } }
-        }
-    }
-
-    private func archive() {
-        let alert = NSAlert()
-        alert.messageText = "Archive \(session.label)'s worktree?"
-        alert.informativeText = "Uncommitted work is saved as a commit on its branch, then the folder is removed. The branch stays, so nothing is lost."
-        alert.addButton(withTitle: "Archive")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let directory = path, root = session.git.map(GitInfo.mainRoot) ?? path, id = session.id.uuidString
-        run {
-            let outcome = Review.archive(worktree: directory, mainRoot: root)
-            if case .success = outcome { Checkpoints.prune(at: root, session: id) }
-            return outcome
         }
     }
 

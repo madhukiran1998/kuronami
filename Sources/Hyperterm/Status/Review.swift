@@ -184,7 +184,7 @@ enum Review {
     }
 
     /// Snapshots any work as a commit on the workspace branch, then removes the worktree. The
-    /// branch stays, so nothing is lost.
+    /// branch stays, so nothing is lost. Git's own check stays on: no `--force`.
     static func archive(worktree path: String, mainRoot: String) -> Result<String, ReviewError> {
         if !(runGit(["-C", path, "status", "--porcelain"]) ?? "").isEmpty {
             _ = runGit(["-C", path, "add", "-A"])
@@ -202,7 +202,7 @@ enum Review {
             }
             _ = runGit(["-C", mainRoot, "worktree", "unlock", path])
         }
-        guard runGit(["-C", mainRoot, "worktree", "remove", "--force", path]) != nil else {
+        guard runGit(["-C", mainRoot, "worktree", "remove", path]) != nil else {
             return .failure(.git("git worktree remove failed"))
         }
         return .success("archived; work kept on branch \(branch)")

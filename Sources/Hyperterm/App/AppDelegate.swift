@@ -241,19 +241,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         diffStatsInFlight = true
         let jobs = agents.map { ($0.id, DiffTarget(directory: $0.spec.workPath, base: $0.spec.baseBranch)) }
         let targets = Set(jobs.map { $0.1 })
+        let worktrees = Set(agents.filter { $0.spec.isWorktree }.map { DiffTarget(directory: $0.spec.workPath, base: $0.spec.baseBranch) })
         DispatchQueue.global(qos: .utility).async {
             let stats = Dictionary(uniqueKeysWithValues: targets.map {
                 ($0, Review.diffStat(at: $0.directory, base: $0.base))
+            })
+            let risks = Dictionary(uniqueKeysWithValues: worktrees.map {
+                ($0, WorkAtRisk.evaluate(at: $0.directory, base: $0.base))
             })
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.diffStatsInFlight = false
                     for (id, target) in jobs {
-                        let stat = stats[target] ?? nil
                         guard let session = self.store.sessions.first(where: { $0.id == id }),
-                              session.spec.workPath == target.directory, session.spec.baseBranch == target.base,
-                              session.diffStat != stat else { continue }
-                        session.diffStat = stat
+                              session.spec.workPath == target.directory, session.spec.baseBranch == target.base else { continue }
+                        let stat = stats[target] ?? nil
+                        if session.diffStat != stat { session.diffStat = stat }
+                        if worktrees.contains(target) {
+                            let risk = (risks[target] ?? nil).flatMap { $0.isEmpty ? nil : $0 }
+                            if session.atRisk != risk { session.atRisk = risk }
+                        }
                     }
                 }
             }

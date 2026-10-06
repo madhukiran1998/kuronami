@@ -295,6 +295,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         terminalArea.onReorder = { [weak self] order in self?.store.setTileOrder(order) }
         store.onMentionRequest = { [weak self] session in self?.showMentionPicker(for: session) }
+        store.onArchiveRequest = { [weak self] session in self?.requestArchive(session) }
         store.onSearchUpdate = { [weak self] session, total, selected, start in
             guard let self else { return }
             if let tile = self.detachedTiles.tile(for: session.id) {
@@ -536,18 +537,137 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// Closing something that holds work asks first, on the agent itself; anything else just closes.
     func confirmClose(_ session: TerminalSession) {
+        askBeforeRemoving(session, archive: false)
+    }
+
+    /// The inspector's Archive: the same question, with "keep it on the branch" as the way out.
+    func requestArchive(_ session: TerminalSession) {
+        askBeforeRemoving(session, archive: true)
+    }
+
+    private func askBeforeRemoving(_ session: TerminalSession, archive: Bool) {
         // A browser has no process to lose; closing it just closes the page.
-        let running = session.kind != .browser
-            && (session.state == .working || session.state == .running || session.state.needsAttention)
-        guard running, let window else { store.close(session); return }
+        guard session.kind != .browser else { store.close(session); return }
+        let running = session.state == .working || session.state == .running || session.state.needsAttention
+        let spec = session.spec
+        guard spec.isWorktree else {
+            if running { presentCloseBar(for: session, risk: nil, running: true, archive: archive) } else { store.close(session) }
+            return
+        }
+        Task {
+            let risk = await Task.detached { WorkAtRisk.evaluate(at: spec.workPath, base: spec.baseBranch) }.value
+            guard store.sessions.contains(where: { $0.id == session.id }) else { return }
+            if running || !(risk?.isEmpty ?? true) {
+                presentCloseBar(for: session, risk: risk, running: running, archive: archive)
+            } else {
+                closeAndRemoveFolder(session, saveWork: false, reportFailure: archive)
+            }
+        }
+    }
+
+    private func presentCloseBar(for session: TerminalSession, risk: WorkAtRisk?, running: Bool, archive: Bool, retry: Bool = true) {
+        let spec = session.spec
+        var parts: [String] = []
+        if let risk, !risk.isEmpty { parts.append(risk.headline(base: spec.baseBranch) + ".") }
+        if running { parts.append(session.kind.isAgent ? "Still working." : "Still running.") }
+        let canMerge = !running && spec.isWorktree && spec.baseBranch != nil && risk?.isEmpty == false
+        let leaveTitle = running ? (archive ? "Stop and archive" : "Stop and close") : archive ? "Archive, keep work on branch" : "Close, leave work in folder"
+        let model = CloseBarModel(message: parts.joined(separator: " "),
+                                  mergeTitle: canMerge ? (archive ? "Merge, then archive" : "Merge, then close") : nil,
+                                  leaveTitle: leaveTitle)
+        guard let tile = terminalArea.tile(for: session.id) ?? detachedTiles.tile(for: session.id), !tile.isHidden else {
+            // Not on screen (parked, or hidden by the layout): bring it up so the question sits on its own agent.
+            guard retry else { return presentCloseAlert(for: session, model: model, archive: archive) }
+            store.select(session)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                MainActor.assumeIsolated { self?.presentCloseBar(for: session, risk: risk, running: running, archive: archive, retry: false) }
+            }
+            return
+        }
+        model.onKeep = { [weak tile] in tile?.hideCloseBar() }
+        model.onLeave = { [weak self, weak tile] in
+            tile?.hideCloseBar()
+            if archive { self?.closeAndRemoveFolder(session, saveWork: true, reportFailure: true) }
+            else { self?.store.close(session) }
+        }
+        model.onMerge = { [weak self, weak tile, weak model] in self?.mergeThenClose(session, model: model, tile: tile) }
+        tile.showCloseBar(model)
+    }
+
+    /// Fallback when the agent has no tile to carry the bar: the same question as a sheet.
+    private func presentCloseAlert(for session: TerminalSession, model: CloseBarModel, archive: Bool) {
+        guard let window else { return }
         let alert = NSAlert()
         alert.messageText = "Close @\(session.label)?"
-        alert.informativeText = "Its process is still running and will be stopped."
-        alert.addButton(withTitle: "Close")
-        alert.addButton(withTitle: "Cancel")
+        alert.informativeText = model.message
+        alert.addButton(withTitle: "Keep Open")
+        alert.addButton(withTitle: model.leaveTitle)
         alert.beginSheetModal(for: window) { [weak self] response in
-            if response == .alertFirstButtonReturn { self?.store.close(session) }
+            guard response == .alertSecondButtonReturn, let self else { return }
+            if archive { self.closeAndRemoveFolder(session, saveWork: true, reportFailure: true) } else { self.store.close(session) }
+        }
+    }
+
+    /// Commits what's there, merges the branch into its base, then closes and cleans up. A merge
+    /// that can't happen (your own checkout is in the way, a conflict) says so on the bar and
+    /// leaves the agent open.
+    private func mergeThenClose(_ session: TerminalSession, model: CloseBarModel?, tile: TileView?) {
+        guard let base = session.spec.baseBranch else { return }
+        let path = session.spec.workPath
+        let root = session.git.map(GitInfo.mainRoot) ?? path
+        let label = session.label
+        model?.busy = true
+        model?.error = nil
+        Task {
+            let outcome: Result<String, ReviewError> = await Task.detached {
+                guard let branch = Review.currentBranch(at: path), branch != "HEAD" else { return .failure(.git("not on a branch")) }
+                if !(runGit(["-C", path, "status", "--porcelain"]) ?? "").isEmpty,
+                   case .failure(let error) = Review.commit(at: path, message: "Work from @\(label) (Tako)") {
+                    return .failure(error)
+                }
+                return Review.merge(branch: branch, into: base, mainRoot: root)
+            }.value
+            model?.busy = false
+            switch outcome {
+            case .failure(let error): model?.error = error.description
+            case .success:
+                tile?.hideCloseBar()
+                closeAndRemoveFolder(session, saveWork: false, reportFailure: false)
+            }
+        }
+    }
+
+    /// Closes the agent and, once its process is gone, removes its worktree folder; the branch
+    /// stays. Without `saveWork` the folder is only removed if it is still empty of risk by then.
+    private func closeAndRemoveFolder(_ session: TerminalSession, saveWork: Bool, reportFailure: Bool) {
+        let spec = session.spec
+        let path = spec.workPath, base = spec.baseBranch, label = session.label
+        let root = session.git.map(GitInfo.mainRoot) ?? path
+        let id = session.id.uuidString
+        let shared = store.sessions.contains { $0.id != session.id && $0.spec.workPath == path }
+        store.close(session)
+        guard spec.isWorktree, !shared else { return }
+        // Closing stops the agent; its worktree lock goes with it a moment later.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            if !saveWork {
+                guard let risk = WorkAtRisk.evaluate(at: path, base: base), risk.isEmpty else { return }
+            }
+            let outcome = Review.archive(worktree: path, mainRoot: root)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    switch outcome {
+                    case .success: Checkpoints.prune(at: root, session: id)
+                    case .failure(let error):
+                        guard reportFailure, let window = self?.window else { return }
+                        let alert = NSAlert()
+                        alert.messageText = "Couldn't archive @\(label)'s worktree"
+                        alert.informativeText = error.description
+                        alert.beginSheetModal(for: window)
+                    }
+                }
+            }
         }
     }
 
@@ -557,7 +677,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let alert = NSAlert()
         alert.messageText = "Keep \(session.label)'s work?"
         alert.informativeText = "Its changes are committed and merged into \(session.spec.baseBranch ?? "the base branch"). "
-            + "\(others.map(\.label).joined(separator: ", ")) will be closed and their worktrees archived; their branches stay."
+            + "\(others.map(\.label).joined(separator: ", ")) will be closed and their worktrees archived. "
+            + "Anything they hadn't committed is saved on their branches, which stay."
         alert.addButton(withTitle: "Merge and Close Others")
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in

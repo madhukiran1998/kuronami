@@ -98,6 +98,8 @@ final class TerminalAreaView: NSView {
         return window.convertToScreen(tile.convert(tile.bounds, to: nil))
     }
 
+    func tile(for id: UUID) -> TileView? { tiles[id] }
+
     func unmount(_ session: TerminalSession) {
         tiles[session.id]?.removeFromSuperview()
         tiles[session.id] = nil

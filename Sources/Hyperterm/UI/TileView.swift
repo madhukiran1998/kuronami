@@ -19,6 +19,7 @@ final class TileView: NSView {
     private let headerUnderline = CALayer()
     private let sweep = CAGradientLayer()
     private var recapHost: NSHostingView<RecapBanner>?
+    private var closeBarHost: NSHostingView<CloseBar>?
     private var searchHost: NSHostingView<SearchBar>?
     let search = SearchModel()
 
@@ -155,6 +156,10 @@ final class TileView: NSView {
             let height = recapHost.fittingSize.height
             recapHost.frame = NSRect(x: (bounds.width - width) / 2, y: bounds.height - headerHeight - height - 12, width: width, height: height)
         }
+        if let closeBarHost {
+            let width = max(0, min(bounds.width - 24, 640))
+            closeBarHost.frame = NSRect(x: (bounds.width - width) / 2, y: 12, width: width, height: closeBarHost.fittingSize.height)
+        }
         if let searchHost {
             let size = searchHost.fittingSize
             searchHost.frame = NSRect(x: bounds.width - size.width - 12, y: bounds.height - headerHeight - size.height - 10,
@@ -270,6 +275,20 @@ final class TileView: NSView {
                 }
             }
         }
+    }
+
+    /// The question before closing something that holds work; replaces any earlier one.
+    func showCloseBar(_ model: CloseBarModel) {
+        hideCloseBar()
+        let host = NSHostingView(rootView: CloseBar(model: model))
+        content.addSubview(host, positioned: .above, relativeTo: nil)
+        closeBarHost = host
+        needsLayout = true
+    }
+
+    func hideCloseBar() {
+        closeBarHost?.removeFromSuperview()
+        closeBarHost = nil
     }
 
     func showSearch() {

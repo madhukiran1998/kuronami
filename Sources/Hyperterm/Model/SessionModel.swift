@@ -164,6 +164,9 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     }
     var createdAt: Date
 
+    /// Tako or Claude made a dedicated worktree for this session.
+    var isWorktree: Bool { worktreeBranch != nil || worktreeName != nil }
+
     var agentMayRename: Bool { (labelSource ?? .user) != .user }
 
     /// Agents without a conversation id reopen as a fresh agent in the same folder.

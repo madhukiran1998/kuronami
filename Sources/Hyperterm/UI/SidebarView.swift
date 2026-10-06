@@ -149,6 +149,11 @@ struct AgentRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .layoutPriority(1)
+                if let risk = session.atRisk {
+                    Circle().fill(Palette.attention).frame(width: 6, height: 6)
+                        .help(risk.headline(base: session.spec.baseBranch) + ". Closing it will ask first.")
+                        .accessibilityLabel("Has work that isn't merged")
+                }
                 Spacer(minLength: Space.xs)
                 if session.unread {
                     Circle().fill(Palette.accent).frame(width: 6, height: 6).accessibilityLabel("Unread")
