@@ -32,7 +32,7 @@ struct BrowserPane: View {
         .background(Color(nsColor: Theme.terminalBackground))
     }
 
-    /// Dev servers running in Kuronami, offered as one-click destinations.
+    /// Dev servers running in Tako, offered as one-click destinations.
     private var servers: [(label: String, port: Int)] {
         store.sessions.flatMap { session in session.ports.map { (label: session.label, port: $0) } }
     }
@@ -276,7 +276,7 @@ private struct BrowserStartPage: View {
             VStack(spacing: 6) {
                 Text(error == nil ? "@\(label)" : "Browser unavailable")
                     .font(error == nil ? Typeface.code.weight(.semibold) : Typeface.title)
-                Text(error ?? "Agents drive this browser as @\(label) and you can step in anytime. Every Kuronami browser shares one set of logins.")
+                Text(error ?? "Agents drive this browser as @\(label) and you can step in anytime. Every Tako browser shares one set of logins.")
                     .font(Typeface.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

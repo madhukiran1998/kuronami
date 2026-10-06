@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- macOS icon grid: an 824px tile centred on a 1024px canvas, with a soft drop shadow. -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.28"/>
+    </filter>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F3EFE6"/><stop offset="1" stop-color="#E6E0D3"/>
+    </linearGradient>
+    <clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)" filter="url(#shadow)"/>
+  <g clip-path="url(#sq)">
+    <!-- The 01 "Ink" mark, drawn on the 200-unit construction grid and scaled onto the tile. -->
+    <g transform="translate(64.17 64.17) scale(4.4783)">
+      <circle cx="140" cy="62" r="26" fill="#D94A33"/>
+      <path d="M56 96 A44 44 0 0 1 144 96 L144 128 L56 128 Z" fill="#0B0A0A"/>
+      <g fill="#0B0A0A">
+        <rect x="56" y="112" width="16" height="44" rx="8"/>
+        <rect x="80" y="112" width="16" height="52" rx="8"/>
+        <rect x="104" y="112" width="16" height="52" rx="8"/>
+        <rect x="128" y="112" width="16" height="44" rx="8"/>
+      </g>
+      <g fill="#EDE8DD"><circle cx="84" cy="100" r="8"/><circle cx="116" cy="100" r="8"/></g>
+    </g>
+  </g>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" fill="none" stroke="#000" stroke-opacity="0.06"/>
+</svg>

@@ -40,7 +40,7 @@ struct QuickAskView: View {
                     .fixedSize()
                 Menu {
                     // Recent folders only: an open panel would take focus and close Quick Ask.
-                    if folders.isEmpty { Text("Start an agent in Kuronami first") }
+                    if folders.isEmpty { Text("Start an agent in Tako first") }
                     ForEach(folders, id: \.self) { dir in Button(abbreviateHome(dir)) { savedFolder = dir } }
                 } label: {
                     Label(URL(fileURLWithPath: expandTilde(folder)).lastPathComponent, systemImage: "folder")

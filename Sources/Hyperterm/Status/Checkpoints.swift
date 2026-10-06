@@ -49,7 +49,7 @@ enum Checkpoints {
         if !seeded, head != nil { _ = Git.run(["read-tree", "HEAD"], at: path, environment: environment) }
         guard Git.run(["add", "-A", "--", ":/"] + excluding, at: path, environment: environment) != nil,
               let tree = Git.run(["write-tree"], at: path, environment: environment) else { return nil }
-        var args = ["commit-tree", tree, "-m", message.isEmpty ? "Kuronami checkpoint" : message]
+        var args = ["commit-tree", tree, "-m", message.isEmpty ? "Tako checkpoint" : message]
         if let head { args += ["-p", head] }
         return Git.run(args, at: path, environment: extra.merging(Git.identity) { _, new in new })
     }
@@ -109,7 +109,7 @@ enum Checkpoints {
     static func changedFiles(at path: String, from: String, to: String?) -> [String] {
         if let to { return paths(at: path, from: from, to: to, filter: nil) }
         return withScratchObjects(at: path) { environment in
-            guard let live = snapshot(at: path, message: "Kuronami: compare", environment: environment) else { return [] }
+            guard let live = snapshot(at: path, message: "Tako: compare", environment: environment) else { return [] }
             return paths(at: path, from: from, to: live, filter: nil, environment: environment)
         }
     }
@@ -119,7 +119,7 @@ enum Checkpoints {
         let args = ["-c", "core.quotePath=false", "diff", "--no-renames"] + (ignoreWhitespace ? ["-w"] : [])
         if let to { return Git.run(args + [from, to], at: path, trim: false) ?? "" }
         return withScratchObjects(at: path) { environment in
-            guard let live = snapshot(at: path, message: "Kuronami: compare", environment: environment) else { return "" }
+            guard let live = snapshot(at: path, message: "Tako: compare", environment: environment) else { return "" }
             return Git.run(args + [from, live], at: path, environment: environment, trim: false) ?? ""
         }
     }
@@ -175,7 +175,7 @@ enum Checkpoints {
             var result = Set<String>()
             var live: String?
             for entry in turns(at: path, session: session) where entry.index >= turn {
-                if entry.end == nil, live == nil { live = snapshot(at: path, message: "Kuronami: compare", environment: environment) }
+                if entry.end == nil, live == nil { live = snapshot(at: path, message: "Tako: compare", environment: environment) }
                 guard let end = entry.end ?? live else { continue }
                 result.formUnion(paths(at: path, from: entry.start, to: end, filter: nil, environment: environment))
             }
@@ -249,8 +249,8 @@ enum Git {
 
     /// Snapshots need an author even on machines with no Git identity configured.
     static let identity = [
-        "GIT_AUTHOR_NAME": "Kuronami", "GIT_AUTHOR_EMAIL": "kuronami@localhost",
-        "GIT_COMMITTER_NAME": "Kuronami", "GIT_COMMITTER_EMAIL": "kuronami@localhost",
+        "GIT_AUTHOR_NAME": "Tako", "GIT_AUTHOR_EMAIL": "kuronami@localhost",
+        "GIT_COMMITTER_NAME": "Tako", "GIT_COMMITTER_EMAIL": "kuronami@localhost",
     ]
 
     /// Output (trimmed unless `trim` is false), or nil when Git fails.

@@ -17,12 +17,12 @@ struct ProcessSnapshot: Equatable {
 
 /// Who is on the other end of a control-socket connection, decided from kernel facts only.
 enum CallerIdentity: Sendable, Equatable {
-    /// Traced by process ancestry to a Kuronami session.
+    /// Traced by process ancestry to a Tako session.
     case session(String)
-    /// Started from inside Kuronami (macOS "responsible process" is Kuronami) but no longer
+    /// Started from inside Tako (macOS "responsible process" is Tako) but no longer
     /// under any session: a backgrounded or double-forked child. Untrusted.
     case detachedInside
-    /// A process outside Kuronami, e.g. the user's own terminal app.
+    /// A process outside Tako, e.g. the user's own terminal app.
     case external
     /// The peer is gone or unreadable. Untrusted.
     case unknown
@@ -82,7 +82,7 @@ final class ProcessInspector: @unchecked Sendable {
 
     // MARK: - Caller identity
 
-    /// Fail closed: only ancestry proves a session, and only processes Kuronami did not spawn
+    /// Fail closed: only ancestry proves a session, and only processes Tako did not spawn
     /// count as the user. Callable from any thread; never waits on the polling queue.
     func identify(pid: pid_t) -> CallerIdentity {
         let mine = getpid()
@@ -282,7 +282,7 @@ final class ProcessInspector: @unchecked Sendable {
             let children = Dictionary(grouping: processes, by: \.ppid)
             let byPID = Dictionary(processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
             let fresh = sessionTrees(children: children)[id] ?? []
-            // Double-forked daemons are launchd's children, but macOS still holds Kuronami
+            // Double-forked daemons are launchd's children, but macOS still holds Tako
             // responsible for them and they keep the session's environment.
             let mine = getpid()
             sessionTTYs[id, default: []].formUnion(fresh.map(\.tty).filter { $0 != -1 })
@@ -298,7 +298,7 @@ final class ProcessInspector: @unchecked Sendable {
     }
 
     /// The seeds, recorded processes that are still the same process, and everything below
-    /// them. Never Kuronami or its direct children (terminal roots, Chromium helpers), and
+    /// them. Never Tako or its direct children (terminal roots, Chromium helpers), and
     /// never below them.
     static func selectTree(session: String, seeds: [pid_t], recorded: [TrackedProcess], byPID: [pid_t: ProcessEntry],
                            children: [pid_t: [ProcessEntry]], mine: pid_t) -> [TrackedProcess] {
@@ -315,7 +315,7 @@ final class ProcessInspector: @unchecked Sendable {
     }
 
     /// Processes launchd adopted that still hold one of the session's terminals and that macOS
-    /// still holds Kuronami responsible for.
+    /// still holds Tako responsible for.
     private func ttyOrphans(of session: String, in processes: [ProcessEntry], mine: pid_t) -> [ProcessEntry] {
         guard let ttys = sessionTTYs[session], !ttys.isEmpty else { return [] }
         return processes.filter { $0.ppid == 1 && ttys.contains($0.tty) && responsibleFor?($0.pid) == mine }

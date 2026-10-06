@@ -1,17 +1,17 @@
 <p align="center">
-  <img src="docs/icon.png" width="128" height="128" alt="Kuronami icon: a brush-ink wave with Hokusai claws of foam, before a red sun">
+  <img src="docs/icon.png" width="128" height="128" alt="Tako icon: a black octopus with round eyes before a red sun">
 </p>
 
-<h1 align="center">Kuronami</h1>
+<h1 align="center">Tako</h1>
 
 <p align="center">
   <b>A terminal for running many coding agents at once.</b><br>
-  Kuronami runs Claude Code and Codex side by side in real terminals, and keeps track of them for you:<br>
+  Tako runs Claude Code and Codex side by side in real terminals, and keeps track of them for you:<br>
   which one needs an answer, which one is done, and what each one changed.
 </p>
 
 <p align="center">
-  <a href="https://nikshepsvn.com/kuronami/">Website</a> ·
+  <a href="https://nikshepsvn.com/tako/">Website</a> ·
   <a href="#install">Install</a> ·
   <a href="#why-kuronami">Why</a> ·
   <a href="#how-it-compares">Compare</a> ·
@@ -27,18 +27,18 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/workspace.png" alt="Kuronami: three agents in a grid, one waiting on an approval with Allow and Deny on its card, a finished agent ready for review, a dev server on the shelf, and the inspector open" width="100%">
+  <img src="docs/images/workspace.png" alt="Tako: three agents in a grid, one waiting on an approval with Allow and Deny on its card, a finished agent ready for review, a dev server on the shelf, and the inspector open" width="100%">
 </p>
 
-> **黒波 (kuronami)**: *black wave*. Many agents moving at once, on one dark surface.
+> **蛸 (tako)**: *octopus*. Eight arms, many agents, one calm head. (Formerly Kuronami.)
 
 ---
 
-## Why Kuronami
+## Why Tako
 
 Running five agents in parallel isn't hard. **Keeping track of them is.** The bottleneck moves from typing to *attention*: which agent is stuck on an approval, which one finished with a diff to read, which one is quietly burning your rate limit, and which two are about to edit the same file.
 
-Tabs and tmux panes can't answer those questions. Chat-style agent apps answer some of them by swapping the real CLI for their own UI. Kuronami keeps **the real `claude` and `codex` running in real terminals**, the exact tools you already use with your config, skills and MCP servers, and builds the control room around them.
+Tabs and tmux panes can't answer those questions. Chat-style agent apps answer some of them by swapping the real CLI for their own UI. Tako keeps **the real `claude` and `codex` running in real terminals**, the exact tools you already use with your config, skills and MCP servers, and builds the control room around them.
 
 <table>
 <tr>
@@ -119,9 +119,9 @@ Embedded **Chromium**, right next to the terminal. Each agent gets its own (`@ap
 
 ## How it compares
 
-There are three kinds of tools for running agents in parallel. Kuronami takes the best of each:
+There are three kinds of tools for running agents in parallel. Tako takes the best of each:
 
-| | **Kuronami** | tmux managers<br><sub>Claude Squad, dmux</sub> | Workspace apps<br><sub>Conductor, Emdash, Superset</sub> | Agent terminals<br><sub>cmux</sub> |
+| | **Tako** | tmux managers<br><sub>Claude Squad, dmux</sub> | Workspace apps<br><sub>Conductor, Emdash, Superset</sub> | Agent terminals<br><sub>cmux</sub> |
 |---|:-:|:-:|:-:|:-:|
 | Real agent CLI in a real terminal (your config, skills, MCP) | ✅ | ✅ | ◐ often a chat UI | ✅ |
 | Native app, GPU terminal | ✅ Swift + libghostty | — terminal UI | ◐ mostly Electron | ✅ |
@@ -137,17 +137,17 @@ There are three kinds of tools for running agents in parallel. Kuronami takes th
 
 <sub>✅ yes · ◐ partly, or only some tools in the group · ✗ not offered or not documented. Each tool's own README and site, as of October 2026. Something out of date? Open an issue and we'll fix it.</sub>
 
-**When something else fits better.** On Linux or Windows, or living entirely in tmux over SSH: Claude Squad or Emdash. If you mostly use agents other than Claude Code and Codex (Gemini, Amp, OpenCode), the workspace apps cover more of them today. If you want every agent sealed in a container, look at Sculptor. Kuronami is for the person on a Mac running Claude Code and Codex hard, who wants one fast, native place to steer all of it.
+**When something else fits better.** On Linux or Windows, or living entirely in tmux over SSH: Claude Squad or Emdash. If you mostly use agents other than Claude Code and Codex (Gemini, Amp, OpenCode), the workspace apps cover more of them today. If you want every agent sealed in a container, look at Sculptor. Tako is for the person on a Mac running Claude Code and Codex hard, who wants one fast, native place to steer all of it.
 
 ## Install
 
-Kuronami builds from source (signed releases are coming). You need macOS 15+, Xcode 16+, and Homebrew.
+Tako builds from source (signed releases are coming). You need macOS 15+, Xcode 16+, and Homebrew.
 
 ```sh
 brew install xcodegen zig@0.15
-git clone https://github.com/nikshepsvn/kuronami && cd kuronami
+git clone https://github.com/nikshepsvn/tako && cd tako
 scripts/build-ghosttykit.sh   # once: builds libghostty → GhosttyKit.xcframework
-scripts/install.sh            # optimized build → /Applications/Kuronami.app, then opens it
+scripts/install.sh            # optimized build → /Applications/Tako.app, then opens it
 ```
 
 You also need [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/or [Codex](https://github.com/openai/codex) installed and signed in. Agents' browser tools need Node.js. Nothing in your global config is touched: hooks, MCP servers and the statusLine are attached per launch ([details](#nothing-global-is-modified)).
@@ -157,7 +157,7 @@ You also need [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/
 1. **⇧⌘C** opens Claude in the selected folder, **⇧⌘X** opens Codex. Or type a task into *Ask a new agent…* in the sidebar and press Return: the agent gets a name and its own worktree.
 2. When a card turns amber, it **needs you**. Press **Allow**, or **⌘J** to jump there.
 3. When it says ***Review +n −m***, press **⌥⌘R** to read the diff, comment, commit or merge.
-4. Add `~/.hyperterm/bin` to your `PATH` (Kuronami menu ▸ *Use ht in Your Shell…*) and drive it all from any terminal:
+4. Add `~/.hyperterm/bin` to your `PATH` (Tako menu ▸ *Use ht in Your Shell…*) and drive it all from any terminal:
 
 ```sh
 ht new claude --worktree --task "fix the flaky auth test"
@@ -188,13 +188,13 @@ ht ls
 - **Permissions, model and effort per agent.** *Ask First*, *Accept Edits*, *Plan* or *Full Access*, translated to each CLI's own flags (`--permission-mode` for Claude; approval and sandbox flags for Codex). Pick a model (Claude's `opus`/`sonnet`/`haiku` aliases, or any name) and, for Codex, reasoning effort. Leave them alone and the agent's own config applies.
 - **Plans you approve.** An agent in plan mode shows *Plan ready* on its card with *Approve Plan* and *Keep Planning*; the inspector's Plan tab shows the whole plan.
 - **Fork a conversation.** Right-click a Claude agent → *Fork Conversation* starts a new agent that continues from this point (`--resume --fork-session`); the original carries on unchanged.
-- **Or ask the organizer.** The Kuronami mark in the window's corner (⌃⌘O) opens an organizer agent: tell it what you want started, arranged or watched, and it does it with Kuronami's own tools. It can also answer questions for sessions you hand it, and it remembers past sessions.
+- **Or ask the organizer.** The Tako mark in the window's corner (⌃⌘O) opens an organizer agent: tell it what you want started, arranged or watched, and it does it with Tako's own tools. It can also answer questions for sessions you hand it, and it remembers past sessions.
 - **Reopen closed agents.** Closed agents with a conversation stay under *Recently closed* in the sidebar (and in ⌘P), one click from resuming.
 
 #### Answer approvals from anywhere
-- **Real approvals, not keystrokes.** Kuronami installs Claude's `PermissionRequest` hook (per launch, never in your global settings). The moment an agent asks, its card shows the exact command with **Allow / Always / Deny**. Always saves the rule Claude suggested, and Deny can carry a reason the agent sees. Claude's own dialog still works in the terminal, and whichever answer comes first wins.
+- **Real approvals, not keystrokes.** Tako installs Claude's `PermissionRequest` hook (per launch, never in your global settings). The moment an agent asks, its card shows the exact command with **Allow / Always / Deny**. Always saves the rule Claude suggested, and Deny can carry a reason the agent sees. Claude's own dialog still works in the terminal, and whichever answer comes first wins.
 - **From the notification banner.** Allow or Deny straight from macOS notifications. The menu bar shows the waiting count.
-- **Codex:** approvals from Kuronami work through Codex's `PermissionRequest` hook, attached per launch with the rest of Kuronami's hooks (each passed with its own trust hash, so there's nothing to review in `/hooks`). With hooks turned off in your Codex config, prompts are answered by choosing the numbered option on screen.
+- **Codex:** approvals from Tako work through Codex's `PermissionRequest` hook, attached per launch with the rest of Tako's hooks (each passed with its own trust hash, so there's nothing to review in `/hooks`). With hooks turned off in your Codex config, prompts are answered by choosing the numbered option on screen.
 
 #### Review the work
 - **Ready for review.** When an agent finishes with changes, its card shows *Review +128 −41*. The inspector (⌥⌘R) shows the diff.
@@ -213,7 +213,7 @@ Every agent turn in a Git workspace is checkpointed: a snapshot when the prompt 
 - **Continue after a rate limit.** When an agent stops on a usage limit, its card offers *Continue at 3:40 PM*; at the reset it's told to carry on.
 
 #### Project actions
-The play button in the sidebar footer (and ⌘P) runs your project's commands. Kuronami detects them from `package.json` scripts (with your package manager), `Cargo.toml`, `Package.swift`, `go.mod`, `pyproject.toml` or a `Makefile`, or you list them yourself:
+The play button in the sidebar footer (and ⌘P) runs your project's commands. Tako detects them from `package.json` scripts (with your package manager), `Cargo.toml`, `Package.swift`, `go.mod`, `pyproject.toml` or a `Makefile`, or you list them yourself:
 ```json
 { "actions": [
     { "name": "Test", "command": "pnpm test" },
@@ -233,16 +233,16 @@ Servers open on the shelf on the agent's own `$PORT`; other commands open a shel
 - **Clean up** (Terminal → *Clean Up Worktrees…*) lists agent worktrees with merged/unmerged status and archives the leftovers.
 
 #### Browsers agents can drive
-- **Real Chromium inside Kuronami.** Browsers are sessions like terminals: labeled (`@api-web`), in the sidebar under their agent, tiled in split and grid, and restored where they left off. ⇧⌘B opens one, on the selected terminal's dev server when it has one.
-- **Every agent gets its own.** An agent's first browser action opens `@<agent>-web` next to it, and its tools act on that browser by default, so parallel agents never fight over a page. `list_pages` names every Kuronami browser by label, and an agent can use another one by passing its page id.
+- **Real Chromium inside Tako.** Browsers are sessions like terminals: labeled (`@api-web`), in the sidebar under their agent, tiled in split and grid, and restored where they left off. ⇧⌘B opens one, on the selected terminal's dev server when it has one.
+- **Every agent gets its own.** An agent's first browser action opens `@<agent>-web` next to it, and its tools act on that browser by default, so parallel agents never fight over a page. `list_pages` names every Tako browser by label, and an agent can use another one by passing its page id.
 - **Watch and step in.** The tile shows who is driving (`@api · click`), and you can click, type, and log in yourself at any time.
-- **Your logins, if you want them.** *Import Chrome Logins…* (in a browser's ⋯ menu) copies your Chrome cookies into Kuronami's browser profile, which is kept separate from your own Chrome (`~/.hyperterm/browser`).
-- **Scoped by default.** Agents started in Kuronami use Kuronami's browsers, not your everyday Chrome. App menu → *Let Agents Use My Chrome* re-enables Claude in Chrome for them.
+- **Your logins, if you want them.** *Import Chrome Logins…* (in a browser's ⋯ menu) copies your Chrome cookies into Tako's browser profile, which is kept separate from your own Chrome (`~/.hyperterm/browser`).
+- **Scoped by default.** Agents started in Tako use Tako's browsers, not your everyday Chrome. App menu → *Let Agents Use My Chrome* re-enables Claude in Chrome for them.
 
 Agents drive the browsers through [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) (Node.js required), attached to Chromium's DevTools port on 127.0.0.1. Read-only tools (snapshots, screenshots, console, network) run without asking; navigating, clicking, typing, and scripts ask first.
 
 #### Agents that talk to each other
-Every agent started in Kuronami gets a `hyperterm` MCP server (it keeps its original name so saved permissions keep working):
+Every agent started in Tako gets a `hyperterm` MCP server (it keeps its original name so saved permissions keep working):
 
 | Tool | What it does |
 |---|---|
@@ -269,21 +269,21 @@ The sidebar shows your 5-hour and weekly usage with reset times: Claude's from i
 
 ### Security model
 
-Kuronami types into terminals on your behalf, so who may ask for what matters. The control socket (`~/.hyperterm/control.sock`, user-only) identifies every caller from **kernel facts** (peer PID, process ancestry, and macOS's *responsible process*), never from anything the caller claims:
+Tako types into terminals on your behalf, so who may ask for what matters. The control socket (`~/.hyperterm/control.sock`, user-only) identifies every caller from **kernel facts** (peer PID, process ancestry, and macOS's *responsible process*), never from anything the caller claims:
 
-- **You:** processes outside Kuronami, or inside your own shell/server terminals.
+- **You:** processes outside Tako, or inside your own shell/server terminals.
 - **Agents:** anything traced to an agent terminal. Agents can message other agents, read agents and servers (not shell scrollback), restart servers, start servers with your OK, set their own status, and rename only themselves (never over a name you chose).
-- **Untrusted:** anything that came from inside Kuronami but escaped its session (backgrounded, double-forked, reparented to launchd). Read-only.
+- **Untrusted:** anything that came from inside Tako but escaped its session (backgrounded, double-forked, reparented to launchd). Read-only.
 
 Only you can press keys, answer prompts, type raw text, open shells, or close terminals. That stops one agent from approving another's permission prompt or running commands outside its own checks. Session IDs and tasks typed into shells are validated and shell-quoted, peer messages are stripped of control and escape sequences, and git runs with repo hooks and fsmonitor disabled.
 
-**Browsers.** Agents drive Chromium over its DevTools protocol on `127.0.0.1` only. Scoping each agent to its own browser is a default and a guardrail, not isolation: `chrome-devtools-mcp` sees every Kuronami browser, and while Chromium runs, any process on your Mac can connect to that port. Every Kuronami browser shares one profile (`~/.hyperterm/browser`), so a login in one is a login in all, including logins imported from Chrome. Only sign in where you're happy for your agents to act.
+**Browsers.** Agents drive Chromium over its DevTools protocol on `127.0.0.1` only. Scoping each agent to its own browser is a default and a guardrail, not isolation: `chrome-devtools-mcp` sees every Tako browser, and while Chromium runs, any process on your Mac can connect to that port. Every Tako browser shares one profile (`~/.hyperterm/browser`), so a login in one is a login in all, including logins imported from Chrome. Only sign in where you're happy for your agents to act.
 
-**Limit:** this is a boundary between agents and Kuronami, not an OS sandbox. An agent you allow to drive other apps (for example via `osascript`) could act outside it. Claude's sandbox mode closes that gap.
+**Limit:** this is a boundary between agents and Tako, not an OS sandbox. An agent you allow to drive other apps (for example via `osascript`) could act outside it. Claude's sandbox mode closes that gap.
 
 ### Nothing global is modified
 
-Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.hyperterm/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Claude agents also get `--no-chrome` per launch, so they use Kuronami's browsers rather than your Chrome (App menu → *Let Agents Use My Chrome* drops it). Your Chrome profile is only read when you choose *Import Chrome Logins…*. One opt-in menu item writes config, and asks first: channels (`claude mcp add --scope user hyperterm`). Codex runs with `--no-daemon`, so its hooks and MCP servers stay in the agent's own terminal.
+Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.hyperterm/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Claude agents also get `--no-chrome` per launch, so they use Tako's browsers rather than your Chrome (App menu → *Let Agents Use My Chrome* drops it). Your Chrome profile is only read when you choose *Import Chrome Logins…*. One opt-in menu item writes config, and asks first: channels (`claude mcp add --scope user hyperterm`). Codex runs with `--no-daemon`, so its hooks and MCP servers stay in the agent's own terminal.
 
 ### `ht` CLI
 
@@ -342,14 +342,14 @@ Requires macOS 15+, Xcode 16+, XcodeGen and Zig 0.15.2 (`brew install xcodegen z
 ```sh
 scripts/build-ghosttykit.sh   # once: builds libghostty (Ghostty v1.3.1, ReleaseFast) → GhosttyKit.xcframework
 scripts/run.sh                # build + launch the debug app (first build downloads Chromium, ~130 MB)
-scripts/install.sh            # optimized build → /Applications/Kuronami.app
+scripts/install.sh            # optimized build → /Applications/Tako.app
 xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -derivedDataPath build/DerivedData test
 scripts/linux-check.sh        # anywhere with Swift + Git: parse every file, design lint, pure-logic tests
 ```
 
 The interface is built on one design system, `Sources/Hyperterm/UI/Design.swift`: six text styles, a 4-point spacing grid, three corner radii, sumi-ink neutrals with color from traditional pigments, reserved for meaning, and one motion curve that turns off with Reduce Motion. `scripts/lint-design.sh` fails on raw font sizes, radii or colors anywhere else.
 
-Kuronami was called Hyperterm until October 2026. Internal names keep the old spelling so existing setups carry over: the Xcode project and Swift module, the bundle id, `~/.hyperterm`, the `ht` CLI, and `HT_*` environment variables.
+Tako was called Hyperterm until October 2026. Internal names keep the old spelling so existing setups carry over: the Xcode project and Swift module, the bundle id, `~/.hyperterm`, the `ht` CLI, and `HT_*` environment variables.
 
 Chromium comes from [CefSwift](https://github.com/Rajaniraiyn/CefSwift) (MIT, pinned in `project.yml`). `scripts/embed-cef.sh` runs after each build: it caches the CEF distribution in `~/Library/Caches/Hyperterm/cef` and assembles the framework plus the five helper apps Chromium needs. Agents' browser tools need Node.js (`npx chrome-devtools-mcp`).
 
@@ -372,7 +372,7 @@ Tests/HypertermTests        state machine, layout tree, checkpoints (real Git), 
 
 ### Status
 
-Kuronami is young and moves fast. On macOS 26 with Claude Code 2.1, it builds from source and passes its 103 tests (pure logic, the status state machine, the layout tree, checkpoints against real Git, Codex log parsing, accounts). These paths are verified live:
+Tako is young and moves fast. On macOS 26 with Claude Code 2.1, it builds from source and passes its 103 tests (pure logic, the status state machine, the layout tree, checkpoints against real Git, Codex log parsing, accounts). These paths are verified live:
 - labels and messaging
 - hook status
 - approvals from cards, notifications and `ht` (Allow / Always / Deny with reason)

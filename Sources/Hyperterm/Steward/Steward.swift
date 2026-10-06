@@ -98,7 +98,7 @@ final class Steward: ObservableObject {
     private var trees: [UUID: Set<pid_t>] = [:]
     private var meters: [UUID: CPUMeter] = [:]
     /// CPU of what an agent started (builds, servers, tests), leaving out the CLI itself, its
-    /// shells and Kuronami's helpers: an idle Claude still redraws its screen at a few percent.
+    /// shells and Tako's helpers: an idle Claude still redraws its screen at a few percent.
     private var workMeters: [UUID: CPUMeter] = [:]
     private var lowered: [UUID: Set<pid_t>] = [:]
     private var escalationTracker = EscalationTracker()

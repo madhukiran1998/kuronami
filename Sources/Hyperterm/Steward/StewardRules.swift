@@ -144,7 +144,7 @@ struct EscalationTracker {
 }
 
 extension StewardRules {
-    /// The agent CLI, its shells and Kuronami's own helpers: always there, never the agent's work.
+    /// The agent CLI, its shells and Tako's own helpers: always there, never the agent's work.
     /// `script` is what a node process runs (its argv[1]).
     static func isAgentMachinery(name: String?, path: String?, script: String? = nil) -> Bool {
         guard let name else { return true }

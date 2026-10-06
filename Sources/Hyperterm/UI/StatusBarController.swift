@@ -2,7 +2,7 @@ import AppKit
 import Combine
 
 /// Menu bar item: how many agents are waiting on you, from anywhere on the Mac. The menu lists
-/// every agent with its state; picking one brings Kuronami forward on it.
+/// every agent with its state; picking one brings Tako forward on it.
 @MainActor
 final class StatusBarController: NSObject, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -26,7 +26,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let waiting = store.attentionCount
         let working = store.sessions.filter { $0.state == .working }.count
         let symbol = waiting > 0 ? "exclamationmark.bubble.fill" : working > 0 ? "fish.fill" : "fish"
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Kuronami")
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Tako")
         button.image?.isTemplate = true
         button.imagePosition = .imageLeading
         button.title = waiting > 0 ? " \(waiting)" : ""
@@ -51,7 +51,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             menu.addItem(entry)
         }
         menu.addItem(.separator())
-        let show = NSMenuItem(title: "Open Kuronami", action: #selector(activate), keyEquivalent: "")
+        let show = NSMenuItem(title: "Open Tako", action: #selector(activate), keyEquivalent: "")
         show.target = self
         menu.addItem(show)
     }

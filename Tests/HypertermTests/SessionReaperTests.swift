@@ -27,7 +27,7 @@ final class SessionReaperTests: XCTestCase {
     }
 
     func testTreeNeverIncludesKuronamiOrItsChildren() {
-        // A Chromium helper (500) and another session's root (200) are Kuronami's children.
+        // A Chromium helper (500) and another session's root (200) are Tako's children.
         let table = [entry(mine, parent: 1), entry(200, parent: mine), entry(201, parent: 200),
                      entry(500, parent: mine), entry(501, parent: 500)]
         XCTAssertEqual(select(table, seeds: [mine, 200, 500, 1]), [])

@@ -36,7 +36,7 @@ targets:
         buildPhase: resources
       - path: Resources/AppIcon.icns
         buildPhase: resources
-      # The icon's layers for the organizer's button: swift scripts/make-icon.swift --mark
+      # The icon's layers for the organizer's button: scripts/make-icon.sh
       - path: Resources/Mark
         type: folder
         buildPhase: resources
@@ -61,8 +61,8 @@ targets:
     info:
       path: Sources/Hyperterm/App/Info.plist
       properties:
-        CFBundleName: Kuronami
-        CFBundleDisplayName: Kuronami
+        CFBundleName: Tako
+        CFBundleDisplayName: Tako
         CFBundleIconFile: AppIcon
         CFBundleShortVersionString: "0.2.0"
         CFBundleVersion: "2"
@@ -80,8 +80,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.hyperterm.app
-        # The product is Kuronami; the Swift module keeps its original name.
-        PRODUCT_NAME: Kuronami
+        # The product is Tako; the Swift module keeps its original name.
+        PRODUCT_NAME: Tako
         PRODUCT_MODULE_NAME: Hyperterm
         OTHER_LDFLAGS: "-lc++"
       # The debug build runs next to the installed app, so it keeps its own preferences.
@@ -96,7 +96,7 @@ targets:
           cp -f "$BUILT_PRODUCTS_DIR/ht" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/bin/ht"
           codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/bin/ht"
         basedOnDependencyAnalysis: false
-      - name: Copy Kuronami terminal defaults
+      - name: Copy Tako terminal defaults
         script: |
           # The tracked config files are the source of truth; Resources/ghostty is only refreshed
           # when libghostty is rebuilt, so copy them into the bundle on every build.
@@ -137,7 +137,7 @@ targets:
       - target: Hyperterm
     settings:
       base:
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Kuronami.app/Contents/MacOS/Kuronami"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Tako.app/Contents/MacOS/Tako"
         BUNDLE_LOADER: "$(TEST_HOST)"
         GENERATE_INFOPLIST_FILE: YES
 schemes:

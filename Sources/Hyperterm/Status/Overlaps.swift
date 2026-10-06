@@ -29,7 +29,7 @@ enum Overlaps {
         return Checkpoints.withScratchObjects(at: first) { environment in
             var snapshots: [String: String] = [:]
             for path in workspaces {
-                snapshots[path] = Checkpoints.snapshot(at: path, message: "Kuronami: overlap", environment: environment, excluding: generated)
+                snapshots[path] = Checkpoints.snapshot(at: path, message: "Tako: overlap", environment: environment, excluding: generated)
             }
             var pairs: [Pair] = []
             for (index, a) in workspaces.enumerated() {

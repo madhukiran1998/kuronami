@@ -155,7 +155,7 @@ enum Review {
 
     /// Pushes the branch and opens a PR with `gh`. Returns the PR URL.
     static func openPullRequest(at path: String, base: String?, title: String,
-                                body: String = "Opened from Kuronami.") -> Result<String, ReviewError> {
+                                body: String = "Opened from Tako.") -> Result<String, ReviewError> {
         guard let branch = currentBranch(at: path), branch != "HEAD" else { return .failure(.git("not on a branch")) }
         guard runGit(["-C", path, "push", "-u", "origin", branch]) != nil else { return .failure(.git("git push failed (is there an origin remote?)")) }
         let gh = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].first { FileManager.default.isExecutableFile(atPath: $0) }
@@ -176,7 +176,7 @@ enum Review {
         guard (runGit(["-C", mainRoot, "status", "--porcelain"]) ?? "x").isEmpty else {
             return .failure(.git("the main checkout has uncommitted changes"))
         }
-        guard runGit(["-C", mainRoot, "merge", "--no-ff", "-m", "Merge \(branch) (Kuronami)", branch]) != nil else {
+        guard runGit(["-C", mainRoot, "merge", "--no-ff", "-m", "Merge \(branch) (Tako)", branch]) != nil else {
             _ = runGit(["-C", mainRoot, "merge", "--abort"])
             return .failure(.git("merge conflicts; resolve them in the main checkout"))
         }
@@ -188,7 +188,7 @@ enum Review {
     static func archive(worktree path: String, mainRoot: String) -> Result<String, ReviewError> {
         if !(runGit(["-C", path, "status", "--porcelain"]) ?? "").isEmpty {
             _ = runGit(["-C", path, "add", "-A"])
-            _ = runGit(["-C", path, "-c", "commit.gpgsign=false", "commit", "-m", "Kuronami snapshot before archiving"])
+            _ = runGit(["-C", path, "-c", "commit.gpgsign=false", "commit", "-m", "Tako snapshot before archiving"])
         }
         let branch = currentBranch(at: path) ?? "?"
         // Claude locks its worktrees while a session uses them; a lock whose process is gone is
