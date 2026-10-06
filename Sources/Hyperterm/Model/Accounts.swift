@@ -83,7 +83,7 @@ final class AccountStore: ObservableObject {
         return account
     }
 
-    /// Removes the account from Kuronami. Its folder (and so its sign-in and history) stays on
+    /// Removes the account from Tako. Its folder (and so its sign-in and history) stays on
     /// disk; deleting someone's credentials should never be one click.
     func remove(_ account: AgentAccount) {
         custom.removeAll { $0.id == account.id && $0.kind == account.kind }

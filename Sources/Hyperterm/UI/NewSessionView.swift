@@ -193,10 +193,10 @@ struct NewSessionView: View {
         let label = draft.label.isEmpty ? labelPlaceholder : normalizeLabel(draft.label)
         switch draft.kind {
         case .claude: return "Runs Claude Code as \(label). Other agents can message it by that name."
-        case .codex: return "Runs Codex as \(label). Agents reach it through Kuronami's tools."
+        case .codex: return "Runs Codex as \(label). Agents reach it through Tako's tools."
         case .server: return "Runs the command as \(label). Its ports show in the sidebar; agents can read its logs and restart it."
         case .shell: return "A login shell named \(label)."
-        case .browser: return "A Chromium browser named \(label) that agents can drive. It shares logins with your other Kuronami browsers."
+        case .browser: return "A Chromium browser named \(label) that agents can drive. It shares logins with your other Tako browsers."
         }
     }
 

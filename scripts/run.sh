@@ -10,9 +10,9 @@ if [ ! -f Signing.local.xcconfig ] && [ -f "$MAIN/Signing.local.xcconfig" ]; the
 fi
 xcodegen generate >/dev/null
 xcodebuild -project Hyperterm.xcodeproj -scheme Hyperterm -configuration "${CONFIG:-Debug}" \
-  -derivedDataPath build/DerivedData build 2>&1 | grep -E "error:|warning: .*(Hyperterm|Kuronami)|BUILD (SUCCEEDED|FAILED)" | sort -u
-APP="$PWD/build/DerivedData/Build/Products/${CONFIG:-Debug}/Kuronami.app"
-PID=$(pgrep -f "$APP/Contents/MacOS/Kuronami" || true)
+  -derivedDataPath build/DerivedData build 2>&1 | grep -E "error:|warning: .*(Hyperterm|Tako)|BUILD (SUCCEEDED|FAILED)" | sort -u
+APP="$PWD/build/DerivedData/Build/Products/${CONFIG:-Debug}/Tako.app"
+PID=$(pgrep -f "$APP/Contents/MacOS/Tako" || true)
 if [ -n "$PID" ]; then kill "$PID"; sleep 1.5; fi
 # Debug runs beside the installed app with its own data (~/.hyperterm-dev), so iterating here
 # never restarts your real sessions.

@@ -39,7 +39,7 @@ enum CommitWriter {
         let title = lines.first.map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: "# ")) } ?? ""
         guard !title.isEmpty else { return nil }
         let body = lines.count > 1 ? String(lines[1]).trimmingCharacters(in: .whitespacesAndNewlines) : ""
-        return PullRequest(title: String(title.prefix(120)), body: body.isEmpty ? "Opened from Kuronami." : body)
+        return PullRequest(title: String(title.prefix(120)), body: body.isEmpty ? "Opened from Tako." : body)
     }
 
     private static func recentLog(at path: String) -> String {
@@ -57,7 +57,7 @@ enum CommitWriter {
     }
 
     /// Runs the first available CLI through a login shell so the user's PATH applies, with
-    /// Kuronami's own wrappers taken off PATH so no hooks or MCP servers attach.
+    /// Tako's own wrappers taken off PATH so no hooks or MCP servers attach.
     private static func run(prompt: String, input: String, at path: String) -> String? {
         let strip = #"PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v '/.hyperterm/bin$' | paste -sd: -); export PATH;"#
         let quotedPrompt = "'" + prompt.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -78,7 +78,7 @@ enum CommitWriter {
         process.arguments = ["-lic", script]
         process.currentDirectoryURL = URL(fileURLWithPath: path)
         var environment = ProcessInfo.processInfo.environment
-        // Never inherit a session's identity: this isn't a Kuronami terminal.
+        // Never inherit a session's identity: this isn't a Tako terminal.
         for key in ["HT_SESSION_ID", "HT_LABEL", "HT_SOCKET", "HT_CHANNELS"] { environment[key] = nil }
         process.environment = environment
         let stdin = Pipe(), stdout = Pipe()

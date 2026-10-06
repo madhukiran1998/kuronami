@@ -43,7 +43,7 @@ extension SessionStore {
         }
     }
 
-    /// Parses and logs a hook payload, minus tool output Kuronami doesn't use. Runs on `parseQueue`.
+    /// Parses and logs a hook payload, minus tool output Tako doesn't use. Runs on `parseQueue`.
     nonisolated private static func parseHook(source: String, sessionID: String, payload: Data) -> [String: Any] {
         guard var json = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any] else {
             HookLog.append(source: source, sessionID: sessionID, payload: String(decoding: payload, as: UTF8.self))

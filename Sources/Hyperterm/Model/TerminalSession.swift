@@ -95,7 +95,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     private var shellAtPrompt = false
     private var inputGeneration = 0
     /// A label Claude Code itself should adopt via /rename at its next idle prompt, so its
-    /// native SendMessage name matches the Kuronami label.
+    /// native SendMessage name matches the Tako label.
     private var pendingNativeRename: String?
     weak var store: SessionStore?
 
@@ -419,7 +419,7 @@ final class TerminalSession: ObservableObject, Identifiable {
             return .failure(.noPromptOnScreen(label))
         }
         keys.forEach { _ = surface.pressKey(named: $0) }
-        record(.approval, answer == .deny ? "Denied in Kuronami" : "Approved in Kuronami")
+        record(.approval, answer == .deny ? "Denied in Tako" : "Approved in Tako")
         apply(.userSubmitted, source: "approval", force: answer == .deny ? .idle : .working)
         return .success(answer == .deny ? "denied" : "approved")
     }
@@ -545,13 +545,13 @@ final class TerminalSession: ObservableObject, Identifiable {
             guard let self, self.atRest, !self.dialogOnScreen,
                   self.inputIsEmpty, !self.pendingMessages.isEmpty else { return }
             let message = self.pendingMessages.removeFirst()
-            // Kuronami's own slash commands start no turn, so they mustn't hold the queue.
+            // Tako's own slash commands start no turn, so they mustn't hold the queue.
             self.type(message, submit: true, countsAsWork: !message.hasPrefix("/remote-control"))
             if !self.pendingMessages.isEmpty { self.flushPendingMessages() }
         }
     }
 
-    /// The last prompt Kuronami typed, used to title Codex checkpoints.
+    /// The last prompt Tako typed, used to title Codex checkpoints.
     private var lastPrompt: String?
 
     /// Between a message's paste and its Return.
@@ -651,7 +651,7 @@ extension TerminalSession: TerminalSurfaceEvents {
 
     func surfaceUserSubmitted() {
         userDraftInProgress = false
-        // Typed by the user, so the last prompt Kuronami sent doesn't describe this turn.
+        // Typed by the user, so the last prompt Tako sent doesn't describe this turn.
         lastPrompt = nil
         apply(.userSubmitted, source: "keyboard")
     }

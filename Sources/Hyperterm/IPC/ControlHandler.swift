@@ -3,10 +3,10 @@ import AppKit
 /// Maps control requests to store operations and enforces who may do what.
 ///
 /// The caller comes from the kernel (`CallerIdentity`), never from the request. Fail closed:
-/// - The user is a process outside Kuronami, or one traced to a shell/server terminal.
+/// - The user is a process outside Tako, or one traced to a shell/server terminal.
 /// - Agents (traced to an agent terminal) may message other agents, read agents and servers,
 ///   restart servers, start servers with the user's OK, and rename only themselves.
-/// - Anything else from inside Kuronami (detached, unknown) gets read-only access.
+/// - Anything else from inside Tako (detached, unknown) gets read-only access.
 /// Only the user may press keys, answer prompts, close terminals, or type raw text: those would
 /// let one agent answer another's permission prompts or run commands outside its own checks.
 /// The organizer (the agent behind the sidebar's box) also starts agents in any folder, arranges
@@ -240,7 +240,7 @@ struct ControlHandler {
             reply(.failure("a server needs a command"))
             return
         }
-        // An agent CLI run as a server gets none of Kuronami's hooks: no state, no messages, no sleep.
+        // An agent CLI run as a server gets none of Tako's hooks: no state, no messages, no sleep.
         let program = (command.split(separator: " ").first.map(String.init) ?? "") as NSString
         if SessionKind.agentAdapters.contains(where: { $0.command == program.lastPathComponent }) {
             reply(.failure("that's an agent, not a server: resume a conversation with reopen_session (conversation, folder), or start one with start_agent"))
@@ -298,7 +298,7 @@ struct ControlHandler {
                 spec.account = parent.spec.account
                 spec.options = parent.spec.options
             }
-            let brief = task + "\n\n(Delegated by @\(parent.label) through Kuronami. When you finish, use send_message to tell @\(parent.label) what you did and where.)"
+            let brief = task + "\n\n(Delegated by @\(parent.label) through Tako. When you finish, use send_message to tell @\(parent.label) what you did and where.)"
             Task { @MainActor [spec] in
                 let child = await store.launch(spec, select: false, worktree: worktree, task: brief)
                 child.record(.note, "Started by @\(parent.label)")
@@ -420,7 +420,7 @@ struct ControlHandler {
         }
     }
 
-    /// A Claude or Codex conversation Kuronami never ran (say from the CLI on its own), resumed as
+    /// A Claude or Codex conversation Tako never ran (say from the CLI on its own), resumed as
     /// a proper agent: hooks, state, sleep and messages all work, unlike a bare process.
     private func resumeConversation(_ request: ControlRequest) -> ControlResponse {
         guard let kind = SessionKind(rawValue: request.kind ?? "claude"), kind.isAgent else {
@@ -566,7 +566,7 @@ struct ControlHandler {
             }
             let note = String(sanitizeMessage(request.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
             let waiting = store.delegate(target, scope: scope, note: note.isEmpty ? nil : note)
-            var text = "handling @\(target.label)'s waits \(target.delegation?.scopePhrase ?? ""). Kuronami messages you when it waits; "
+            var text = "handling @\(target.label)'s waits \(target.delegation?.scopePhrase ?? ""). Tako messages you when it waits; "
                 + "the user is notified if you don't answer within \(Int(Delegation.fallback)) s."
             if let waiting { text += " It is waiting now: \(waiting). read_terminal it, then answer." }
             return .success(text: text)
@@ -683,7 +683,7 @@ struct ControlHandler {
             guard target.kind.isAgent else {
                 return .failure("@\(target.label) is a \(target.kind.displayName.lowercased()); agents can read it or restart it, not type into it")
             }
-            let framed = agentMessagePrefix + "\(sender.label) (\(sender.kind.displayName), via Kuronami): \(singleLine(text))"
+            let framed = agentMessagePrefix + "\(sender.label) (\(sender.kind.displayName), via Tako): \(singleLine(text))"
             return .success(text: target.deliver(framed, from: sender.label))
         }
         guard isUser else { return .failure("not allowed from a detached process") }
@@ -753,7 +753,7 @@ struct ControlHandler {
 
     // MARK: - Approvals
 
-    /// PermissionRequest hook: hold the hook open until the user decides in Kuronami, the agent
+    /// PermissionRequest hook: hold the hook open until the user decides in Tako, the agent
     /// moves on (answered in its own terminal), or the hook times out.
     private func handlePermission(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
         guard let agent = callerAgent else {
@@ -783,7 +783,7 @@ func sanitizeMessage(_ text: String) -> String {
     return String(String.UnicodeScalarView(scalars)).prefix(8000).description
 }
 
-/// How Kuronami starts a message it types into an agent on another agent's behalf.
+/// How Tako starts a message it types into an agent on another agent's behalf.
 let agentMessagePrefix = "Message from @"
 
 func isAgentMessage(_ prompt: String) -> Bool {

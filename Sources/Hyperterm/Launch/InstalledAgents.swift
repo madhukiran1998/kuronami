@@ -1,7 +1,7 @@
 import Foundation
 
 /// Which agent CLIs are on the PATH agents launch with: the user's login shell's, without
-/// Kuronami's own bin folder, whose wrappers always exist.
+/// Tako's own bin folder, whose wrappers always exist.
 @MainActor
 final class InstalledAgents: ObservableObject {
     static let shared = InstalledAgents()

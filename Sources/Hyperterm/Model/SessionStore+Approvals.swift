@@ -88,7 +88,7 @@ extension SessionStore {
                 decision["updatedPermissions"] = suggestions
             }
         case .deny:
-            decision = ["behavior": "deny", "message": reason.map(sanitizeMessage) ?? "The user denied this in Kuronami."]
+            decision = ["behavior": "deny", "message": reason.map(sanitizeMessage) ?? "The user denied this in Tako."]
         }
         let output: [String: Any] = ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": decision]]
         let data = (try? JSONSerialization.data(withJSONObject: output)) ?? Data()

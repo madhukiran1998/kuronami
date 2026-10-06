@@ -544,7 +544,7 @@ struct Hairline: View {
     var body: some View { Rectangle().fill(Tone.hairline).frame(height: Size.hairline) }
 }
 
-/// Kuronami's mark: the app icon itself (a brush-ink wave before a red sun), so the two always match.
+/// Tako's mark: the app icon itself (an ink octopus before a red sun), so the two always match.
 struct WaveMark: View {
     var body: some View {
         // Read from the bundle: NSApp.applicationIconImage can be a stale copy cached by macOS.
@@ -709,6 +709,6 @@ struct WindowDragArea: NSViewRepresentable {
 // MARK: - Organizer
 
 extension Size {
-    /// The organizer CLI's badge in the corner of the Kuronami mark.
+    /// The organizer CLI's badge in the corner of the Tako mark.
     static let markBadge: CGFloat = 14
 }

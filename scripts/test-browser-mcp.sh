@@ -1,6 +1,6 @@
 #!/bin/sh
 # Checks that `ht browser-mcp` starts chrome-devtools-mcp only on the first tool call, once for
-# concurrent calls, again after it exits, and fails cleanly without npx. Kuronami is replaced by a
+# concurrent calls, again after it exits, and fails cleanly without npx. Tako is replaced by a
 # fake control socket; no browser runs, so tool calls end in chrome-devtools-mcp's own error.
 # usage: scripts/test-browser-mcp.sh [path/to/ht]
 set -e
@@ -59,7 +59,7 @@ const snapshot = { name: "take_snapshot", arguments: {} };
     clientInfo: { name: "test", version: "1" } }), 5000, "initialize");
   assert.equal(init.result.protocolVersion, "2025-06-18");
   assert.equal(init.result.serverInfo.name, "chrome_devtools");
-  assert.match(init.result.instructions, /Kuronami/);
+  assert.match(init.result.instructions, /Tako/);
   notify("notifications/initialized");
   const list = await timeout(call(2, "tools/list", {}), 5000, "tools/list");
   const tools = list.result.tools;

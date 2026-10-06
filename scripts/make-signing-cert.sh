@@ -1,6 +1,7 @@
 #!/bin/sh
-# Creates a self-signed code-signing certificate ("Kuronami Local Signing") in your login
-# keychain, once, and points builds at it. Signed with one identity, Kuronami keeps the folder
+# Creates a self-signed code-signing certificate ("Kuronami Local Signing", the app's former name,
+# kept so existing builds keep their identity) in your login
+# keychain, once, and points builds at it. Signed with one identity, Tako keeps the folder
 # access you allow (Desktop, Documents, …) across rebuilds and reinstalls.
 set -eu
 cd "$(dirname "$0")/.."

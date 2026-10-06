@@ -526,7 +526,7 @@ private struct ChangesView: View {
             alert.addButton(withTitle: "Cancel")
             alert.window.initialFirstResponder = field
             guard alert.runModal() == .alertFirstButtonReturn else { result = nil; return }
-            let finalTitle = field.stringValue, body = request?.body ?? "Opened from Kuronami."
+            let finalTitle = field.stringValue, body = request?.body ?? "Opened from Tako."
             run { Review.openPullRequest(at: directory, base: base, title: finalTitle, body: body).map { "Opened \($0)" } }
         }
     }

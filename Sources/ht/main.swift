@@ -1,6 +1,6 @@
 import Foundation
 
-// ht: command-line control for Kuronami. Also the hook entry point for agents and the
+// ht: command-line control for Tako. Also the hook entry point for agents and the
 // stdio MCP server that lets agents talk to each other by @label.
 
 let usage = """
@@ -19,7 +19,7 @@ usage: ht <command>
   restart @label                   restart a terminal's process
   rename @label <new-label>
   close @label
-  whoami                           this terminal's label (inside Kuronami)
+  whoami                           this terminal's label (inside Tako)
   mcp                              run the MCP server (used by agents)
   browser                          open the embedded browser; prints its DevTools endpoint
   browser-mcp [port]               run the browser MCP server (used by agents)
@@ -162,7 +162,7 @@ case "rename":
     print(requireOK(request(.rename) { $0.target = args[0]; $0.label = args[1] }).text ?? "renamed")
 
 case "whoami":
-    guard let label = env["HT_LABEL"] else { fail("not running inside Kuronami") }
+    guard let label = env["HT_LABEL"] else { fail("not running inside Tako") }
     print("@" + label)
 
 case "hook":
@@ -185,7 +185,7 @@ case "hook":
     exit(0)
 
 case "permission":
-    // PermissionRequest hook: wait for the user's decision in Kuronami and print it. Printing
+    // PermissionRequest hook: wait for the user's decision in Tako and print it. Printing
     // nothing leaves the CLI's own prompt in charge. Never fail the agent.
     let source = args.first ?? "claude"
     let payload = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
@@ -198,7 +198,7 @@ case "permission":
     exit(0)
 
 case "statusline":
-    // Claude statusLine: report telemetry to Kuronami, then print the user's own statusline.
+    // Claude statusLine: report telemetry to Tako, then print the user's own statusline.
     let input = FileHandle.standardInput.readDataToEndOfFile()
     if let callerSession, statusLineDue(session: callerSession) {
         var req = ControlRequest(cmd: .statusline)
@@ -234,7 +234,7 @@ default:
     fail("ht: unknown command '\(command)'\n\n\(usage)")
 }
 
-/// Claude reruns the statusline up to a few times a second; Kuronami needs one report every 2 s.
+/// Claude reruns the statusline up to a few times a second; Tako needs one report every 2 s.
 /// The last report's time is a file's mtime in a per-user temp dir.
 func statusLineDue(session: String) -> Bool {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ht-statusline")

@@ -123,7 +123,7 @@ struct LaunchSpec: Codable, Identifiable, Equatable {
     var agentSessionId: String?
     /// Last known one-line summary, so rows aren't blank after a restart.
     var summary: String?
-    /// Set when Kuronami created a dedicated worktree for this session.
+    /// Set when Tako created a dedicated worktree for this session.
     var worktreeBranch: String?
     /// Claude's native worktree name (`claude --worktree <name>`); the worktree lives at
     /// `<repo>/.claude/worktrees/<name>` while `cwd` stays the repo root.

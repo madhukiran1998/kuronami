@@ -6,7 +6,7 @@ import Foundation
 extension SessionStore {
     var organizer: TerminalSession? { sessions.first(where: \.isOrganizer) }
 
-    /// Its own Kuronami tools run without a permission prompt; the app still checks each call,
+    /// Its own Tako tools run without a permission prompt; the app still checks each call,
     /// and closing a terminal still asks.
     static let organizerTools = ["list_terminals", "read_terminal", "send_message", "start_agent", "arrange_view",
                                  "close_terminal", "save_layout", "restore_layout", "watch_terminal",
@@ -372,7 +372,7 @@ struct OrganizerDigest {
     }
 
     static func message(_ events: [OrganizerEvent], cleared: Bool = false) -> String {
-        var text = "Kuronami: "
+        var text = "Tako: "
         if cleared { text += "Context was cleared. Read \(ControlPaths.organizerNotes) if you need earlier context. " }
         if events.count == 1 {
             text += events[0].line

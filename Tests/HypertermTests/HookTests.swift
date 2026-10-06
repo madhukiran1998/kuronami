@@ -1,7 +1,7 @@
 import XCTest
 @testable import Hyperterm
 
-/// Claude hooks posted to Kuronami's loopback listener. Nothing here writes to disk.
+/// Claude hooks posted to Tako's loopback listener. Nothing here writes to disk.
 @MainActor
 final class HookTests: XCTestCase {
     private func hooks(port: UInt16?) throws -> [String: [[String: Any]]] {
@@ -51,7 +51,7 @@ final class HookTests: XCTestCase {
     func testAgentMessageTurnsTakeNoCheckpoint() {
         let session = TerminalSession(spec: LaunchSpec(label: "api", kind: .claude, cwd: "/workspace/atlas"), resume: false)
         let store = SessionStore(previewSessions: [session], previewLayout: .focus)
-        let message = "\(agentMessagePrefix)web (Claude Code, via Kuronami): the endpoint is ready"
+        let message = "\(agentMessagePrefix)web (Claude Code, via Tako): the endpoint is ready"
         XCTAssertTrue(isAgentMessage(message))
         XCTAssertFalse(isAgentMessage("Fix the Message from @web bug"))
 

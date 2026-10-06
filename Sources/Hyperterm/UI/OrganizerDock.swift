@@ -81,7 +81,7 @@ final class OrganizerDock {
             chooser.bottomAnchor.constraint(equalTo: frame.bottomAnchor),
         ])
         panel.contentView = frame
-        // Clicking anywhere else in Kuronami folds it away, like a popover. Only a click: the
+        // Clicking anywhere else in Tako folds it away, like a popover. Only a click: the
         // organizer's own work (a confirm sheet, a popped-out tile, an app it opens) also takes
         // focus from the panel, and must not fold it.
         NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
@@ -215,7 +215,7 @@ extension TerminalSession {
 
 // MARK: - Views
 
-/// The round button: the Kuronami mark, moving with what the organizer is doing.
+/// The round button: the Tako mark, moving with what the organizer is doing.
 private struct OrganizerButton: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var dock: OrganizerDock.State

@@ -1,7 +1,7 @@
 import XCTest
 @testable import Hyperterm
 
-/// Codex 0.160 against what Kuronami expects of it. Payloads, screens and log lines below were
+/// Codex 0.160 against what Tako expects of it. Payloads, screens and log lines below were
 /// captured from a real `codex` 0.160.1 (run against a stand-in model server).
 @MainActor
 final class CodexParityTests: XCTestCase {
@@ -12,7 +12,7 @@ final class CodexParityTests: XCTestCase {
         // -c 'hooks.Stop=[{hooks=[{type="command",command="/x/ht hook codex"}]}]' (timeout defaults to 600).
         XCTAssertEqual(CodexAdapter.hookHash(event: "stop", command: "/x/ht hook codex", timeout: 600),
                        "sha256:18d58b48f8dadaaf0bdc0383269f6a7002e519a836c06baa95ef864bf553da2b")
-        // And for two of Kuronami's own, exactly as the wrapper passes them.
+        // And for two of Tako's own, exactly as the wrapper passes them.
         let overrides = CodexAdapter.hookOverrides(ht: "/Users/me/.hyperterm/bin/ht")
         XCTAssertTrue(overrides.last?.contains(#""/<session-flags>/config.toml:permission_request:0:0"={trusted_hash="sha256:3ab01255868a1f1eb7f19809798b7187b306c2c189a41da568d4a3194c2f817a"}"#) == true)
         XCTAssertTrue(overrides.last?.contains(#""/<session-flags>/config.toml:interrupt:0:0"={trusted_hash="sha256:e7a08cca87be4cce9323b4ef583bcce78821f49cd4f3f3f90ccd0f9a416d8e72"}"#) == true)
