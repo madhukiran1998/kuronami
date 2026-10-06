@@ -7,14 +7,19 @@ import Foundation
 struct WorkAtRisk: Equatable {
     var uncommitted: Int
     var unmerged: Int
+    /// No base branch to compare with (it was deleted, and there's no main or master) and HEAD
+    /// has commits no other branch or remote has, so
+    /// `unmerged` is 0 only because nothing could be counted. Never treat that as safe.
+    var baseUnknown = false
 
-    var isEmpty: Bool { uncommitted == 0 && unmerged == 0 }
+    var isEmpty: Bool { uncommitted == 0 && unmerged == 0 && !baseUnknown }
 
     /// "3 files aren't committed", "1 commit isn't in main yet", or both joined.
     func headline(base: String?) -> String {
         var parts: [String] = []
         if uncommitted > 0 { parts.append("\(uncommitted) file\(uncommitted == 1 ? " isn't" : "s aren't") committed") }
         if unmerged > 0 { parts.append("\(unmerged) commit\(unmerged == 1 ? " isn't" : "s aren't") in \(base ?? "the base branch") yet") }
+        if baseUnknown { parts.append("its commits couldn't be compared with \(base.map { "\($0), which is gone" } ?? "a base branch")") }
         let text = parts.joined(separator: " and ")
         return text.prefix(1).uppercased() + text.dropFirst()
     }
@@ -24,7 +29,17 @@ struct WorkAtRisk: Equatable {
         guard FileManager.default.fileExists(atPath: path),
               let status = runGit(["-C", path, "status", "--porcelain"]) else { return nil }
         let uncommitted = status.split(separator: "\n").count
-        return WorkAtRisk(uncommitted: uncommitted, unmerged: unmergedCommits(at: path, base: base))
+        return WorkAtRisk(uncommitted: uncommitted, unmerged: unmergedCommits(at: path, base: base),
+                          baseUnknown: resolvedBase(at: path, base) == nil && !headIsElsewhere(at: path))
+    }
+
+    /// Whether another branch or a remote already has every commit on HEAD, so removing this
+    /// worktree's branch loses nothing even without a base to compare with.
+    private static func headIsElsewhere(at path: String) -> Bool {
+        guard let refs = runGit(["-C", path, "for-each-ref", "--contains", "HEAD", "--format=%(refname)",
+                                 "refs/heads", "refs/remotes"]) else { return false }
+        let own = runGit(["-C", path, "symbolic-ref", "-q", "HEAD"])
+        return refs.split(separator: "\n").contains { String($0) != own }
     }
 
     /// Commits on HEAD that the base doesn't have. `git cherry` skips ones the base has under

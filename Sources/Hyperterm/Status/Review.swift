@@ -13,7 +13,7 @@ enum Review {
     /// The commit the agent's work is measured against: the merge-base with its base branch for
     /// worktrees, otherwise HEAD (uncommitted changes only).
     static func baseCommit(at path: String, base: String?) -> String? {
-        if let base, let mergeBase = runGit(["-C", path, "merge-base", "HEAD", base]), !mergeBase.isEmpty { return mergeBase }
+        if let base, base != "HEAD", let mergeBase = runGit(["-C", path, "merge-base", "HEAD", base]), !mergeBase.isEmpty { return mergeBase }
         return runGit(["-C", path, "rev-parse", "HEAD"])
     }
 
@@ -76,7 +76,9 @@ enum Review {
             let size = (try? FileManager.default.attributesOfItem(atPath: full))?[.size] as? Int ?? 0
             let content = size > 1_000_000 ? "(file too large to show)"
                 : (try? String(contentsOfFile: full, encoding: .utf8)) ?? "(binary or unreadable file)"
-            let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map { "+" + $0 }
+            // A final newline ends the last line; it doesn't start another (as `lineCount` counts).
+            var lines = content.split(separator: "\n", omittingEmptySubsequences: false).map { "+" + $0 }
+            if content.isEmpty || content.hasSuffix("\n") { lines.removeLast() }
             result.append(FileDiff(path: file, added: lines.count, removed: 0, patch: "new file\n@@ -0,0 +1,\(lines.count) @@\n" + lines.joined(separator: "\n")))
         }
         return result
@@ -86,13 +88,37 @@ enum Review {
     static func files(fromPatch patch: String) -> [FileDiff] {
         splitPatch(patch).map { path, text in
             var added = 0, removed = 0
-            for line in text.split(separator: "\n") {
-                if line.hasPrefix("+") && !line.hasPrefix("+++") { added += 1 }
-                else if line.hasPrefix("-") && !line.hasPrefix("---") { removed += 1 }
+            // Lines still to come in the current hunk: inside one, a removed "---" or an added
+            // "+++" is content, not a file header.
+            var oldLeft = 0, newLeft = 0
+            // Empty lines are kept: with `diff.suppressBlankEmpty` a blank context line is "".
+            for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                // No content line starts with "@@", so a hunk header always starts a new hunk.
+                if line.hasPrefix("@@"), let lengths = hunkLengths(line) {
+                    oldLeft = lengths.old
+                    newLeft = lengths.new
+                } else if oldLeft > 0 || newLeft > 0 {
+                    if line.hasPrefix("+") { added += 1; newLeft -= 1 }
+                    else if line.hasPrefix("-") { removed += 1; oldLeft -= 1 }
+                    else if !line.hasPrefix("\\") { oldLeft -= 1; newLeft -= 1 }
+                }
             }
             return FileDiff(path: path, added: added, removed: removed, patch: text)
         }
         .sorted { $0.path < $1.path }
+    }
+
+    /// "@@ -a,b +c,d @@" → (b, d), the old and new lines the hunk spans (a missing count is 1).
+    static func hunkLengths(_ header: Substring) -> (old: Int, new: Int)? {
+        let fields = header.split(separator: " ")
+        guard fields.count >= 3, fields[0] == "@@", fields[1].hasPrefix("-"), fields[2].hasPrefix("+") else { return nil }
+        func length(_ field: Substring) -> Int? {
+            let parts = field.dropFirst().split(separator: ",", omittingEmptySubsequences: false)
+            guard let start = parts.first, Int(start) != nil else { return nil }
+            return parts.count > 1 ? Int(parts[1]) : 1
+        }
+        guard let old = length(fields[1]), let new = length(fields[2]) else { return nil }
+        return (old, new)
     }
 
     /// The whole diff as text, for writing commit messages and PR descriptions.
@@ -147,7 +173,7 @@ enum Review {
     /// Commits everything in the workspace. Returns the short hash.
     static func commit(at path: String, message: String) -> Result<String, ReviewError> {
         guard runGit(["-C", path, "add", "-A"]) != nil else { return .failure(.git("git add failed")) }
-        guard runGit(["-C", path, "-c", "commit.gpgsign=false", "commit", "-m", message]) != nil else {
+        guard commitStaged(at: path, message: message) else {
             return .failure(.git("nothing to commit, or git commit failed"))
         }
         return .success(runGit(["-C", path, "rev-parse", "--short", "HEAD"]) ?? "")
@@ -169,9 +195,18 @@ enum Review {
         return .success(String(line))
     }
 
+    /// Commits what's staged as the user, or, when Git has no identity for them, as Tako (the
+    /// identity checkpoints use), so a machine without user.email can still commit.
+    private static func commitStaged(at path: String, message: String) -> Bool {
+        Git.run(["commit", "-m", message], at: path) != nil
+            || Git.run(["commit", "-m", message], at: path, environment: Git.identity) != nil
+    }
+
     /// Merges the agent's branch into its base in the main checkout. Refuses when the main
     /// checkout is on another branch or has uncommitted work.
     static func merge(branch: String, into base: String, mainRoot: String) -> Result<String, ReviewError> {
+        // A detached HEAD isn't a branch: "merging into HEAD" would land on whatever is checked out.
+        guard base != "HEAD" else { return .failure(.git("there's no base branch to merge into")) }
         guard currentBranch(at: mainRoot) == base else { return .failure(.git("the main checkout isn't on \(base)")) }
         guard (runGit(["-C", mainRoot, "status", "--porcelain"]) ?? "x").isEmpty else {
             return .failure(.git("the main checkout has uncommitted changes"))
@@ -187,8 +222,11 @@ enum Review {
     /// branch stays, so nothing is lost. Git's own check stays on: no `--force`.
     static func archive(worktree path: String, mainRoot: String) -> Result<String, ReviewError> {
         if !(runGit(["-C", path, "status", "--porcelain"]) ?? "").isEmpty {
-            _ = runGit(["-C", path, "add", "-A"])
-            _ = runGit(["-C", path, "-c", "commit.gpgsign=false", "commit", "-m", "Tako snapshot before archiving"])
+            // A failed snapshot stops here with the reason, instead of a vague "worktree remove failed".
+            guard runGit(["-C", path, "add", "-A"]) != nil,
+                  commitStaged(at: path, message: "Tako snapshot before archiving") else {
+                return .failure(.git("couldn't commit the leftover work, so the worktree was kept"))
+            }
         }
         let branch = currentBranch(at: path) ?? "?"
         // Claude locks its worktrees while a session uses them; a lock whose process is gone is

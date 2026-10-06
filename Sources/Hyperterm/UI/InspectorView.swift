@@ -129,6 +129,8 @@ struct ReviewComment: Identifiable, Equatable {
     let line: Int
     let code: String
     var text: String
+    /// Set when made on an earlier turn's diff: `line` is where the code was as that turn ended.
+    var turn: Int? = nil
 }
 
 /// Which changes the panel shows.
@@ -479,12 +481,19 @@ private struct ChangesView: View {
     private func addComment(file: Review.FileDiff, line: PatchLine) {
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let number = line.newNumber else { return }
-        comments.append(ReviewComment(path: file.path, line: number, code: line.text, text: text))
+        // An earlier turn's diff numbers lines as that turn left them; later turns may have moved them.
+        var pastTurn: Int?
+        if case .turn(let index) = scope, index != session.turns.last?.index { pastTurn = index }
+        comments.append(ReviewComment(path: file.path, line: number, code: line.text, text: text, turn: pastTurn))
         draftLine = nil
     }
 
     private func sendComments() {
-        let body = comments.map { "\($0.path):\($0.line) — \($0.text) (on: \($0.code.trimmingCharacters(in: .whitespaces).prefix(80)))" }
+        let body = comments.map { comment -> String in
+            let place = comment.turn.map { "\(comment.path):\(comment.line) (line as of turn \($0); find it by the code)" }
+                ?? "\(comment.path):\(comment.line)"
+            return "\(place) — \(comment.text) (on: \(comment.code.trimmingCharacters(in: .whitespaces).prefix(80)))"
+        }
         let message = "Review comments on your changes:\n" + body.map { "- " + $0 }.joined(separator: "\n") + "\nPlease address them."
         result = session.send(message, now: false) == "queued" ? "Queued for when \(session.label) finishes this turn" : "Sent to \(session.label)"
         session.record(.message, "Sent \(comments.count) review comments")
@@ -657,11 +666,21 @@ struct PatchLine: Identifiable, Equatable {
     static func parse(_ patch: String) -> [PatchLine] {
         var result: [PatchLine] = []
         var newLine = 0, oldLine = 0
+        // Lines still to come in the current hunk. Inside one, "---", "+++", "diff …" and the
+        // like are the file's own lines (a removed YAML "---", an added "++i;"), not headers.
+        var oldLeft = 0, newLeft = 0
         for (index, raw) in patch.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let line = String(raw)
-            // The patch's trailing newline is not a line of the file.
-            if line.isEmpty { continue }
+            // The patch's trailing newline is not a line of the file, but inside a hunk an empty
+            // line is a blank context line (git's diff.suppressBlankEmpty).
+            if line.isEmpty && !(oldLeft > 0 && newLeft > 0) { continue }
+            // Hunk lines start with "+", "-" or " ", so this can only be the next file's header.
+            if line.hasPrefix("diff --git ") { oldLeft = 0; newLeft = 0 }
+            let inHunk = oldLeft > 0 || newLeft > 0
             if line.hasPrefix("@@") {
+                let lengths = Review.hunkLengths(raw)
+                oldLeft = lengths?.old ?? 0
+                newLeft = lengths?.new ?? 0
                 // @@ -a,b +c,d @@
                 let fields = line.split(separator: " ")
                 if let plus = fields.first(where: { $0.hasPrefix("+") }),
@@ -673,20 +692,23 @@ struct PatchLine: Identifiable, Equatable {
                     oldLine = start
                 }
                 result.append(PatchLine(id: index, kind: .header, text: line, newNumber: nil))
-            } else if line.hasPrefix("diff ") || line.hasPrefix("index ") || line.hasPrefix("---") || line.hasPrefix("+++")
-                        || line.hasPrefix("new file") || line.hasPrefix("deleted file") || line.hasPrefix("\\") {
+            } else if line.hasPrefix("\\") || (!inHunk && (line.hasPrefix("diff ") || line.hasPrefix("index ")
+                        || line.hasPrefix("--- ") || line.hasPrefix("+++ ") || line.hasPrefix("new file") || line.hasPrefix("deleted file"))) {
                 continue
             } else if line.hasPrefix("+") {
                 result.append(PatchLine(id: index, kind: .added, text: String(line.dropFirst()), newNumber: newLine))
                 newLine += 1
+                if inHunk { newLeft -= 1 }
             } else if line.hasPrefix("-") {
                 result.append(PatchLine(id: index, kind: .removed, text: String(line.dropFirst()), newNumber: nil, oldNumber: oldLine))
                 oldLine += 1
+                if inHunk { oldLeft -= 1 }
             } else {
                 result.append(PatchLine(id: index, kind: .context, text: String(line.dropFirst(min(1, line.count))),
                                         newNumber: newLine, oldNumber: oldLine))
                 newLine += 1
                 oldLine += 1
+                if inHunk { oldLeft -= 1; newLeft -= 1 }
             }
         }
         return result

@@ -40,6 +40,8 @@ enum WorktreeScanner {
 struct WorktreeCleanupView: View {
     let repoRoots: [String]
     let inUse: Set<String>
+    /// Worktree path → ids of the sessions that ran there, so archiving drops their checkpoints.
+    var sessionIDs: [String: [String]] = [:]
     let onDone: () -> Void
     @State private var entries: [WorktreeEntry] = []
     @State private var loading = true
@@ -99,7 +101,14 @@ struct WorktreeCleanupView: View {
 
     private func archive(_ entry: WorktreeEntry) {
         Task {
-            let result = await Task.detached { Review.archive(worktree: entry.path, mainRoot: entry.repoRoot) }.value
+            let sessions = sessionIDs[entry.path] ?? []
+            let result = await Task.detached { () -> Result<String, ReviewError> in
+                let outcome = Review.archive(worktree: entry.path, mainRoot: entry.repoRoot)
+                if case .success = outcome {
+                    for id in sessions { Checkpoints.prune(at: entry.repoRoot, session: id) }
+                }
+                return outcome
+            }.value
             switch result {
             case .success(let text): message = "\(shortPath(entry.path)): \(text)"
             case .failure(let error): message = "⚠︎ \(error.description)"

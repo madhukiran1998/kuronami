@@ -209,9 +209,8 @@ final class DiffTextView: NSTextView {
             return
         }
         let point = convert(event.locationInWindow, from: nil)
-        let index = characterIndexForInsertion(at: point)
-        let clamped = min(max(index, 0), storage.length - 1)
-        if let id = storage.attribute(DiffDocument.lineKey, at: clamped, effectiveRange: nil) as? Int,
+        if let clamped = characterIndex(onLineAt: point),
+           let id = storage.attribute(DiffDocument.lineKey, at: clamped, effectiveRange: nil) as? Int,
            let line = lineByID[id], line.newNumber != nil, line.kind != .header {
             onComment?(line)
         } else {
@@ -222,8 +221,8 @@ final class DiffTextView: NSTextView {
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
         guard let storage = textStorage, storage.length > 0 else { return menu }
-        let index = min(max(characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)), 0), storage.length - 1)
-        if let id = storage.attribute(DiffDocument.lineKey, at: index, effectiveRange: nil) as? Int,
+        if let index = characterIndex(onLineAt: convert(event.locationInWindow, from: nil)),
+           let id = storage.attribute(DiffDocument.lineKey, at: index, effectiveRange: nil) as? Int,
            let line = lineByID[id], line.newNumber != nil, line.kind != .header {
             let item = NSMenuItem(title: "Add Review Comment", action: #selector(commentFromMenu(_:)), keyEquivalent: "")
             item.target = self
@@ -232,6 +231,18 @@ final class DiffTextView: NSTextView {
             menu.insertItem(.separator(), at: 1)
         }
         return menu
+    }
+
+    /// The character under `point`, or nil when it isn't on a line: below the last one, the
+    /// nearest character would otherwise be the last line's and the comment would land there.
+    private func characterIndex(onLineAt point: NSPoint) -> Int? {
+        guard let layoutManager, let textContainer, let storage = textStorage, storage.length > 0 else { return nil }
+        let origin = textContainerOrigin
+        let local = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+        let glyph = layoutManager.glyphIndex(for: local, in: textContainer)
+        let fragment = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        guard local.y >= fragment.minY, local.y < fragment.maxY else { return nil }
+        return min(max(layoutManager.characterIndexForGlyph(at: glyph), 0), storage.length - 1)
     }
 
     @objc private func commentFromMenu(_ sender: NSMenuItem) {
