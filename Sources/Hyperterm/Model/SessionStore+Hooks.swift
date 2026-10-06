@@ -98,6 +98,7 @@ extension SessionStore {
     private func handleAgentHook(_ session: TerminalSession, _ json: [String: Any], source: String) {
         let event = json["hook_event_name"] as? String ?? ""
         let cwd = json["cwd"] as? String
+        var question: PendingQuestion?
         // Only conversations with at least one prompt can be resumed.
         if ["UserPromptSubmit", "Stop", "PostToolUse"].contains(event) {
             session.recordAgentSessionId(json["session_id"] as? String)
@@ -105,6 +106,7 @@ extension SessionStore {
         // A tool call moving on means a prompt held open was answered in the terminal itself.
         if ["PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "UserPromptSubmit"].contains(event) {
             dropApproval(for: session)
+            session.pendingQuestion = nil
         }
 
         switch event {
@@ -131,6 +133,8 @@ extension SessionStore {
                 let text = AgentText.describeTool(name: tool, input: input, cwd: cwd)
                 session.activity = text
                 session.pendingRequest = text
+                question = tool == "AskUserQuestion" ? PendingQuestion.parse(toolInput: input) : nil
+                session.pendingQuestion = question
                 let isEdit = ["Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"].contains(tool)
                 if tool != "Read" && tool != "Glob" && tool != "Grep" { session.record(isEdit ? .edit : .tool, text) }
             }
@@ -193,6 +197,8 @@ extension SessionStore {
         let keepRequest = session.pendingRequest
         session.apply(.claudeHook(event: event, notificationType: notificationType, message: detail), source: source)
         if session.state.needsAttention { session.pendingRequest = keepRequest }
+        // A state change away from the wait clears the question; this one is still being asked.
+        if let question { session.pendingQuestion = question }
     }
 
     private func recordTestEvidence(_ session: TerminalSession, _ json: [String: Any], failed: Bool) {
