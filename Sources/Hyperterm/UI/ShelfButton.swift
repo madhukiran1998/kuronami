@@ -1,35 +1,58 @@
 import SwiftUI
 
-/// Servers and parked tiles stay one click away without taking space from the canvas.
-struct ServerStrip: View {
+/// Servers and parked tiles while the sidebar is hidden: one small pill in the canvas's corner
+/// that lists them. With the sidebar shown they're already there, so the pill stays away and the
+/// tiles keep the whole canvas.
+struct ShelfButton: View {
     @ObservedObject var store: SessionStore
+    @State private var showing = false
 
-    private var servers: [TerminalSession] {
+    static func servers(_ store: SessionStore) -> [TerminalSession] {
         store.sessions.filter { $0.kind == .server && !$0.pinnedToGrid && !$0.isMinimized }
     }
-    private var shelved: [TerminalSession] { store.sessions.filter(\.isMinimized) }
+    static func parked(_ store: SessionStore) -> [TerminalSession] { store.sessions.filter(\.isMinimized) }
 
     var body: some View {
-        let serverSessions = servers
-        let parkedSessions = shelved
-        ScrollView(.horizontal) {
-            HStack(spacing: Space.xs) {
-                ForEach(serverSessions) { ServerChip(session: $0, store: store) }
-                if !serverSessions.isEmpty && !parkedSessions.isEmpty {
-                    Rectangle().fill(Tone.hairline).frame(width: Size.hairline, height: Space.m).padding(.horizontal, Space.xs)
+        let servers = Self.servers(store)
+        let parked = Self.parked(store)
+        Button { showing.toggle() } label: {
+            HStack(spacing: Space.xs + 2) {
+                if let first = servers.first {
+                    StatusDot(state: first.state, size: 5)
+                    Text(first.label).lineLimit(1)
+                    if let port = first.ports.first {
+                        Text(":" + String(port)).font(Typeface.micro.monospaced()).foregroundStyle(Palette.running)
+                    }
+                    if servers.count > 1 { Text("+\(servers.count - 1)").foregroundStyle(Tone.muted) }
                 }
-                ForEach(parkedSessions) { ShelvedChip(session: $0, store: store) }
+                if !parked.isEmpty {
+                    if !servers.isEmpty { Text("·").foregroundStyle(Tone.faint) }
+                    Text("\(parked.count) parked").foregroundStyle(Tone.muted)
+                }
             }
-            .padding(.horizontal, Space.s)
-            .frame(maxHeight: .infinity)
+            .modifier(ChipChrome(active: showing))
         }
-        .scrollIndicators(.never)
-        // No fill of its own: it sits on the canvas, which carries the theme.
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .buttonStyle(.plain)
+        .help("Servers and parked tiles")
+        .accessibilityLabel("\(servers.count) servers, \(parked.count) parked tiles")
+        .popover(isPresented: $showing, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: Space.xs) {
+                if !servers.isEmpty {
+                    Text("Servers").font(Typeface.caption).foregroundStyle(Tone.faint)
+                    ForEach(servers) { ServerChip(session: $0, store: store) }
+                }
+                if !parked.isEmpty {
+                    Text("Parked").font(Typeface.caption).foregroundStyle(Tone.faint).padding(.top, servers.isEmpty ? 0 : Space.xs)
+                    ForEach(parked) { ShelvedChip(session: $0, store: store) }
+                }
+            }
+            .padding(Space.m)
+            .background(Tone.deep)
+        }
     }
 }
 
-/// A chip on the shelf: quiet fill, brighter on hover.
+/// A chip in the shelf's list: quiet fill, brighter on hover.
 private struct ChipChrome: ViewModifier {
     var active = false
     @State private var hovering = false
