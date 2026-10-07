@@ -462,8 +462,12 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// draft from Claude's dimmed prompt suggestion, so keystrokes decide.
     private(set) var userDraftInProgress = false
 
-    /// The agent's input box holds nothing the user is in the middle of typing.
-    var inputIsEmpty: Bool { !userDraftInProgress }
+    /// The agent's input box holds nothing the user is in the middle of typing. Deleting a draft
+    /// with Backspace leaves the keystroke flag set, so a prompt line drawn blank also counts as empty;
+    /// a dimmed suggestion isn't blank, so it still holds messages back.
+    var inputIsEmpty: Bool {
+        !userDraftInProgress || (kind.isAgent && PromptScreen.promptLineIsBlank(surface.readViewport(), kind: kind))
+    }
 
     /// Called on each poll: delivers queued messages once the agent is free.
     func retryPendingMessages() {
@@ -851,6 +855,22 @@ enum PromptScreen {
         return Array(repeating: step, count: abs(number - current)) + ["enter"]
     }
 
+    /// Claude's folder-trust prompt lists its choices unnumbered ("❯ No, exit" over "Yes, I trust
+    /// this folder"), so the cursor is moved to the right line and Enter confirms. Never "always".
+    static func trustKeys(for answer: PromptAnswer, screen: String) -> [String]? {
+        guard answer != .always else { return nil }
+        guard answer == .approve else { return ["esc"] }
+        let lines = screen.split(separator: "\n", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let cursor = lines.firstIndex(where: { $0.hasPrefix("❯") || $0.hasPrefix("›") }) else { return nil }
+        var start = cursor, end = cursor
+        while start > 0, !lines[start - 1].isEmpty { start -= 1 }
+        while end + 1 < lines.count, !lines[end + 1].isEmpty { end += 1 }
+        let items = lines[start...end].map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "❯› ")).lowercased() }
+        guard let yes = items.firstIndex(where: { $0.hasPrefix("yes") || $0.hasPrefix("trust") }) else { return nil }
+        let steps = yes - (cursor - start)
+        return Array(repeating: steps > 0 ? "down" : "up", count: abs(steps)) + ["enter"]
+    }
+
     /// The number of the menu option the cursor marker ("›", "❯" or ">") is on, if any.
     static func highlighted(_ screen: String) -> Int? {
         for raw in screen.split(separator: "\n") {
@@ -920,6 +940,14 @@ enum PromptScreen {
             .first { $0.lowercased().contains("not enabled") }
     }
 
+    /// The CLI's prompt line is on screen with nothing after its marker.
+    static func promptLineIsBlank(_ screen: String, kind: SessionKind) -> Bool {
+        let marker = kind.adapter?.promptMarker ?? "❯"
+        let lines = screen.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let prompt = lines.last(where: { $0.hasPrefix(marker) }) else { return false }
+        return prompt.dropFirst(marker.count).trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     static func inputIsEmpty(_ screen: String, kind: SessionKind) -> Bool {
         let lines = screen.split(separator: "\n", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
         let marker = kind.adapter?.promptMarker ?? "❯"
@@ -933,6 +961,7 @@ enum PromptScreen {
     /// Keys that choose `answer` in the dialog on screen, or nil when there is no dialog.
     static func keys(for answer: PromptAnswer, screen: String, kind: SessionKind) -> [String]? {
         let options = options(screen)
+        if options.isEmpty, hasTrustDialog(screen) { return trustKeys(for: answer, screen: screen) }
         guard hasDialog(screen) || kind.adapter?.optionsAloneMakeDialog == true, !options.isEmpty else { return nil }
         func pick(_ predicate: (String) -> Bool) -> [String]? {
             options.first { predicate($0.text.lowercased()) }.map { keys(toOption: $0.number, screen: screen, kind: kind) }
