@@ -7,13 +7,15 @@
 <p align="center">
   <b>A terminal for running many coding agents at once.</b><br>
   Tako runs Claude Code and Codex side by side in real terminals, and keeps track of them for you:<br>
-  which one needs an answer, which one is done, and what each one changed.
+  which one needs an answer, which one is done, and what each one changed.<br>
+  <b>Sumi</b>, an agent of its own, runs the rest for you, even from your phone, and a <b>steward</b> keeps your Mac fast while they work.
 </p>
 
 <p align="center">
   <a href="https://nikshepsvn.com/tako/">Website</a> ·
   <a href="#install">Install</a> ·
   <a href="#why-tako">Why</a> ·
+  <a href="#sumi-and-the-steward">Sumi &amp; Steward</a> ·
   <a href="#how-it-compares">Compare</a> ·
   <a href="#everything-it-does">Features</a>
 </p>
@@ -39,6 +41,42 @@
 Running five agents in parallel isn't hard. **Keeping track of them is.** The bottleneck moves from typing to *attention*: which agent is stuck on an approval, which one finished with a diff to read, which one is quietly burning your rate limit, and which two are about to edit the same file.
 
 Tabs and tmux panes can't answer those questions. Chat-style agent apps answer some of them by swapping the real CLI for their own UI. Tako keeps **the real `claude` and `codex` running in real terminals**, the exact tools you already use with your config, skills and MCP servers, and builds the control room around them.
+
+## Sumi and the steward
+
+Past three or four agents, two jobs eat your day: telling agents what to do next, and keeping the Mac from grinding to a halt. Tako hands each one to a helper.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### Sumi: an agent that runs your agents
+Click the Tako mark in the window's corner (**⌃⌘O**) and say what you want. Sumi (墨, *ink*) is Claude Code or Codex working through Tako's own tools.
+
+- **Starts and arranges.** *"Start @api and @web on the orders feature in ~/Code/shop"* gets you two agents, each in its own worktree, side by side on screen.
+- **Chains work.** *"When @api is done, have @web use its new endpoint"*: it watches @api and, when it finishes, messages @web with the result.
+- **Answers for you, within limits.** *"Handle @web's prompts until it's done. Prefer pnpm."* It approves routine requests and leaves `git push`, deploys, recursive deletes, `sudo`, secrets and writes outside the workspace for you. If it hasn't answered in 90 s, you're notified anyway.
+- **Picks up old work.** *"Open my last sessions in ~/Code/shop"* resumes their own conversations.
+- **Remembers** your projects and preferences in a notes file it keeps between sessions.
+- **Goes with you.** Turn on **Phone Mode** and talk to Sumi from the Claude app on your phone. Ordinary requests are approved for you; questions and risky requests come to your phone.
+
+</td>
+<td width="50%" valign="top">
+
+### Steward: keeps your Mac fast
+No model, just the kernel's numbers. It measures every session's processes, shows each one's memory and CPU in the inspector, and:
+
+- **Lowers what nobody's waiting on.** Hidden agents that are idle or waiting run at background priority. Bring one on screen and it's back to full speed. When the Mac runs hot, hidden working agents are lowered too.
+- **Queues new agents when memory is short.** Sumi's launches wait until macOS memory pressure leaves room.
+- **Puts idle agents to sleep.** After 10 quiet minutes an agent's CLI quits to free its memory. Its screen stays, and the next message wakes it in the same conversation.
+- **Rations builds.** `ht heavy -- xcodebuild test` waits for a slot: half your performance cores, fewer under memory pressure or heat.
+- **Flags runaways.** An agent over 3 GB, or idle while its processes burn CPU, is reported to Sumi, which tells you. Nothing is closed without your OK.
+
+</td>
+</tr>
+</table>
+
+## Everything else in the control room
 
 <table>
 <tr>
@@ -170,7 +208,7 @@ ht ls
 ## Everything it does
 
 <details>
-<summary><b>The full feature tour</b>: layout, dispatch, approvals, review, checkpoints, project actions, worktrees, browsers, messaging, usage, accounts</summary>
+<summary><b>The full feature tour</b>: layout, dispatch, Sumi, the steward, Phone Mode, approvals, review, checkpoints, project actions, worktrees, browsers, messaging, usage, accounts</summary>
 
 #### See every agent at a glance
 - **Sidebar of agents, grouped by repository.** Each card shows the agent's state (working, waiting on you, done, failed), what it's doing right now (`Bash: pnpm test`, `Edit: src/auth.ts`), its own status line, Claude's todo progress (`3/5 · Writing migration`), branch, test result, and cost.
@@ -179,7 +217,6 @@ ht ls
 - **Resize anything.** Drag the gap between two tiles to resize them; it snaps to halves and thirds, and double-clicking evens that split out again. ⌥⌘0 evens out every tile. Split and grid each remember their own arrangement across launches.
 - **Arrange it your way.** Drag a tile by its header and drop it on another to trade places. Minimize a tile (⇧⌘M or the – on its header) to park it on the shelf under the canvas, next to your dev servers; click it there, or in the sidebar, to bring it back.
 - **Close to hide.** The red close button hides the window and leaves agents running; the Dock or the menu bar brings it back. ⌘Q quits.
-- **Idle agents sleep.** With *Put idle agents to sleep* on (Settings › General), an agent that has been idle for 10 minutes quits its CLI to free memory and keeps its screen; the next message or keystroke wakes it in the same conversation. Agents with subagents or background tasks running stay awake.
 - **Since you left.** Come back to an agent and a banner sums up what happened: edits, commands, approvals, tests, and the final answer.
 
 #### Start agents the way you want
@@ -188,8 +225,35 @@ ht ls
 - **Permissions, model and effort per agent.** *Ask First*, *Accept Edits*, *Plan* or *Full Access*, translated to each CLI's own flags (`--permission-mode` for Claude; approval and sandbox flags for Codex). Pick a model (Claude's `opus`/`sonnet`/`haiku` aliases, or any name) and, for Codex, reasoning effort. Leave them alone and the agent's own config applies.
 - **Plans you approve.** An agent in plan mode shows *Plan ready* on its card with *Approve Plan* and *Keep Planning*; the inspector's Plan tab shows the whole plan.
 - **Fork a conversation.** Right-click a Claude agent → *Fork Conversation* starts a new agent that continues from this point (`--resume --fork-session`); the original carries on unchanged.
-- **Or ask Sumi.** The Tako mark in the window's corner (⌃⌘O) opens Sumi agent: tell it what you want started, arranged or watched, and it does it with Tako's own tools. It can also answer questions for sessions you hand it, and it remembers past sessions.
+- **Or ask Sumi.** The Tako mark in the window's corner (⌃⌘O) opens Sumi: tell it what to start, arrange or watch ([below](#sumi)).
 - **Reopen closed agents.** Closed agents with a conversation stay under *Recently closed* in the sidebar (and in ⌘P), one click from resuming.
+
+#### Sumi
+One agent behind the round Tako mark in the window's bottom-left corner. Click it, or press ⌃⌘O, and its terminal opens in a panel floating over the window; it stays open while it works. It runs on Claude Code (Codex if that's the only one you have) with the CLI's own default model; switch the model in its header, and the CLI there or in Settings. It runs in its own folder (`~/.hyperterm/organizer`) with full access, because its work spans every project, and reaches each project by absolute path. Its own Tako tools run without a prompt, and the app still checks each call.
+- **Start agents anywhere.** `start_agent` starts Claude or Codex in any folder, each in its own worktree, up to five on the same task at once. What it starts shows on screen together: one fills the view, two or three sit side by side, more go in rows of three.
+- **Arrange the window.** Focus, split or grid, or an exact shape (*"@api big on the left, @web over @fix on the right"*). Save an arrangement by name and bring it back later (*"show me the review layout"*), or pop terminals into their own windows to put one on another screen.
+- **Chain work.** `watch_terminal` leaves a note on an agent; when it finishes (or fails, or exits), Tako messages Sumi with the agent's summary and your note, and Sumi acts on it. Events that land together arrive as one message, so it wakes once.
+- **Handle waits you hand it, only when you ask.** *"Handle @api's questions until it's done"*, *"answer @web's next 3 prompts"*, or *"watch @db for an hour"*, with a note like *"prefer pnpm"*. While it lasts, the card shows a **Sumi** tag and that agent's questions and permission prompts go to Sumi instead of you. It answers questions with a message or by picking an option, and permission prompts with approve or deny, never *Always*. Recursive deletes and chmods, piping a download into a shell, `sudo`, `git push`, `reset --hard` and `git clean`, deploys, publishing a package, dropping tables, anything touching secrets or credentials, force-kills, writes outside the agent's workspace, folder trust (unless you say yes) and sign-in are left for you. If it doesn't answer within 90 s, you're notified as usual. Every answer it gives is noted in the agent's timeline.
+- **Resume past work.** `session_history` lists closed sessions with what they did and how they ended; `reopen_session` resumes their own conversations, several at once in a grid. It can also resume a Claude or Codex conversation Tako never ran, by its session id.
+- **Remember.** It keeps notes on your preferences, project folders and open threads in `~/.hyperterm/organizer-notes.md`, and when its context is more than 60% full it starts a fresh conversation and rereads them. Switching between Claude and Codex keeps the notes.
+- **Step in.** It can stop an agent's turn the way Esc does, then tell it what to do instead.
+- **Ask about the machine.** *"Why is my Mac slow?"* `machine_status` shows what the steward sees. It changes the steward's policy (*"no more than 4 agents at once"*, *"keep @api at full speed"*) only when you ask.
+- **Close what's done.** You confirm each close.
+
+#### Phone Mode
+For when you step away. Phone Mode rides on Claude Code's Remote Control, so it's there while Claude runs Sumi. Turn it on from the toolbar's Phone Mode button, or tell Sumi you're heading out; Sumi's session opens to the Claude app on your phone and you talk to it there.
+- **Ordinary requests don't wait.** Tako approves agents' routine permission requests itself, using the same guard as above.
+- **Everything else comes to you, through Sumi.** Questions, plans, and risky requests go to Sumi the moment they happen, by @name, and Sumi asks you on your phone. It can pick a question's option, trust a folder once you say yes, sign a signed-out Codex in with a device code you enter on your phone, or stop an agent.
+- **Nothing silently stuck.** A wait nobody answers reminds Sumi every 90 s, up to three times, and then goes to the Mac as usual. Tako's own confirmations, like starting a server, are skipped, since you asked from your phone.
+- **Back at the Mac,** turn it off from the same button or tell Sumi you're back.
+
+#### The steward
+Keeps the Mac responsive while agents run, without a model. On every inspector tick it measures each session's process tree: footprint (what Activity Monitor calls Memory) and CPU, shown as *Resources* in the inspector.
+- **Priority.** A session is *focused* (on screen, selected, pinned, or Sumi), *working*, *waiting* on you, or *idle*. Hidden waiting and idle sessions run at macOS background priority (`PRIO_DARWIN_BG`), and so do hidden working ones when the Mac's thermal state is serious or worse. Bring one on screen and its whole process tree is restored at once. Chromium's helpers are left alone so browser panes don't stutter.
+- **Admission.** When macOS reports memory pressure, a new agent from Sumi waits until there's room for a typical agent (the 75th percentile of the agents you're running, plus 20%), then starts in order. Sumi hears *"queued: memory is short"* right away. Ask Sumi to cap how many agents work at once.
+- **Sleep.** With *Put idle agents to sleep* on (Settings › General; on for new installs, off if you upgraded), an agent that has been idle for 10 minutes, with its own work quiet, quits its CLI to free its memory, even in a tile that's on screen. The tile keeps its last screen and the card shows a moon. The next message or keystroke, or *Wake* from its menu, resumes the same conversation in the same tile. Agents that are selected, pinned, mid-dialog, have text typed, queued messages, or subagents and background shells running stay awake. *Sleep* in an agent's menu does it by hand.
+- **Heavy jobs.** `ht heavy -- <command>` waits for one of a few slots, then runs the command: half your performance cores, halved again under memory pressure or heat, one when critical. A slot frees when the command exits. If Tako isn't reachable the command runs right away, so it's safe in scripts, Makefiles and your agents' instructions.
+- **Warnings.** A session over 3 GB, or an agent idle for 2 minutes while its processes keep using more than 15% CPU, raises one warning per episode. The steward never acts on it alone: it goes to Sumi, which checks the agent and tells you, and restarts or closes it only with your go-ahead.
 
 #### Answer approvals from anywhere
 - **Real approvals, not keystrokes.** Tako installs Claude's `PermissionRequest` hook (per launch, never in your global settings). The moment an agent asks, its card shows the exact command with **Allow / Always / Deny**. Always saves the rule Claude suggested, and Deny can carry a reason the agent sees. Claude's own dialog still works in the terminal, and whichever answer comes first wins.
@@ -254,6 +318,8 @@ Every agent started in Tako gets a `hyperterm` MCP server (it keeps its original
 | `start_server` / `restart_server` | Run dev servers in their own labeled terminals. Starting one asks you first |
 | `start_agent` | Delegate a self-contained subtask to a new Claude or Codex agent in its own worktree. Asks you first; the new agent inherits the parent's account and permission choices and messages it back when done |
 
+Sumi gets these plus its own: `arrange_view`, `save_layout` / `restore_layout`, `detach_terminals`, `watch_terminal`, `session_history`, `reopen_session`, `handle_waiting` / `stop_handling` / `answer_prompt`, `choose_option`, `trust_folder`, `sign_in`, `interrupt_agent`, `phone_mode`, `machine_status`, `set_policy`, and `close_terminal` (you confirm each close, outside Phone Mode).
+
 Claude sessions are launched as `claude --name <label>`, so Claude's built-in cross-session messaging (`SendMessage`, `@mentions`) uses the same names. Messages wait until the receiving agent is at an empty prompt. They're never typed into a dialog or into something you're halfway through writing. Optional (App menu): deliver messages through Claude's **channels** API instead of typing.
 
 #### Usage
@@ -297,6 +363,7 @@ ht new browser @docs -- localhost:3000          # a browser session
 ht send @api "users.name is now display_name"   # message an agent
 ht approve @api   ·   ht always @api   ·   ht deny @api "use a migration instead"
 ht read @web -n 50                              # recent output
+ht heavy -- xcodebuild test                     # wait for a heavy-job slot, then run
 ht key @api down enter                          # press keys
 ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api backend   ·   ht close @scratch
 ```
@@ -362,6 +429,7 @@ Sources/Hyperterm/Status    StatusReducer, ProcessInspector (identity, ports), G
                             AgentOptions, ProjectActions, Editors, Workspaces, notifications
 Sources/Hyperterm/IPC       control socket server and request handler (permissions)
 Sources/Hyperterm/Launch    agent wrappers, per-launch hooks/statusLine/MCP config
+Sources/Hyperterm/Steward   resource sampling, background priority, launch admission, heavy-job slots, sleep, warnings
 Sources/Hyperterm/Browser   Chromium runtime (lazy start, DevTools port), browser surface and bar, Chrome logins import
 Sources/Hyperterm/UI        Design (tokens + components), LayoutTree, sidebar, sumi, tiles, inspector, switcher, sheets
 Sources/HypertermHelper     Chromium helper process (renderer, GPU, utility)
