@@ -12,6 +12,12 @@ extension SessionStore {
             reply(ControlResponse.success(text: decisionJSON(approval, .approve, reason: nil)))
             return
         }
+        // Behind its app-server, Codex asks there next about a command, and Tako answers that
+        // request in kind. Other tools (MCP calls) still go through the hook.
+        if source == "codex", tool == "Bash", approvesOverAppServer(session, thread: json["session_id"] as? String) {
+            reply(ControlResponse.success())
+            return
+        }
         let input = json["tool_input"] as? [String: Any] ?? [:]
         let summary = AgentText.describeTool(name: tool, input: input, cwd: json["cwd"] as? String)
         dropApproval(for: session)
@@ -104,8 +110,9 @@ extension SessionStore {
             decision = ["behavior": "allow"]
         case .always:
             decision = ["behavior": "allow"]
-            // Claude persists the rule it suggested; Codex rejects permission updates.
-            if approval.source == "claude", let suggestions = approval.suggestions as? [[String: Any]], !suggestions.isEmpty {
+            // Claude persists the rule it suggested, and Codex's app-server takes the decision it
+            // offered for "always"; Codex's hook rejects permission updates.
+            if approval.source == "claude" || approval.source == CodexAppServer.source, let suggestions = approval.suggestions as? [[String: Any]], !suggestions.isEmpty {
                 decision["updatedPermissions"] = suggestions
             }
         case .deny:

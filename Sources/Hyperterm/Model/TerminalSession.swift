@@ -754,6 +754,8 @@ extension TerminalSession: TerminalSurfaceEvents {
     }
 
     func surfaceNotification(title: String, body: String) {
+        // Codex behind its app-server notifies of the approval Tako is already holding and showing.
+        if hasHookApproval { return }
         apply(.terminalNotification(title: title, body: body), source: "osc9")
         if kind == .codex, !body.isEmpty { summary = summarize(body) }
         store?.sessionWantsAttention(self, title: title.isEmpty ? "@\(label)" : title, body: body)

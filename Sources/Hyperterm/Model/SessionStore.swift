@@ -87,6 +87,11 @@ final class SessionStore: ObservableObject {
     private var reservedLabels: [String: Date] = [:]
     private var launchLabels = SessionLabelReservations()
     var approvals: [UUID: PendingApproval] = [:]
+    /// Codex sessions' own app-servers, which Tako follows as a second client.
+    var codexServers: [UUID: CodexAppServer] = [:]
+    /// The app-server request behind each session's held approval, so the terminal answering
+    /// it clears Tako's.
+    var codexHeldRequests: [UUID: (request: CodexAppServer.RequestID, approval: UUID)] = [:]
     /// Channel delivery (opt-in): each Claude session's MCP server long-polls for messages.
     private var channelWaiters: [UUID: ControlServer.Reply] = [:]
     private var channelInbox: [UUID: [String]] = [:]
@@ -452,6 +457,8 @@ final class SessionStore: ObservableObject {
             if sumiHears { addToSumiDigest(SumiEvent(label: session.label, kind: .stoppedHandling("it was closed"))) }
         }
         session.terminate()
+        codexServers.removeValue(forKey: session.id)?.close()
+        codexHeldRequests[session.id] = nil
         channelWaiters.removeValue(forKey: session.id)?(ControlResponse.success())
         channelWaiterTokens[session.id] = nil
         channelInbox[session.id] = nil
