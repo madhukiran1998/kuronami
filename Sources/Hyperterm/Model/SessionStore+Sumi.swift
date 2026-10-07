@@ -11,7 +11,8 @@ extension SessionStore {
     static let sumiTools = ["list_terminals", "read_terminal", "send_message", "start_agent", "arrange_view",
                                  "close_terminal", "save_layout", "restore_layout", "watch_terminal",
                                  "session_history", "reopen_session", "machine_status", "set_policy", "detach_terminals",
-                                 "handle_waiting", "stop_handling", "answer_prompt", "phone_mode"]
+                                 "handle_waiting", "stop_handling", "answer_prompt", "phone_mode",
+                                 "choose_option", "trust_folder", "sign_in", "interrupt_agent"]
         .map { "mcp__hyperterm__" + $0 }
 
     /// Where Sumi runs. Its own folder, trusted once: Claude Code asks to trust the home
@@ -34,51 +35,40 @@ extension SessionStore {
         sumiDefaults.string(forKey: sumiKindKey).flatMap(SessionKind.init(rawValue:)).flatMap { $0.isAgent ? $0 : nil }
     }
 
-    /// Which CLI runs Sumi: picked the first time its panel opens, then in its header or Settings.
+    /// Which CLI runs Sumi: Claude unless the user switched it in its header, or only Codex is
+    /// installed. Phone Mode rides on Claude's Remote Control, so Claude is the default.
     static var sumiKind: SessionKind {
-        get { chosenSumiKind ?? .claude }
+        get { chosenSumiKind ?? (InstalledAgents.shared.isInstalled(.claude) ? .claude : .codex) }
         set { sumiDefaults.set(newValue.rawValue, forKey: sumiKindKey) }
     }
 
-    /// The panel asks which CLI, then which model, instead of starting one. One already running
-    /// (from before there was a choice) counts as chosen.
-    var sumiNeedsChoice: Bool {
-        guard sumi == nil else { return false }
-        guard let kind = Self.chosenSumiKind else { return true }
-        return Self.chosenSumiModel(for: kind) == nil
-    }
-
-    /// The first-run choice: remembered, then Sumi starts on it once its model is picked.
-    func chooseSumi(_ kind: SessionKind) {
-        Self.sumiKind = kind
-        if Self.chosenSumiModel(for: kind) != nil { startSumi() }
-    }
+    /// Sumi starts at once: it runs on its CLI's own default model unless the user picked another.
+    var sumiNeedsChoice: Bool { false }
 
     // MARK: - Its model
 
-    /// A model Sumi can run on. Its work is starting, arranging and watching agents, so
-    /// a small model does it well for far fewer tokens.
+    /// A model Sumi can run on. It is the brain the user talks to from their phone, so it runs on
+    /// the CLI's own (strongest) default unless the user picks a smaller one.
     struct SumiModel: Equatable, Identifiable {
         /// Passed to the CLI as its model; nil leaves the CLI's own default.
         var name: String?
         var title: String
         var detail: String
-        var recommended = false
 
         var id: String { name ?? "" }
     }
 
-    /// Smallest first. Codex's names come from its model catalog (`codex debug models`).
+    /// The CLI's default first. Codex's names come from its model catalog (`codex debug models`).
     static func sumiModels(for kind: SessionKind) -> [SumiModel] {
         switch kind {
         case .claude: return [
-            SumiModel(name: "haiku", title: "Haiku", detail: "Smallest and fastest. Plenty for starting, arranging and watching agents.", recommended: true),
-            SumiModel(name: "sonnet", title: "Sonnet", detail: "Mid-size, for long plans across many agents."),
-            SumiModel(name: nil, title: "Claude Code's default", detail: "Usually Opus: the most tokens per turn."),
+            SumiModel(name: nil, title: "Claude Code's default", detail: "Usually Opus: the strongest at running many agents."),
+            SumiModel(name: "sonnet", title: "Sonnet", detail: "Mid-size and quicker."),
+            SumiModel(name: "haiku", title: "Haiku", detail: "Smallest and fastest; misses more."),
         ]
         case .codex: return [
-            SumiModel(name: "gpt-6-luna", title: "GPT-6-Luna", detail: "Fast and affordable. Plenty for starting, arranging and watching agents.", recommended: true),
-            SumiModel(name: nil, title: "Codex's default", detail: "Its workhorse model: more tokens per turn."),
+            SumiModel(name: nil, title: "Codex's default", detail: "Its strongest model."),
+            SumiModel(name: "gpt-6-luna", title: "GPT-6-Luna", detail: "Fast and affordable; misses more."),
         ]
         default: return []
         }
@@ -93,7 +83,7 @@ extension SessionStore {
     }
 
     /// The model picked for `kind`: nil until picked, "" for the CLI's own default. One saved for
-    /// another CLI is dropped, so the panel asks again instead of launching a CLI with it.
+    /// another CLI is dropped, so Sumi falls back to the default instead of launching a CLI with it.
     static func chosenSumiModel(for kind: SessionKind) -> String? {
         guard let name = sumiDefaults.string(forKey: sumiModelKey(kind)) else { return nil }
         guard isSumiModel(name, of: kind) else {
@@ -104,17 +94,29 @@ extension SessionStore {
     }
 
     static func setSumiModel(_ name: String?, for kind: SessionKind) {
+        resetModelsPickedByTheOldChooserOnce()
         sumiDefaults.set(name ?? "", forKey: sumiModelKey(kind))
     }
 
-    /// A model that didn't start: forgotten, so the panel asks again.
+    /// A model that didn't start: forgotten, so Sumi goes back to the CLI's default.
     static func forgetSumiModel(for kind: SessionKind) {
         sumiDefaults.removeObject(forKey: sumiModelKey(kind))
     }
 
     /// What Sumi is launched with: nil for the CLI's default.
     static func sumiModel(for kind: SessionKind) -> String? {
-        chosenSumiModel(for: kind).flatMap { $0.isEmpty ? nil : $0 }
+        resetModelsPickedByTheOldChooserOnce()
+        return chosenSumiModel(for: kind).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    private static let modelsResetKey = "organizerModelsResetToDefault"
+
+    /// The first-run chooser used to pre-select the smallest model, so models saved before it
+    /// went are reset once to the CLI's default. A model picked after this sticks.
+    static func resetModelsPickedByTheOldChooserOnce() {
+        guard !sumiDefaults.bool(forKey: modelsResetKey) else { return }
+        sumiDefaults.set(true, forKey: modelsResetKey)
+        for kind in sumiChoices { sumiDefaults.removeObject(forKey: sumiModelKey(kind)) }
     }
 
     /// The model step's choice for `kind`, the CLI whose models were shown: remembered, then the
@@ -159,13 +161,13 @@ extension SessionStore {
     }
 
     /// Runs Sumi on another CLI: the current one closes and a new one starts where it was.
-    /// A CLI it hasn't run on yet waits in the panel for its model to be picked.
     func switchSumi(to kind: SessionKind) {
         guard kind != sumi?.kind || sumi == nil else { Self.sumiKind = kind; return }
         Self.sumiKind = kind
         if kind != .claude { setPhoneMode(false) }
-        if let sumi { close(sumi) }
-        if Self.chosenSumiModel(for: kind) != nil { startSumi() }
+        guard let sumi else { return }
+        close(sumi)
+        startSumi()
     }
 
     // MARK: - Arranging
@@ -334,12 +336,17 @@ extension SessionStore {
     /// start the next. It wakes once for the digest, not once per event.
     func reportToSumi(_ session: TerminalSession, from previous: AgentState) {
         guard let sumi else { return }
-        if sumi.id == session.id { flushSumiDigest(); return }
+        if sumi.id == session.id {
+            // In Phone Mode Sumi is the user's only way in: one that quits comes back, on the phone.
+            if case .exited = session.state, isPhoneModeOn { restartSumiForPhone(session) }
+            flushSumiDigest()
+            return
+        }
         // An exited sumi would drop the event; the watch keeps until it can hear.
         guard !sumi.isExitedProcess else { return }
         // An agent launched by an agent can stop at the folder-trust prompt; only the user can
         // answer it, so Sumi is told, to pass that on rather than wait for it.
-        if session.spec.labelSource == .agent, session.state == .needsInput(TerminalSession.trustReason), previous != session.state {
+        if !isPhoneModeOn, session.spec.labelSource == .agent, session.state == .needsInput(TerminalSession.trustReason), previous != session.state {
             addToSumiDigest(SumiEvent(label: session.label, kind: .needsYou(
                 "it's asking whether to trust this folder. Only the user can answer: they've been notified and can press Trust Folder on its card. Don't send it input", note: nil)))
         }
@@ -353,19 +360,44 @@ extension SessionStore {
         addToSumiDigest(SumiEvent(label: escalation.label, kind: .steward(escalation.message)))
     }
 
-    func addToSumiDigest(_ event: SumiEvent) {
-        if sumiDigest.isEmpty {
-            DispatchQueue.main.asyncAfter(deadline: .now() + SumiDigest.window) { [weak self] in
+    /// `urgent` (an agent waiting on the user) goes out almost at once; the rest gather for a
+    /// moment so a burst of finishes is one message.
+    func addToSumiDigest(_ event: SumiEvent, urgent: Bool = false) {
+        let first = sumiDigest.isEmpty
+        sumiDigest.add(event, urgent: urgent)
+        if first || urgent {
+            DispatchQueue.main.asyncAfter(deadline: .now() + (urgent ? SumiDigest.urgentWindow : SumiDigest.window)) { [weak self] in
                 self?.flushSumiDigest()
             }
         }
-        sumiDigest.add(event)
+    }
+
+    /// Restarts allowed within `sumiRestartWindow` before Tako stops trying and tells the Mac.
+    static let sumiRestartLimit = 3
+    static let sumiRestartWindow: TimeInterval = 300
+
+    /// Sumi quit while the user is away: it starts again, reopens Remote Control and is told
+    /// Phone Mode is on. A Sumi that keeps failing to start is left for the user.
+    private func restartSumiForPhone(_ exited: TerminalSession, now: Date = Date()) {
+        sumiRestarts = sumiRestarts.filter { now.timeIntervalSince($0) < Self.sumiRestartWindow }
+        guard sumiRestarts.count < Self.sumiRestartLimit else {
+            notifier.post(session: exited, title: "Sumi keeps stopping", body: "Phone Mode can't reach your agents until Sumi runs again. Open it on the Mac.", foreground: true)
+            return
+        }
+        sumiRestarts.append(now)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.isPhoneModeOn, self.sumi?.isExitedProcess ?? true else { return }
+            self.remoteControlWhenSumiUp = true
+            self.startSumi()
+            self.addToSumiDigest(SumiEvent(label: "tako", kind: .phoneMode(true)))
+        }
     }
 
     /// What this change means for Sumi, if anything. A watched terminal ending its turn
     /// uses up the watch; other kinds of event go here.
     private func sumiEvent(_ session: TerminalSession, from previous: AgentState) -> SumiEvent? {
-        guard let note = sumiWatches[session.id] else { return nil }
+        // In Phone Mode Sumi hears how every agent ends a turn, so it can tell the user.
+        guard let note = sumiWatches[session.id] ?? (isPhoneModeOn && session.kind.isAgent ? "" : nil) else { return nil }
         let kind: SumiEvent.Kind
         switch session.state {
         // Background subagents outlive the turn; their last SubagentStop reports it instead.
@@ -381,11 +413,17 @@ extension SessionStore {
 
     /// Sends the digest once its window has passed and Sumi isn't mid-turn; the
     /// sumi's own next state change tries again. A mostly full context is cleared first.
+    /// Sumi hears even mid-turn: a message typed while it works queues in its CLI for when the
+    /// current step ends. `deliver` holds it back only for a dialog or a half-typed draft.
     func flushSumiDigest(now: Date = Date()) {
-        guard let sumi, !sumi.isExitedProcess else { sumiDigest = SumiDigest(); return }
-        guard sumiDigest.isDue(at: now), !sumiDigest.clearing,
-              sumi.atRest || sumi.state.needsAttention else { return }
-        if sumi.usage.contextPercent ?? 0 >= Self.sumiClearPercent, sumi.startFreshConversation() {
+        guard let sumi, !sumi.isExitedProcess else {
+            // One on its way keeps what it should hear first (Phone Mode's briefing).
+            if !sumiStarting { sumiDigest = SumiDigest() }
+            return
+        }
+        guard sumiDigest.isDue(at: now), !sumiDigest.clearing, !sumi.isWaking, sumi.state != .starting,
+              sumi.inputIsEmpty, !sumi.dialogOnScreen else { return }
+        if sumi.atRest, sumi.usage.contextPercent ?? 0 >= Self.sumiClearPercent, sumi.startFreshConversation() {
             sumiDigest.clearing = true
             deliverDigestAfterClear(attempts: 10)
             return
@@ -414,6 +452,8 @@ struct SumiEvent: Equatable {
         case finished(String), failed(String), exited, steward(String)
         /// A session handed to Sumi is waiting, with the user's note for it.
         case needsYou(String, note: String?)
+        /// Phone Mode: a wait Sumi was told of is still open after this long.
+        case stillWaiting(String, seconds: Int)
         case stoppedHandling(String)
         /// The user turned Phone Mode on or off; not about one terminal.
         case phoneMode(Bool)
@@ -429,12 +469,18 @@ struct SumiEvent: Equatable {
         switch kind {
         case .needsYou(let reason, let note):
             return line + "is waiting: " + reason + (note.map { " (handle per: \($0))" } ?? "")
+        case .stillWaiting(let reason, let seconds):
+            return line + "is STILL waiting after \(seconds) s: " + reason
+                + ". Push the user a notification now naming @\(label) and what it needs, then act on their answer."
         case .stoppedHandling(let why):
             return "stopped handling @\(label): " + why
         case .phoneMode(true):
-            return "Phone Mode is on: the user is away and talks to you from their phone. Kuronami approves agents' "
-                + "ordinary requests itself; you handle every agent's questions and risky requests. Tell the user what's "
-                + "waiting, and approve a risky one with answer_prompt user_approved true only after they say yes to it."
+            return "Phone Mode is on: the user is away and runs everything through you from their phone. Start with "
+                + "list_terminals and give them a short roll call: one line per agent, @name, what it's doing. From now "
+                + "on Tako tells you the moment any agent waits, finishes, fails or exits. Tako approves ordinary "
+                + "permission requests itself; everything else comes to you. Relay each wait to the user at once, naming "
+                + "the agent, and act on their answer with your tools (answer_prompt, choose_option, trust_folder, sign_in, "
+                + "interrupt_agent, send_message). Approve a risky request only after they say yes to it."
         case .phoneMode(false):
             return "Phone Mode is off: the user is back at the Mac, and agents' waits go to them again."
         case .finished(let summary): line += "finished: " + summary
@@ -450,29 +496,33 @@ struct SumiEvent: Equatable {
 /// Events gathered for a few seconds, and while Sumi is mid-turn, so it wakes once for
 /// all of them. The message stays on one line: a typed newline would submit it early.
 struct SumiDigest {
-    static let window: TimeInterval = 3
+    static let window: TimeInterval = 1
+    /// An agent waiting on the user: barely gathered at all.
+    static let urgentWindow: TimeInterval = 0.3
 
     private(set) var events: [SumiEvent] = []
     private var since: Date?
+    private var urgent = false
     /// Sumi is starting a fresh conversation; the digest waits for it.
     var clearing = false
 
     var isEmpty: Bool { events.isEmpty }
 
-    mutating func add(_ event: SumiEvent, at now: Date = Date()) {
+    mutating func add(_ event: SumiEvent, urgent: Bool = false, at now: Date = Date()) {
         if events.isEmpty { since = now }
+        if urgent { self.urgent = true }
         events.append(event)
     }
 
     func isDue(at now: Date) -> Bool {
         guard let since else { return false }
-        return now.timeIntervalSince(since) >= Self.window
+        return now.timeIntervalSince(since) >= (urgent ? Self.urgentWindow : Self.window)
     }
 
     /// The message for everything gathered so far; the digest starts over empty.
     mutating func take(cleared: Bool = false) -> String? {
         guard !events.isEmpty else { return nil }
-        defer { events = []; since = nil }
+        defer { events = []; since = nil; urgent = false }
         return Self.message(events, cleared: cleared)
     }
 

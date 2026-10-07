@@ -424,8 +424,14 @@ final class TerminalSession: ObservableObject, Identifiable {
         guard showingTrustPrompt || mayShow else { return }
         let screen = surface.readViewport()
         if PromptScreen.hasSignIn(screen, kind: kind) {
-            trustPromptSeen(true, reason: "Sign in to \(kind.displayName)")
+            let reason = "Sign in to \(kind.displayName)"
+            trustPromptSeen(true, reason: reason)
+            // After the state change: `apply` drops the question whenever the wait ends.
+            if showingTrustPrompt, state == .needsInput(reason), pendingQuestion == nil {
+                pendingQuestion = PendingQuestion.fromScreen(screen, question: reason)
+            }
         } else {
+            if pendingQuestion?.selectsByNumber == true { pendingQuestion = nil }
             trustPromptSeen(PromptScreen.hasTrustDialog(screen))
         }
     }
@@ -497,7 +503,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     }
 
     /// Picks option `index` of the single-select question on screen by pressing the arrow keys and
-    /// enter. Re-reads the screen first, like `answerPromptByKeys`, so nothing stray is typed.
+    /// enter (or, for a menu read off the screen, its number). Re-reads the screen first, like
+    /// `answerPromptByKeys`, so nothing stray is typed.
     func answerQuestionByKeys(option index: Int) -> Result<String, PromptError> {
         guard kind.isAgent, state.needsAttention else { return .failure(.notWaiting(label)) }
         guard let question = pendingQuestion, question.mode == .options, question.items[0].options.indices.contains(index) else {
@@ -506,20 +513,56 @@ final class TerminalSession: ObservableObject, Identifiable {
         let screen = surface.readViewport()
         let first = String(question.items[0].options[0].label.prefix(12))
         guard screen.contains(first) else { return .failure(.noPromptOnScreen(label)) }
-        PendingQuestion.keys(forOption: index).forEach { _ = surface.pressKey(named: $0) }
+        question.keysToPick(option: index).forEach { _ = surface.pressKey(named: $0) }
         record(.approval, "Answered \(question.items[0].options[index].label) in Tako")
         pendingQuestion = nil
-        apply(.userSubmitted, source: "approval", force: .working)
+        // A screen menu (signing in) comes before the CLI is up: back to starting, where the
+        // screen is still watched, rather than working.
+        apply(.userSubmitted, source: "approval", force: question.selectsByNumber ? .starting : .working)
         return .success(question.items[0].options[index].label)
     }
 
+    /// Signs a signed-out Codex in with a device code, for someone away from this Mac: picks
+    /// "Sign in with Device Code" on its sign-in screen, then waits for the link and one-time code
+    /// to show and passes them on.
+    func signInWithDeviceCode(completion: @escaping (Result<String, PromptError>) -> Void) {
+        guard kind == .codex, !isAsleep else { return completion(.failure(.noPromptOnScreen(label))) }
+        let screen = surface.readViewport()
+        guard PromptScreen.hasSignIn(screen, kind: kind),
+              let option = PromptScreen.options(screen).first(where: { $0.text.lowercased().contains("device code") }) else {
+            return completion(.failure(.noPromptOnScreen(label)))
+        }
+        _ = surface.pressKey(named: String(option.number))
+        record(.note, "Signing in with a device code from Tako")
+        pendingQuestion = nil
+        apply(.userSubmitted, source: "approval", force: .starting)
+        waitForDeviceCode(attemptsLeft: 30, completion: completion)
+    }
+
+    /// Polls the screen every half second, up to 15 seconds, for the device-code link and code.
+    private func waitForDeviceCode(attemptsLeft: Int, completion: @escaping (Result<String, PromptError>) -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500)) { [weak self] in
+            guard let self else { return completion(.failure(.signIn("the session closed before a code appeared"))) }
+            let screen = self.surface.readViewport()
+            if let found = PromptScreen.deviceCode(in: screen) {
+                return completion(.success("Open \(found.url) and enter code \(found.code)"))
+            }
+            if let message = PromptScreen.signInFailure(in: screen) { return completion(.failure(.signIn(message))) }
+            guard attemptsLeft > 1 else {
+                return completion(.failure(.signIn("no device code showed on @\(self.label)'s screen; open it to sign in")))
+            }
+            self.waitForDeviceCode(attemptsLeft: attemptsLeft - 1, completion: completion)
+        }
+    }
+
     enum PromptError: Error, CustomStringConvertible {
-        case notWaiting(String), noPromptOnScreen(String), noAlwaysOption
+        case notWaiting(String), noPromptOnScreen(String), noAlwaysOption, signIn(String)
         var description: String {
             switch self {
             case .notWaiting(let label): return "@\(label) isn't waiting on a prompt"
             case .noPromptOnScreen(let label): return "couldn't find the prompt on @\(label)'s screen; open it to answer"
             case .noAlwaysOption: return "this prompt has no \"don't ask again\" option"
+            case .signIn(let message): return "sign-in failed: \(message)"
             }
         }
     }
@@ -824,6 +867,23 @@ enum PromptScreen {
     static func hasSignIn(_ screen: String, kind: SessionKind) -> Bool {
         let lower = screen.lowercased()
         return kind.adapter?.signInMarkers.contains(where: lower.contains) ?? false
+    }
+
+    /// The verification link and one-time code of a device-code sign-in, once both are on screen.
+    /// The code is groups of 4–5 capitals or digits joined by dashes ("ABCD-1234", "ABCD-EFGHI").
+    static func deviceCode(in screen: String) -> (url: String, code: String)? {
+        let urls = screen.split(whereSeparator: \.isWhitespace).filter { $0.hasPrefix("https://") }
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:)]}>'\"")) }
+        guard let url = urls.first(where: { $0.lowercased().contains("device") }) ?? urls.first else { return nil }
+        let text = screen.split(whereSeparator: \.isWhitespace).filter { !$0.contains("://") }.joined(separator: " ")
+        guard let range = text.range(of: #"\b[A-Z0-9]{4,5}(-[A-Z0-9]{4,5})+\b"#, options: .regularExpression) else { return nil }
+        return (url, String(text[range]))
+    }
+
+    /// Why a sign-in can't go on, when the screen says so (device-code login turned off).
+    static func signInFailure(in screen: String) -> String? {
+        screen.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { $0.lowercased().contains("not enabled") }
     }
 
     static func inputIsEmpty(_ screen: String, kind: SessionKind) -> Bool {

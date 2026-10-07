@@ -93,7 +93,7 @@ private struct GeneralSettings: View {
 
     /// Shared with Sumi panel's header: a running sumi restarts on the new CLI.
     private var sumiKind: Binding<SessionKind?> {
-        Binding(get: { TerminalSessionFactory.store?.sumi?.kind ?? SessionStore.chosenSumiKind }, set: { kind in
+        Binding(get: { TerminalSessionFactory.store?.sumi?.kind ?? SessionStore.sumiKind }, set: { kind in
             guard let kind else { return }
             if let store = TerminalSessionFactory.store, store.sumi != nil {
                 store.switchSumi(to: kind)

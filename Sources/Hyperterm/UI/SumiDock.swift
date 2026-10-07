@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import SwiftUI
 
 /// Sumi's place in the window: a round button in the bottom-left corner. Clicking it
@@ -11,6 +10,8 @@ final class SumiDock {
     final class State: ObservableObject {
         @Published var isOpen = false
         @Published var markSize: CGFloat = 40
+        /// Why the last start failed; shown in the header until the next try.
+        @Published var notice: String?
     }
 
     private let store: SessionStore
@@ -19,12 +20,8 @@ final class SumiDock {
     private let button: NSPanel
     private let panel: SumiPanel
     private let container = SurfaceContainer()
-    private var chooser: ChooserHostingView<SumiChooser>!
-    private let chooserState = SumiChooserState()
-    private var installedWatch: AnyCancellable?
     private var startWatch: Task<Void, Never>?
     private weak var session: TerminalSession?
-    private var choiceWatch: AnyCancellable?
     /// Windows whose clicks leave Sumi open (popped-out tiles, the switcher, the mention picker).
     var keepsOpenForClicks: (NSWindow) -> Bool = { _ in false }
 
@@ -62,19 +59,13 @@ final class SumiDock {
         frame.layer?.borderColor = Ink.hairline.cgColor
         frame.layer?.borderWidth = Size.hairline
         frame.layer?.masksToBounds = true
-        let header = NSHostingView(rootView: SumiHeader(store: store, collapse: { [weak self] in self?.close() },
-                                                             start: { [weak self] in self?.startIfNeeded() }))
+        let header = NSHostingView(rootView: SumiHeader(store: store, dock: state, collapse: { [weak self] in self?.close() },
+                                                             start: { [weak self] in self?.startIfNeeded() },
+                                                             chooseModel: { [weak self] in self?.chooseModel($0, of: $1) }))
         header.sizingOptions = []
         header.translatesAutoresizingMaskIntoConstraints = false
         container.translatesAutoresizingMaskIntoConstraints = false
-        chooser = ChooserHostingView(rootView: SumiChooser(state: chooserState,
-                                                                pick: { [weak self] in self?.pick($0) },
-                                                                back: { [weak self] in self?.goBack() }))
-        chooser.onKey = { [weak self] in self?.handleKey($0) ?? false }
-        chooser.translatesAutoresizingMaskIntoConstraints = false
-        chooser.isHidden = true
         frame.addSubview(container)
-        frame.addSubview(chooser)
         frame.addSubview(header)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: frame.topAnchor),
@@ -85,20 +76,8 @@ final class SumiDock {
             container.leadingAnchor.constraint(equalTo: frame.leadingAnchor, constant: Space.xs),
             container.trailingAnchor.constraint(equalTo: frame.trailingAnchor, constant: -Space.xs),
             container.bottomAnchor.constraint(equalTo: frame.bottomAnchor, constant: -Space.xs),
-            chooser.topAnchor.constraint(equalTo: header.bottomAnchor),
-            chooser.leadingAnchor.constraint(equalTo: frame.leadingAnchor),
-            chooser.trailingAnchor.constraint(equalTo: frame.trailingAnchor),
-            chooser.bottomAnchor.constraint(equalTo: frame.bottomAnchor),
         ])
         panel.contentView = frame
-        // Switching to a CLI it hasn't run on yet (here or in Settings) closes Sumi and
-        // asks for a model.
-        choiceWatch = store.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.syncChooser() }
-        }
-        installedWatch = InstalledAgents.shared.$kinds.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.skipCLIStepIfSole() }
-        }
         // Clicking anywhere else in Tako folds it away, like a popover. Only a click: the
         // sumi's own work (a confirm sheet, a popped-out tile, an app it opens) also takes
         // focus from the panel, and must not fold it.
@@ -139,7 +118,7 @@ final class SumiDock {
         self.session = session
         container.show(session.surface)
         session.surface.setOccluded(!state.isOpen)
-        if state.isOpen, chooser.isHidden { panel.makeFirstResponder(session.surface) }
+        if state.isOpen { panel.makeFirstResponder(session.surface) }
     }
 
     func detach(_ session: TerminalSession) {
@@ -162,15 +141,9 @@ final class SumiDock {
         close(restoreFocus: false)
     }
 
-    /// A click anywhere on the panel (its frame and header too) leaves the keyboard in the terminal,
-    /// or in the chooser while it shows.
+    /// A click anywhere on the panel (its frame and header too) leaves the keyboard in the terminal.
     private func focusOnClickIn(_ event: NSEvent) {
         guard state.isOpen, event.window === panel else { return }
-        if !chooser.isHidden {
-            if !panel.isKeyWindow { panel.makeKey() }
-            if panel.firstResponder !== chooser, !(panel.firstResponder is NSText) { panel.makeFirstResponder(chooser) }
-            return
-        }
         guard let session else { return }
         if !panel.isKeyWindow { panel.makeKey() }
         if panel.firstResponder !== session.surface, !(panel.firstResponder is NSText) { panel.makeFirstResponder(session.surface) }
@@ -188,9 +161,7 @@ final class SumiDock {
         if panel.parent !== window { window.addChildWindow(panel, ordered: .above) }
         reposition()
         panel.makeKeyAndOrderFront(nil)
-        if !chooser.isHidden {
-            panel.makeFirstResponder(chooser)
-        } else if let session {
+        if let session {
             session.surface.setOccluded(false)
             panel.makeFirstResponder(session.surface)
         }
@@ -208,91 +179,27 @@ final class SumiDock {
         if let selected = store.selected, selected.surface.window === window { window.makeFirstResponder(selected.surface) }
     }
 
-    /// The first time, the panel asks which CLI and model to run instead of starting one.
+    /// Starts Sumi when it isn't running, on the chosen CLI and model (the CLI's default unless picked).
     private func startIfNeeded() {
-        guard store.sumiNeedsChoice else {
-            chooser.isHidden = true
-            store.startSumi()
-            return
-        }
-        showChooser()
-    }
-
-    /// Shows the chooser on its first step (or a model step, when there is nothing to choose
-    /// between CLIs) and makes it the keyboard's target. A pending failure note stays as it is.
-    private func showChooser() {
-        InstalledAgents.shared.refresh()
-        if chooserState.model.notice == nil {
-            let installed = InstalledAgents.shared
-            if let kind = SessionStore.chosenSumiKind ?? SumiOnboarding.soleCLI(installed: installed.kinds) {
-                SessionStore.sumiKind = kind
-                chooserState.model = .models(for: kind)
-            } else {
-                chooserState.model = .clis(isEnabled: installed.isInstalled)
-            }
-        }
-        chooser.isHidden = false
-        if state.isOpen { panel.makeFirstResponder(chooser) }
-    }
-
-    /// Installed CLIs just became known: with only one, its model step replaces the CLI step.
-    private func skipCLIStepIfSole() {
-        guard !chooser.isHidden, chooserState.model.step == nil,
-              let kind = SumiOnboarding.soleCLI(installed: InstalledAgents.shared.kinds) else { return }
-        choose(kind)
-    }
-
-    private var rows: (count: Int, isEnabled: (Int) -> Bool) {
-        if let kind = chooserState.model.step { return (SessionStore.sumiModels(for: kind).count, { _ in true }) }
-        let choices = SessionStore.sumiChoices
-        return (choices.count, { InstalledAgents.shared.isInstalled(choices[$0]) })
-    }
-
-    private func handleKey(_ key: SumiChooserKey) -> Bool {
-        let rows = rows
-        switch chooserState.model.handle(key, count: rows.count, isEnabled: rows.isEnabled) {
-        case .pick(let index): pick(index)
-        case .back: goBack()
-        case .none: break
-        }
-        return true
-    }
-
-    private func pick(_ index: Int) {
-        if let kind = chooserState.model.step {
-            let models = SessionStore.sumiModels(for: kind)
-            if models.indices.contains(index) { chooseModel(models[index].name, of: kind) }
-        } else {
-            let choices = SessionStore.sumiChoices
-            if choices.indices.contains(index) { choose(choices[index]) }
+        let starting = store.sumi.map { $0.isExitedProcess } ?? true
+        state.notice = nil
+        store.startSumi()
+        if starting {
+            let kind = SessionStore.sumiKind
+            watchStart(kind: kind, name: SessionStore.sumiModel(for: kind))
         }
     }
 
-    /// One step back; on the first step (or with no CLI to go back to), folds the panel away.
-    private func goBack() {
-        if chooserState.model.step != nil, SumiOnboarding.soleCLI(installed: InstalledAgents.shared.kinds) == nil {
-            chooserState.model = .clis(isEnabled: InstalledAgents.shared.isInstalled)
-        } else {
-            close()
-        }
-    }
-
-    private func choose(_ kind: SessionKind) {
-        store.chooseSumi(kind)
-        chooserState.model = .models(for: kind)
-        syncChooser()
-    }
-
+    /// A model picked in the header's menu: Sumi restarts on it.
     private func chooseModel(_ name: String?, of kind: SessionKind) {
-        chooserState.model.notice = nil
-        chooser.isHidden = true
+        state.notice = nil
         store.chooseSumiModel(name, for: kind)
         watchStart(kind: kind, name: name)
     }
 
     /// A model the CLI won't run, or a CLI that isn't there, would otherwise leave "Not running".
-    /// Within a few seconds of a choice, Sumi that is gone or has exited sends the user
-    /// back to the model step with a note.
+    /// Within a few seconds of a start, Sumi that is gone or has exited is closed, its model
+    /// forgotten, and the header says why; its Start button and menu try again.
     private func watchStart(kind: SessionKind, name: String?) {
         startWatch?.cancel()
         let began = Date()
@@ -301,7 +208,7 @@ final class SumiDock {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 guard let self, !Task.isCancelled else { return }
                 // The user switched CLI or model since: another watch or no watch applies.
-                guard SessionStore.sumiKind == kind, SessionStore.chosenSumiModel(for: kind) == (name ?? "") else { return }
+                guard SessionStore.sumiKind == kind, SessionStore.sumiModel(for: kind) == name else { return }
                 let sumi = store.sumi
                 let exited = sumi.map { $0.isExitedProcess || { if case .failed = $0.state { return true } else { return false } }($0) }
                 switch SumiOnboarding.startVerdict(exited: exited, launching: store.sumiStarting || store.launchingCount > 0,
@@ -312,32 +219,11 @@ final class SumiDock {
                     if let sumi { store.close(sumi) }
                     SessionStore.forgetSumiModel(for: kind)
                     let title = SessionStore.sumiModels(for: kind).first { $0.name == name }?.title ?? name ?? "its default model"
-                    chooserState.model = .models(for: kind, notice: SumiOnboarding.failureMessage(kind: kind, modelTitle: title), avoiding: name)
-                    showChooser()
+                    state.notice = SumiOnboarding.failureMessage(kind: kind, modelTitle: title)
                     return
                 }
             }
         }
-    }
-
-    private func syncChooser() {
-        let hidden = !store.sumiNeedsChoice
-        guard chooser.isHidden != hidden else { return }
-        if hidden { chooser.isHidden = true } else { showChooser() }
-    }
-}
-
-/// Takes the keyboard while the chooser shows, so keys never reach a terminal surface behind it.
-private final class ChooserHostingView<Content: View>: NSHostingView<Content> {
-    var onKey: ((SumiChooserKey) -> Bool)?
-
-    override var acceptsFirstResponder: Bool { true }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func keyDown(with event: NSEvent) {
-        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
-              let key = SumiChooserKey.from(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers),
-              onKey?(key) == true else { return super.keyDown(with: event) }
     }
 }
 
@@ -386,7 +272,7 @@ private struct SumiButton: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Nil until a CLI is chosen; one running from before there was a choice counts.
-    private var kind: SessionKind? { store.sumi?.kind ?? SessionStore.chosenSumiKind }
+    private var kind: SessionKind? { store.sumi?.kind ?? SessionStore.sumiKind }
 
     var body: some View {
         Button(action: toggle) {
@@ -482,23 +368,29 @@ private struct SumiDot: View {
 /// The panel's title row: what Sumi is doing, which CLI runs it, and the fold button.
 private struct SumiHeader: View {
     @ObservedObject var store: SessionStore
+    @ObservedObject var dock: SumiDock.State
     let collapse: () -> Void
     let start: () -> Void
+    let chooseModel: (String?, SessionKind) -> Void
 
     var body: some View {
-        let choosing = store.sumiNeedsChoice
         HStack(spacing: Space.s) {
             if let sumi = store.sumi {
                 SumiTitle(session: sumi)
             } else {
                 Text("Sumi").font(Typeface.headline).foregroundStyle(Tone.text)
-                Text(choosing ? "Setup" : store.launchingCount > 0 ? "Starting…" : "Not running").font(Typeface.caption).foregroundStyle(Tone.faint)
-                if store.launchingCount == 0 && !choosing {
+                if store.launchingCount == 0, let notice = dock.notice {
+                    Text(notice).font(Typeface.caption.weight(.medium)).foregroundStyle(Palette.attention)
+                        .lineLimit(1).truncationMode(.tail)
+                } else {
+                    Text(store.launchingCount > 0 ? "Starting…" : "Not running").font(Typeface.caption).foregroundStyle(Tone.faint)
+                }
+                if store.launchingCount == 0 {
                     Button("Start", action: start).buttonStyle(.plain).font(Typeface.caption.weight(.medium)).foregroundStyle(Tone.text)
                 }
             }
             Spacer(minLength: 0)
-            if !choosing { SumiCLIMenu(store: store) }
+            SumiCLIMenu(store: store, chooseModel: chooseModel)
             Button(action: collapse) {
                 Image(systemName: "chevron.down").font(Typeface.caption.weight(.semibold)).foregroundStyle(Tone.muted)
             }
@@ -519,6 +411,8 @@ private struct SumiHeader: View {
 /// choice changes.
 private struct SumiCLIMenu: View {
     let store: SessionStore
+    /// Restarts Sumi on a model, watching that it starts.
+    let chooseModel: (String?, SessionKind) -> Void
     /// The saved CLI and model this menu last drew; only a change in it redraws the menu.
     @State private var drawn = ""
 
@@ -536,11 +430,10 @@ private struct SumiCLIMenu: View {
             }
             Section("Model") {
                 ForEach(SessionStore.sumiModels(for: shown)) { model in
-                    let title = model.title + (model.recommended ? " (Recommended)" : "")
                     Button {
-                        store.chooseSumiModel(model.name, for: shown)
+                        chooseModel(model.name, shown)
                     } label: {
-                        if model.name == current { Label(title, systemImage: "checkmark") } else { Text(title) }
+                        if model.name == current { Label(model.title, systemImage: "checkmark") } else { Text(model.title) }
                     }
                 }
             }
@@ -578,132 +471,6 @@ private struct SumiTitle: View {
             let title = model.map { name in SessionStore.sumiModels(for: session.kind).first { $0.name == name }?.title ?? name }
             return [title, "Full access"].compactMap { $0 }.joined(separator: " · ")
         default: return session.state.phrase
-        }
-    }
-}
-
-@MainActor
-final class SumiChooserState: ObservableObject {
-    @Published var model = SumiChooserModel()
-}
-
-/// The first time the panel opens: which CLI runs Sumi, then which of its models. Ones
-/// not on the PATH show, greyed. Keys drive it (see SumiChooserKey); the selected row has a ring.
-private struct SumiChooser: View {
-    @ObservedObject var state: SumiChooserState
-    let pick: (Int) -> Void
-    let back: () -> Void
-    @ObservedObject private var installed = InstalledAgents.shared
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Space.s) {
-            if let notice = state.model.notice {
-                Text(notice).font(Typeface.caption.weight(.medium)).foregroundStyle(Palette.attention)
-                    .frame(width: 300, alignment: .leading)
-            }
-            if let kind = state.model.step {
-                models(kind)
-            } else {
-                clis
-            }
-            Spacer(minLength: 0)
-            Text(hint).font(Typeface.caption).foregroundStyle(Tone.faint)
-        }
-        .padding(Space.m)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Tone.deep)
-    }
-
-    private var hint: String {
-        state.model.step == nil ? "↑↓ choose · ↩ select · esc close" : "↑↓ choose · ↩ start · esc back"
-    }
-
-    @ViewBuilder private var clis: some View {
-        Text("Run Sumi with").font(Typeface.headline).foregroundStyle(Tone.text)
-        ForEach(Array(SessionStore.sumiChoices.enumerated()), id: \.element) { index, kind in
-            let available = installed.isInstalled(kind)
-            Button { pick(index) } label: {
-                HStack(spacing: Space.s) {
-                    AgentAvatar(kind: kind, dimmed: !available)
-                    VStack(alignment: .leading, spacing: Space.xxs) {
-                        Text(kind.displayName).font(Typeface.body.weight(.medium)).foregroundStyle(available ? Tone.text : Tone.faint)
-                        Text(available ? kind.sumiNote : "not installed").font(Typeface.caption).foregroundStyle(Tone.faint)
-                    }
-                    Spacer(minLength: 0)
-                    Text("\(index + 1)").font(Typeface.caption).foregroundStyle(Tone.faint)
-                }
-                .modifier(ChoiceRow(selected: state.model.selection == index && available))
-            }
-            .buttonStyle(.plain)
-            .disabled(!available)
-            .onHover { if $0, available { state.model.selection = index } }
-        }
-        Text("You can change it later in the header or in Settings.").font(Typeface.caption).foregroundStyle(Tone.faint)
-    }
-
-    /// The second step: a small model is recommended, since Sumi wakes on every update.
-    @ViewBuilder private func models(_ kind: SessionKind) -> some View {
-        let models = SessionStore.sumiModels(for: kind)
-        Text("Pick \(kind.displayName)'s model").font(Typeface.headline).foregroundStyle(Tone.text)
-        Text("It wakes on every update it watches, so a smaller model saves the most tokens.")
-            .font(Typeface.caption).foregroundStyle(Tone.faint).frame(width: 300, alignment: .leading)
-        ForEach(Array(models.enumerated()), id: \.element.id) { index, model in
-            Button { pick(index) } label: {
-                VStack(alignment: .leading, spacing: Space.xxs) {
-                    HStack(spacing: Space.s) {
-                        Text(model.title).font(Typeface.body.weight(.medium)).foregroundStyle(Tone.text)
-                        if model.recommended { Tag(text: "Recommended", tint: Palette.accent) }
-                        Spacer(minLength: 0)
-                        Text("\(index + 1)").font(Typeface.caption).foregroundStyle(Tone.faint)
-                    }
-                    Text(model.detail).font(Typeface.caption).foregroundStyle(Tone.faint).fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .modifier(ChoiceRow(selected: state.model.selection == index))
-            }
-            .buttonStyle(.plain)
-            .onHover { if $0 { state.model.selection = index } }
-        }
-        if models.indices.contains(state.model.selection) {
-            Button { pick(state.model.selection) } label: {
-                Text("Start with \(models[state.model.selection].title)")
-                    .font(Typeface.body.weight(.medium)).foregroundStyle(Tone.text)
-                    .frame(width: 300)
-                    .padding(.vertical, Space.s)
-                    .background(Palette.accent, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
-            }
-            .buttonStyle(.plain)
-        }
-        if SumiOnboarding.soleCLI(installed: installed.kinds) == nil {
-            Button("Choose another CLI", action: back)
-                .buttonStyle(.plain).font(Typeface.caption).foregroundStyle(Tone.muted)
-        }
-    }
-}
-
-/// One choice on the chooser: a fixed-width card, ringed while selected.
-private struct ChoiceRow: ViewModifier {
-    let selected: Bool
-
-    func body(content: Content) -> some View {
-        content
-            .padding(Space.s)
-            .frame(width: 300)
-            .background(selected ? Tone.surface.opacity(1) : Tone.surface.opacity(0.6),
-                        in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous)
-                .strokeBorder(selected ? Palette.accent : Color.clear, lineWidth: Size.hairline * 2))
-            .contentShape(RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
-    }
-}
-
-extension SessionKind {
-    /// One line on Sumi chooser.
-    var sumiNote: String {
-        switch self {
-        case .claude: return "Anthropic's agent, on your Claude plan or API key."
-        case .codex: return "OpenAI's agent, on your ChatGPT plan or API key."
-        default: return displayName
         }
     }
 }

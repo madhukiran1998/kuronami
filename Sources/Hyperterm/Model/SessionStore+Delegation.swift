@@ -21,9 +21,13 @@ struct Delegation: Equatable {
     var handled = 0
     /// When Sumi was told of the wait in progress.
     var toldAt: Date?
+    /// Phone Mode: how many times Sumi was reminded of the wait in progress.
+    var reminders = 0
 
     /// How long Sumi has before the user is notified anyway.
     static let fallback: TimeInterval = 90
+    /// Phone Mode: reminders to Sumi before the wait also goes to the Mac.
+    static let phoneReminders = 3
 
     func isUsedUp(at now: Date) -> Bool {
         switch scope {
@@ -143,17 +147,20 @@ extension SessionStore {
     }
 
     /// A delegated session started waiting: Sumi hears instead of the user. False when
-    /// the user should be notified as usual. Folder trust is never delegated.
+    /// the user should be notified as usual. Folder trust and sign-in go to Sumi only in Phone
+    /// Mode, where it relays them to the user's phone.
     func sumiTakesWait(_ session: TerminalSession, reason: String, now: Date = Date()) -> Bool {
         guard var delegation = session.delegation, let sumi, !sumi.isExitedProcess else { return false }
-        guard !TerminalSession.isUsersOwn(reason) else {
+        guard isPhoneModeOn || !TerminalSession.isUsersOwn(reason) else {
             session.record(.note, reason == TerminalSession.trustReason ? "Left for you: trusting a folder is your call" : "Left for you: signing in is your call")
             return false
         }
         delegation.toldAt = now
+        delegation.reminders = 0
         session.delegation = delegation
         addToSumiDigest(SumiEvent(label: session.label,
-                                            kind: .needsYou(waitDescription(session, reason: reason), note: delegation.note)))
+                                  kind: .needsYou(waitDescription(session, reason: reason), note: delegation.note)),
+                        urgent: true)
         scheduleDelegationSweep(after: Delegation.fallback)
         return true
     }
@@ -164,11 +171,12 @@ extension SessionStore {
         guard var delegation = session.delegation else { return }
         if previous.needsAttention, delegation.toldAt != nil {
             delegation.toldAt = nil
+            delegation.reminders = 0
             delegation.handled += 1
         }
         session.delegation = delegation
         if case .exited = session.state {
-            stopDelegating(session, why: "it exited", tellSumi: true)
+            stopDelegating(session, why: "it exited", tellSumi: !(isPhoneModeOn && delegation.scope == .phoneMode))
         } else if delegation.isUsedUp(at: now) {
             stopDelegating(session, why: "scope used up", tellSumi: true)
         } else if delegation.scope == .turn, session.state == .idle, previous == .working {
@@ -176,12 +184,23 @@ extension SessionStore {
         }
     }
 
-    /// Waits Sumi hasn't answered in time go to the user; expired handoffs end.
+    /// Waits Sumi hasn't answered in time go to the user; expired handoffs end. In Phone Mode the
+    /// user is away from the Mac, so Sumi is reminded first, to push their phone.
     func sweepDelegations(now: Date = Date()) {
         for session in sessions {
-            guard let delegation = session.delegation else { continue }
-            if delegation.isOverdue(at: now), session.state.needsAttention {
-                escalate(session, why: "Sumi didn't answer within \(Int(Delegation.fallback)) s", now: now)
+            guard var delegation = session.delegation else { continue }
+            if delegation.isOverdue(at: now), session.state.needsAttention, isPhoneModeOn,
+               delegation.reminders < Delegation.phoneReminders, case .needsInput(let reason) = session.state {
+                delegation.reminders += 1
+                delegation.toldAt = now
+                session.delegation = delegation
+                let waited = Int(Delegation.fallback) * delegation.reminders
+                addToSumiDigest(SumiEvent(label: session.label, kind: .stillWaiting(
+                    waitDescription(session, reason: reason), seconds: waited)), urgent: true)
+                scheduleDelegationSweep(after: Delegation.fallback)
+            } else if delegation.isOverdue(at: now), session.state.needsAttention {
+                let waited = Int(Delegation.fallback) * (delegation.reminders + 1)
+                escalate(session, why: "Sumi didn't get an answer within \(waited) s", now: now)
             } else if delegation.isUsedUp(at: now) {
                 stopDelegating(session, why: "scope used up", tellSumi: true)
             }
@@ -193,6 +212,7 @@ extension SessionStore {
         guard var delegation = session.delegation else { return }
         if delegation.toldAt != nil {
             delegation.toldAt = nil
+            delegation.reminders = 0
             delegation.handled += 1
         }
         session.delegation = delegation
@@ -223,7 +243,9 @@ extension SessionStore {
         let approval = approvals[session.id]
         let pending = session.pendingRequest
         guard approval != nil || (pending != nil && pending == waiting) else {
-            return .failure(DelegationError("@\(session.label) asked a question, not for permission: answer it with send_message"))
+            return .failure(DelegationError(session.pendingQuestion?.mode == .options
+                ? "@\(session.label) asked a multiple-choice question: answer it with choose_option"
+                : "@\(session.label) asked a question, not for permission: answer it with send_message"))
         }
         let request = approval?.request ?? pending ?? waiting
         let summary = approval?.summary ?? waiting
@@ -249,6 +271,82 @@ extension SessionStore {
         }
     }
 
+    // MARK: - Sumi's hands
+
+    /// Sumi acts on a session the user handed it, or on any agent while Phone Mode is on: there the
+    /// user is talking to Sumi from their phone, so what Sumi relays is the user's word.
+    private func sumiMayAct(on session: TerminalSession) -> DelegationError? {
+        guard session.kind.isAgent, !session.isSumi else { return DelegationError("@\(session.label) isn't an agent") }
+        guard isPhoneModeOn || session.delegation != nil else {
+            return DelegationError("@\(session.label) isn't handed to you; outside Phone Mode, take over a session's waits with handle_waiting only when the user asks")
+        }
+        return nil
+    }
+
+    /// choose_option: picks option `number` (1-based) of the question the agent is asking.
+    func chooseForSumi(_ session: TerminalSession, option number: Int,
+                       completion: @escaping (Result<String, DelegationError>) -> Void) {
+        if let refusal = sumiMayAct(on: session) { return completion(.failure(refusal)) }
+        guard let question = session.pendingQuestion, question.mode == .options else {
+            return completion(.failure(DelegationError("@\(session.label) isn't asking a question with options; read_terminal it, and send_message to answer in words")))
+        }
+        let options = question.items[0].options
+        guard options.indices.contains(number - 1) else {
+            return completion(.failure(DelegationError("option must be 1–\(options.count)")))
+        }
+        let label = options[number - 1].label
+        answerQuestion(session, option: number - 1) { result in
+            switch result {
+            case .success:
+                session.record(.note, "Sumi answered: \(label)")
+                completion(.success("answered @\(session.label): \(label)"))
+            case .failure(let error):
+                completion(.failure(DelegationError(error.description)))
+            }
+        }
+    }
+
+    /// trust_folder: only on the user's yes, relayed from their phone.
+    func trustForSumi(_ session: TerminalSession, userApproved: Bool) -> Result<String, DelegationError> {
+        if let refusal = sumiMayAct(on: session) { return .failure(refusal) }
+        guard session.state == .needsInput(TerminalSession.trustReason) else {
+            return .failure(DelegationError("@\(session.label) isn't asking to trust its folder"))
+        }
+        guard userApproved else {
+            return .failure(DelegationError("ask the user whether to trust \(abbreviateHome(session.spec.workPath)) for @\(session.label); if they say yes, call trust_folder again with user_approved true"))
+        }
+        switch answer(session, .approve) {
+        case .success:
+            session.record(.note, "Folder trusted from your phone")
+            return .success("trusted \(abbreviateHome(session.spec.workPath)) for @\(session.label)")
+        case .failure(let error):
+            return .failure(DelegationError(error.description))
+        }
+    }
+
+    /// sign_in: starts the CLI's device-code sign-in and returns the link and code for the user's phone.
+    func signInForSumi(_ session: TerminalSession, completion: @escaping (Result<String, DelegationError>) -> Void) {
+        if let refusal = sumiMayAct(on: session) { return completion(.failure(refusal)) }
+        guard case .needsInput(let reason) = session.state, reason.hasPrefix("Sign in to ") else {
+            return completion(.failure(DelegationError("@\(session.label) isn't asking to sign in")))
+        }
+        session.signInWithDeviceCode { result in
+            switch result {
+            case .success(let instructions): completion(.success(instructions))
+            case .failure(let error): completion(.failure(DelegationError(error.description)))
+            }
+        }
+    }
+
+    /// interrupt_agent: stops the agent's current turn, as Esc does in its terminal.
+    func interruptForSumi(_ session: TerminalSession) -> Result<String, DelegationError> {
+        if let refusal = sumiMayAct(on: session) { return .failure(refusal) }
+        guard session.state == .working else { return .failure(DelegationError("@\(session.label) isn't working")) }
+        _ = session.surface.pressKey(named: "esc")
+        session.record(.note, "Interrupted by Sumi")
+        return .success("interrupted @\(session.label)")
+    }
+
     /// The normal needs-you, for a wait Sumi didn't take or left.
     private func notifyUserOfWait(_ session: TerminalSession) {
         guard case .needsInput(let reason) = session.state else { return }
@@ -261,10 +359,22 @@ extension SessionStore {
     }
 
     /// The reason, plus the pending request when it says more, kept short for the digest.
-    private func waitDescription(_ session: TerminalSession, reason: String) -> String {
+    func waitDescription(_ session: TerminalSession, reason: String) -> String {
         var text = reason
         if let request = approvals[session.id]?.request ?? session.pendingRequest, !reason.contains(request) {
             text += " · request: " + (request.count > 300 ? String(request.prefix(299)) + "…" : request)
+        }
+        if let question = session.pendingQuestion, question.mode == .options {
+            let item = question.items[0]
+            text += " · question: " + item.question + " · options: "
+                + item.options.enumerated().map { "\($0 + 1). \($1.label)" }.joined(separator: "; ")
+                + " (choose_option)"
+        } else if reason == TerminalSession.trustReason {
+            text += " · folder: \(abbreviateHome(session.spec.workPath)) (trust_folder once the user says yes)"
+        } else if reason.hasPrefix("Sign in to ") {
+            text += " (sign_in gets a link and code for the user's phone)"
+        } else if approvals[session.id] != nil || session.pendingRequest == reason {
+            text += " (answer_prompt)"
         }
         return text.split(whereSeparator: \.isNewline).joined(separator: " ")
     }

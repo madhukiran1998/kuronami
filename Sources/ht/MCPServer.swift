@@ -200,9 +200,17 @@ take it back). When Tako tells you a handled session is waiting, read_terminal i
 spirit of the user's note and the agent's task: send_message for a question, answer_prompt approve or deny \
 for a permission prompt. Never approve anything you aren't sure the user would; if unsure, leave it: the \
 user is notified after 90 s. Tell the user briefly what you answered on their behalf. When the user says they're \
-leaving or are on their phone ("phone mode on"), call phone_mode on; when they're back, phone_mode off. While \
-it's on, every agent's waits come to you: tell the user what's waiting, and approve a risky request only after \
-they say yes to that exact request, with answer_prompt user_approved true. Keep notes in \
+leaving or are on their phone ("phone mode on"), call phone_mode on; when they're back, phone_mode off. \
+In Phone Mode you are the user's control center for every agent on this Mac, Claude and Codex alike: they talk \
+only to you, from their phone. Tako messages you the moment an agent waits, finishes, fails or exits; tell the \
+user right away, always naming the agent (@api) so they can answer or tag it, and say in one line what it needs. \
+Act on their answer with your tools: answer_prompt for a permission or plan, choose_option for a multiple-choice \
+question, trust_folder (after they say yes) for a folder, sign_in for a signed-out agent (send them the link and \
+code), interrupt_agent to stop one, send_message for anything in words. When they tag an agent ("@web run the \
+tests"), send_message it and tell them when it's done. When they ask what's going on, list_terminals and answer \
+one line per agent. A message from Tako saying an agent is STILL waiting means the user hasn't seen it: send them \
+a push notification. Approve a risky request only after they say yes to that exact request (user_approved true). \
+Keep notes in \
 \(ControlPaths.sumiNotes): the user's preferences, project folders and open threads. Read it at the start \
 of a task when it may help, update it when you learn something durable, keep it under about 200 lines, and \
 never store secrets there. Start only the agents the user asked for. Keep replies short: say what you did in \
@@ -357,7 +365,7 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "answer_prompt",
-        "description": "Approve or deny the permission request a session you handle (handle_waiting) is waiting on. Only for permission prompts: when it asked a question in chat, answer with send_message. Risky requests (deletes, pushes, deploys, secrets, sudo…) are left for the user; in Phone Mode, ask them on their phone and pass user_approved true once they say yes.",
+        "description": "Approve or deny a permission request (or a plan) an agent is waiting on: any agent in Phone Mode, otherwise only sessions you handle (handle_waiting). For a multiple-choice question use choose_option; for a question in chat, send_message. Risky requests (deletes, pushes, deploys, secrets, sudo…) need the user's yes: in Phone Mode, ask them on their phone and pass user_approved true once they say yes.",
         "inputSchema": [
             "type": "object",
             "properties": [
@@ -376,6 +384,48 @@ private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
             "type": "object",
             "properties": ["on": ["type": "boolean", "description": "true to turn on, false to turn off"]],
             "required": ["on"],
+        ],
+    ],
+    [
+        "name": "choose_option",
+        "description": "Answer an agent's multiple-choice question (Claude's AskUserQuestion, Codex's own menus) by picking an option. Tako's message lists the options with numbers. In Phone Mode this works on any agent; otherwise only on sessions you handle (handle_waiting). Pick only what the user said, or what is clearly right for the task when they asked you to decide.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
+                "option": ["type": "integer", "description": "The option's number, starting at 1"],
+            ],
+            "required": ["terminal", "option"],
+        ],
+    ],
+    [
+        "name": "trust_folder",
+        "description": "Answer an agent's 'trust this folder?' prompt with yes. Ask the user first, naming the folder; call with user_approved true once they say yes.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
+                "user_approved": ["type": "boolean", "description": "The user said yes to trusting this folder"],
+            ],
+            "required": ["terminal"],
+        ],
+    ],
+    [
+        "name": "sign_in",
+        "description": "Sign a signed-out agent in from the user's phone: starts the CLI's device-code sign-in and returns a link and a one-time code. Send both to the user; once they enter the code, the agent continues by itself.",
+        "inputSchema": [
+            "type": "object",
+            "properties": ["terminal": ["type": "string", "description": "Label, e.g. \"@api\""]],
+            "required": ["terminal"],
+        ],
+    ],
+    [
+        "name": "interrupt_agent",
+        "description": "Stop an agent's current turn, as pressing Esc in its terminal does. Use when the user says stop, or it is clearly going wrong; then send_message it what to do instead.",
+        "inputSchema": [
+            "type": "object",
+            "properties": ["terminal": ["type": "string", "description": "Label, e.g. \"@api\""]],
+            "required": ["terminal"],
         ],
     ],
     [
@@ -501,6 +551,24 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req.text = arguments["answer"] as? String
         req.label = arguments["text"] as? String
         req.userApproved = arguments["user_approved"] as? Bool
+    case "choose_option":
+        req = ControlRequest(cmd: .act)
+        req.text = "choose"
+        req.target = arguments["terminal"] as? String
+        req.count = arguments["option"] as? Int
+    case "trust_folder":
+        req = ControlRequest(cmd: .act)
+        req.text = "trust"
+        req.target = arguments["terminal"] as? String
+        req.userApproved = arguments["user_approved"] as? Bool
+    case "sign_in":
+        req = ControlRequest(cmd: .act)
+        req.text = "signin"
+        req.target = arguments["terminal"] as? String
+    case "interrupt_agent":
+        req = ControlRequest(cmd: .act)
+        req.text = "interrupt"
+        req.target = arguments["terminal"] as? String
     case "phone_mode":
         req = ControlRequest(cmd: .phoneMode)
         req.text = (arguments["on"] as? Bool) == true ? "on" : "off"

@@ -18,6 +18,10 @@ struct PendingQuestion: Equatable {
     /// Empty when the payload was missing or malformed: the card then only offers the terminal.
     var items: [Item]
 
+    /// Read off the screen (Codex's sign-in menu) rather than from a hook. Such menus pick an
+    /// option by its number, not by walking the cursor to it.
+    var selectsByNumber = false
+
     /// How the card should present this question.
     enum Mode: Equatable {
         /// One single-select question: its options are buttons that press keys.
@@ -55,5 +59,29 @@ struct PendingQuestion: Equatable {
     /// where the cursor starts on the first option: arrow down that many times, then enter.
     static func keys(forOption index: Int) -> [String] {
         Array(repeating: "down", count: max(0, index)) + ["enter"]
+    }
+
+    /// The keys that pick option `index` (0-based) of this question: its number for a menu read off
+    /// the screen, the arrow walk otherwise.
+    func keysToPick(option index: Int) -> [String] {
+        selectsByNumber ? [String(index + 1)] : Self.keys(forOption: index)
+    }
+
+    /// A single-select question from a numbered menu on screen: each "1. Label" line is an option,
+    /// and the line under it, when it isn't another option, is its description. Only the run
+    /// numbered 1, 2, 3… counts, so option `i` is the one picked by pressing `i + 1`.
+    static func fromScreen(_ screen: String, question: String) -> PendingQuestion {
+        let lines = screen.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var options: [Option] = []
+        for (index, line) in lines.enumerated() {
+            guard let parsed = PromptScreen.options(line).first, parsed.number == options.count + 1 else { continue }
+            var description: String?
+            if index + 1 < lines.count, PromptScreen.options(lines[index + 1]).isEmpty {
+                let next = lines[index + 1].trimmingCharacters(in: .whitespaces)
+                description = next.isEmpty ? nil : next
+            }
+            options.append(Option(label: parsed.text, description: description))
+        }
+        return PendingQuestion(items: [Item(question: question, header: nil, options: options, multiSelect: false)], selectsByNumber: true)
     }
 }

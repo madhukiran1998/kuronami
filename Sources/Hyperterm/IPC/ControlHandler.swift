@@ -152,6 +152,8 @@ struct ControlHandler {
             startAgentForAgent(request, reply: reply)
         case .new:
             create(request, reply: reply)
+        case .act:
+            actForSumi(request, reply: reply)
         default:
             reply(handle(request))
         }
@@ -253,7 +255,7 @@ struct ControlHandler {
             guard let target = callerSession ?? (isUser ? resolve(request.target) : nil) else { return notFound(request.target) }
             store.sessionWantsAttention(target, title: "@\(target.label)", body: sanitizeMessage(request.text ?? ""))
             return .success()
-        case .permission, .subscribe, .browser, .heavy:
+        case .permission, .subscribe, .browser, .heavy, .act:
             return .success()
         }
     }
@@ -690,6 +692,32 @@ struct ControlHandler {
         switch store.answerForSumi(target, answer, reason: reason, userApproved: request.userApproved == true) {
         case .success(let text): return .success(text: text)
         case .failure(let error): return .failure(error.description)
+        }
+    }
+
+    /// Sumi's hands on an agent: pick a question's option, trust its folder, sign it in, or stop
+    /// its turn. Only Sumi, and only where the store allows (Phone Mode or a handed-over session).
+    private func actForSumi(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
+        guard callerSumi != nil else { reply(.failure("only Sumi acts on agents")); return }
+        guard let target = resolve(request.target) else { reply(notFound(request.target)); return }
+        func send(_ result: Result<String, DelegationError>) {
+            switch result {
+            case .success(let text): reply(.success(text: text))
+            case .failure(let error): reply(.failure(error.description))
+            }
+        }
+        switch request.text {
+        case "choose":
+            guard let option = request.count else { reply(.failure("option is required")); return }
+            store.chooseForSumi(target, option: option, completion: send)
+        case "trust":
+            send(store.trustForSumi(target, userApproved: request.userApproved == true))
+        case "signin":
+            store.signInForSumi(target, completion: send)
+        case "interrupt":
+            send(store.interruptForSumi(target))
+        default:
+            reply(.failure("act must be choose, trust, signin or interrupt"))
         }
     }
 

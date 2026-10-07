@@ -30,6 +30,7 @@ enum ControlCommand: String, Codable {
     case machine       // Sumi and the steward: text = status | policy (count = agent cap, targets = pinned)
     case delegate      // Sumi handles target's waits: text = handle | stop | list (label = scope, count, note)
     case phoneMode     // Phone Mode, from the user or Sumi: text = on | off | status
+    case act           // Sumi acts on an agent: text = choose (count = option) | trust | signin | interrupt
 }
 
 struct ControlRequest: Codable {

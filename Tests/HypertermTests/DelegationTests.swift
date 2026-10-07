@@ -62,7 +62,7 @@ final class DelegationTests: XCTestCase {
 
         XCTAssertNil(api.delegation?.toldAt)
         XCTAssertEqual(api.delegation?.handled, 1)
-        XCTAssertTrue(api.timeline.last?.text.hasPrefix("Left for you: Sumi didn't answer") == true)
+        XCTAssertTrue(api.timeline.last?.text.hasPrefix("Left for you: Sumi didn't get an answer within 90 s") == true)
     }
 
     func testUndelegatedOrAbsentSumiLeavesWaitsToTheUser() {

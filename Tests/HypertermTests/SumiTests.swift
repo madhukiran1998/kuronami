@@ -210,7 +210,7 @@ final class SumiTests: XCTestCase {
         XCTAssertTrue(store.sumiDigest.isEmpty)
     }
 
-    func testDigestWaitsWhileTheSumiIsMidTurn() {
+    func testDigestReachesTheSumiEvenMidTurn() {
         let api = agent("api", state: .exited(0)), sumi = agent("sumi", sumi: true, state: .working)
         let store = SessionStore(previewSessions: [api, sumi], previewLayout: .grid)
         store.sumiWatches[api.id] = "restart it"
@@ -218,7 +218,16 @@ final class SumiTests: XCTestCase {
         store.reportToSumi(api, from: .working)
         store.flushSumiDigest(now: Date().addingTimeInterval(SumiDigest.window + 1))
 
-        XCTAssertTrue(sumi.pendingMessages.isEmpty)
+        XCTAssertTrue(store.sumiDigest.isEmpty, "sent while it works: its CLI queues the message for the next step")
+    }
+
+    func testDigestWaitsWhileTheSumiIsStarting() {
+        let api = agent("api", state: .exited(0)), sumi = agent("sumi", sumi: true, state: .starting)
+        let store = SessionStore(previewSessions: [api, sumi], previewLayout: .grid)
+        store.sumiWatches[api.id] = "restart it"
+
+        store.reportToSumi(api, from: .working)
+        store.flushSumiDigest(now: Date().addingTimeInterval(SumiDigest.window + 1))
         XCTAssertEqual(store.sumiDigest.events, [SumiEvent(label: "api", kind: .exited, note: "restart it")])
     }
 
@@ -227,8 +236,8 @@ final class SumiTests: XCTestCase {
         let start = Date(timeIntervalSince1970: 1000)
         XCTAssertFalse(digest.isDue(at: start))
         digest.add(SumiEvent(label: "api", kind: .exited), at: start)
-        digest.add(SumiEvent(label: "web", kind: .exited), at: start.addingTimeInterval(2))
-        XCTAssertFalse(digest.isDue(at: start.addingTimeInterval(2)))
+        digest.add(SumiEvent(label: "web", kind: .exited), at: start.addingTimeInterval(SumiDigest.window / 2))
+        XCTAssertFalse(digest.isDue(at: start.addingTimeInterval(SumiDigest.window / 2)))
         XCTAssertTrue(digest.isDue(at: start.addingTimeInterval(SumiDigest.window)))
 
         let message = digest.take(cleared: true) ?? ""
@@ -299,30 +308,16 @@ final class SumiTests: XCTestCase {
         body(defaults)
     }
 
-    func testChooserShowsOnlyUntilACLIIsChosen() {
+    func testSumiStartsAtOnceOnItsCLIsDefaultModel() {
         withOwnDefaults { _ in
             let store = SessionStore(previewSessions: [], previewLayout: .grid)
             XCTAssertNil(SessionStore.chosenSumiKind)
-            XCTAssertTrue(store.sumiNeedsChoice)
-
-            SessionStore.sumiKind = .codex
-            XCTAssertTrue(store.sumiNeedsChoice, "its model is asked next")
-
-            SessionStore.setSumiModel("gpt-6-luna", for: .codex)
-            XCTAssertFalse(store.sumiNeedsChoice)
-        }
-    }
-
-    func testAModelIsAskedForEachCLIItHasntRunOn() {
-        withOwnDefaults { _ in
-            let store = SessionStore(previewSessions: [], previewLayout: .grid)
-            SessionStore.sumiKind = .claude
-            SessionStore.setSumiModel(nil, for: .claude)
-            XCTAssertFalse(store.sumiNeedsChoice, "the CLI's default is a choice")
-            XCTAssertNil(SessionStore.sumiModel(for: .claude), "and launches with no model flag")
-
-            SessionStore.sumiKind = .codex
-            XCTAssertTrue(store.sumiNeedsChoice)
+            XCTAssertFalse(store.sumiNeedsChoice, "no chooser: Sumi starts when its panel opens")
+            for kind in SessionStore.sumiChoices {
+                XCTAssertNil(SessionStore.sumiModel(for: kind), "\(kind) launches with no model flag: the CLI's default")
+            }
+            SessionStore.setSumiModel("sonnet", for: .claude)
+            XCTAssertEqual(SessionStore.sumiModel(for: .claude), "sonnet", "a model the user picked still sticks")
         }
     }
 
@@ -330,7 +325,7 @@ final class SumiTests: XCTestCase {
         withOwnDefaults { _ in
             // Codex's model saved under Claude, as an earlier mix-up left it.
             SessionStore.sumiDefaults.set("gpt-6-luna", forKey: "organizerModel.claude")
-            XCTAssertNil(SessionStore.chosenSumiModel(for: .claude), "it is dropped, so the panel asks again")
+            XCTAssertNil(SessionStore.chosenSumiModel(for: .claude), "it is dropped, so Sumi uses the default")
             XCTAssertNil(SessionStore.sumiModel(for: .claude), "and Claude is launched with no model flag")
             XCTAssertNil(SessionStore.sumiDefaults.string(forKey: "organizerModel.claude"), "the bad value is cleaned up")
 
@@ -368,18 +363,15 @@ final class SumiTests: XCTestCase {
         }
     }
 
-    func testEachCLIRecommendsItsSmallestModelFirst() {
+    func testEachCLIListsItsOwnDefaultFirst() {
         for kind in SessionStore.sumiChoices {
             let models = SessionStore.sumiModels(for: kind)
-            XCTAssertEqual(models.filter(\.recommended).count, 1, "\(kind)")
-            XCTAssertTrue(models.first?.recommended == true, "\(kind)")
-            XCTAssertNotNil(models.first?.name.flatMap(AgentOptions.validModel), "\(kind)")
-            XCTAssertTrue(models.contains { $0.name == nil }, "\(kind) offers its own default")
+            XCTAssertNil(models.first?.name, "\(kind)'s own default comes first")
+            XCTAssertTrue(models.dropFirst().allSatisfy { $0.name.flatMap(AgentOptions.validModel) != nil }, "\(kind)")
         }
-        XCTAssertEqual(SessionStore.sumiModels(for: .claude).first?.name, "haiku")
     }
 
-    func testAnSumiRunningFromBeforeTheChoiceCountsAsChosen() {
+    func testAnSumiRunningFromBeforeNeedsNoChoice() {
         withOwnDefaults { _ in
             let store = SessionStore(previewSessions: [agent("sumi", sumi: true)], previewLayout: .grid)
             XCTAssertNil(SessionStore.chosenSumiKind)

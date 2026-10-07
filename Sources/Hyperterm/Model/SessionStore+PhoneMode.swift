@@ -9,7 +9,7 @@ extension SessionStore {
     var isPhoneModeOn: Bool { phoneModeSince != nil }
 
     /// Phone Mode rides on Claude's Remote Control, so it exists only while Claude runs Sumi.
-    var phoneModeAvailable: Bool { (sumi?.kind ?? Self.chosenSumiKind) == .claude }
+    var phoneModeAvailable: Bool { (sumi?.kind ?? Self.sumiKind) == .claude }
 
     /// The user's switch: Phone Mode on, and Sumi's session opened to the phone with Remote Control.
     func startPhoneMode() {
@@ -54,10 +54,14 @@ extension SessionStore {
         return true
     }
 
+    /// Tools whose "permission" is really the agent asking the user something: approving them
+    /// unseen would leave the question or plan on a screen nobody is looking at.
+    static let asksTheUser: Set<String> = ["AskUserQuestion", "ExitPlanMode"]
+
     /// Ordinary requests Tako allows itself in Phone Mode: anything Sumi's guard
-    /// wouldn't leave for the user.
+    /// wouldn't leave for the user, and never a question or a plan.
     func approvesInPhoneMode(_ session: TerminalSession, _ approval: PendingApproval) -> Bool {
-        isPhoneModeOn && !session.isSumi
+        isPhoneModeOn && !session.isSumi && !Self.asksTheUser.contains(approval.toolName)
             && RiskyRequest.reason(tool: approval.toolName, request: approval.request, workspace: session.spec.workPath) == nil
     }
 

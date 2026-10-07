@@ -19,6 +19,8 @@ final class SessionStore: ObservableObject {
     var sumiStarting = false
     /// Phone Mode was switched on while Sumi was still launching; Remote Control opens once it exists.
     var remoteControlWhenSumiUp = false
+    /// When Phone Mode last restarted a Sumi that quit, to stop retrying one that can't start.
+    var sumiRestarts: [Date] = []
     /// Something asked for Sumi (e.g. the switcher); the window opens its panel.
     var onShowSumi: (() -> Void)?
     /// A detached session was chosen; the window brings its own window forward.
@@ -722,10 +724,8 @@ final class SessionStore: ObservableObject {
                 spec.cwd = Self.sumiFolder
                 spec.agentSessionId = nil
             }
-            // A model saved for another CLI would fail to launch this one.
-            if spec.sumi == true, let model = spec.options?.model, !Self.isSumiModel(model, of: spec.kind) {
-                spec.options?.model = nil
-            }
+            // Sumi resumes its conversation on the model it's set to now, not the one it last ran on.
+            if spec.sumi == true { spec.options?.model = Self.sumiModel(for: spec.kind) }
             return spec
         }.forEach { create($0, resume: true, select: false) }
         // Never Sumi: selecting it opens its panel instead.
