@@ -2,7 +2,7 @@ import Foundation
 
 /// How much a session matters right now, most to least.
 enum Band: String, Codable {
-    /// On screen, selected, pinned, or the organizer.
+    /// On screen, selected, pinned, or Sumi.
     case focused
     /// Hidden, but an agent at work, or a shell or server with a live process.
     case working
@@ -76,7 +76,7 @@ enum Admission {
     }
 }
 
-/// Something the user (or the organizer) should hear about. The steward only reports it.
+/// Something the user (or Sumi) should hear about. The steward only reports it.
 struct Escalation: Codable, Equatable {
     enum Kind: String, Codable {
         /// The session's tree passed the memory limit.
@@ -171,6 +171,13 @@ struct SleepTracker {
         guard now.timeIntervalSince(since) >= after, !reported.contains(sessionID) else { return false }
         reported.insert(sessionID)
         return true
+    }
+
+    /// The candidate could not sleep (a draft, a dialog, queued messages): offer it again after
+    /// another quiet period rather than never.
+    mutating func retry(_ sessionID: String, now: Date) {
+        reported.remove(sessionID)
+        quietSince[sessionID] = now
     }
 
     mutating func forget(_ sessionID: String) {

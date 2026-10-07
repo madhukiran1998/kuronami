@@ -89,6 +89,8 @@ final class InterfaceSnapshotTests: XCTestCase {
         builder.tasks = TaskProgress(subjects: ["layout": "Polish workspace layout", "tests": "Check keyboard navigation"],
                                      completed: ["layout"], order: ["layout", "tests"])
         builder.spec.agentSessionId = "84c601df-792d-4af1-9d19-ff863c0dd4e7"
+        builder.runningSubagents = ["a1": Subagent(type: "Explore", startedAt: now.addingTimeInterval(-150)),
+                                    "a2": Subagent(type: "code-reviewer", startedAt: now.addingTimeInterval(-40))]
         builder.timeline = [
             TimelineEvent(date: now.addingTimeInterval(-240), kind: .prompt, text: "Make the workspace feel focused, clear, and fast."),
             TimelineEvent(date: now.addingTimeInterval(-180), kind: .edit, text: "Updated workspace layout and spacing."),
@@ -128,6 +130,7 @@ final class InterfaceSnapshotTests: XCTestCase {
         let review = sample("navigation", kind: .claude, branch: "feat/navigation", state: .idle)
         review.summary = "Navigation refresh ready for review"
         review.readyForReview = true
+        review.finishedUnseen = true
         review.diffStat = DiffStat(added: 142, removed: 38, files: 5)
         review.testEvidence = TestEvidence(passed: true, summary: "42 checks passed", date: now)
         terminalPixels(review, lines: [

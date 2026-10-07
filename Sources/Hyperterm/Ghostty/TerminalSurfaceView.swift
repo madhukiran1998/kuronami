@@ -51,6 +51,18 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     /// The last key typed was a plain @, so another one opens the session picker.
     private var lastKeyWasAt = false
     private var focused = false
+    /// What libghostty was last told: first responder in the key window.
+    /// libghostty creates every surface focused, so the first sync can turn that off.
+    private var surfaceHasFocus = true
+    private var windowKeyObservers: [NSObjectProtocol] = []
+    /// The program is at a password prompt; secure input holds while this surface has focus.
+    var passwordInput = false {
+        didSet {
+            guard passwordInput != oldValue else { return }
+            if passwordInput { SecureInput.setScoped(ObjectIdentifier(self), focused: surfaceHasFocus) }
+            else { SecureInput.removeScoped(ObjectIdentifier(self)) }
+        }
+    }
     private var pointerStyle: NSCursor = .iBeam
     private var trackingArea: NSTrackingArea?
     private var windowOcclusionObserver: NSObjectProtocol?
@@ -115,6 +127,9 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
             NotificationCenter.default.removeObserver(windowOcclusionObserver)
             self.windowOcclusionObserver = nil
         }
+        windowKeyObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        windowKeyObservers = []
+        SecureInput.removeScoped(ObjectIdentifier(self))
         guard let surface else { return }
         self.surface = nil
         ghostty_surface_free(surface)
@@ -273,10 +288,26 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     private func setFocused(_ value: Bool) {
-        guard focused != value, let surface else { return }
+        guard focused != value, surface != nil else { return }
         focused = value
-        ghostty_surface_set_focus(surface, value)
+        syncSurfaceFocus()
         if value { events?.surfaceFocused() }
+    }
+
+    /// libghostty draws the cursor and reports focus to programs only while this view is the
+    /// first responder of the key window, so another window or app taking key unfocuses it.
+    /// Phone Mode: Sumi tells its CLI it isn't focused even while its panel is, so Claude Code
+    /// pushes the user's phone instead of assuming they're watching this terminal.
+    var reportsUnfocused = false {
+        didSet { if reportsUnfocused != oldValue { syncSurfaceFocus() } }
+    }
+
+    private func syncSurfaceFocus() {
+        let value = focused && window?.isKeyWindow == true && !reportsUnfocused
+        guard let surface, value != surfaceHasFocus else { return }
+        surfaceHasFocus = value
+        ghostty_surface_set_focus(surface, value)
+        if passwordInput { SecureInput.setScoped(ObjectIdentifier(self), focused: value) }
     }
 
     /// Hidden sessions keep running; telling libghostty they're occluded stops wasted rendering.
@@ -351,6 +382,16 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
                 MainActor.assumeIsolated { self?.updateOcclusion() }
             }
         }
+        windowKeyObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        windowKeyObservers = []
+        if let window {
+            windowKeyObservers = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification].map { name in
+                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.syncSurfaceFocus() }
+                }
+            }
+        }
+        syncSurfaceFocus()
         updateOcclusion()
         guard let surface, let screen = window?.screen,
               let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else { return }
@@ -395,6 +436,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
+        lastKeyWasAt = false
         if window?.firstResponder !== self { window?.makeFirstResponder(self) }
         sendMouseButton(GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, event)
     }
@@ -405,6 +447,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     override func rightMouseDown(with event: NSEvent) {
+        lastKeyWasAt = false
         if !sendMouseButton(GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, event) { super.rightMouseDown(with: event) }
     }
 
@@ -413,6 +456,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     override func otherMouseDown(with event: NSEvent) {
+        lastKeyWasAt = false
         sendMouseButton(GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_MIDDLE, event)
     }
 
@@ -464,16 +508,22 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     override func keyDown(with event: NSEvent) {
         guard let surface else {
+            lastKeyWasAt = false
             interpretKeyEvents([event])
             return
         }
-        if events?.surfaceInterceptsKey(event) == true { return }
+        if events?.surfaceInterceptsKey(event) == true { lastKeyWasAt = false; return }
         // @@ opens the session picker. The first @ already reached the program; erasing it also
         // closes Claude Code's file picker that it opened.
+        // Only agent terminals: in a shell or vim, @@ belongs to the program (a macro repeat).
         let typedAt = event.characters == "@" && markedText.length == 0
+            && (events as? TerminalSession)?.kind.isAgent == true
             && event.modifierFlags.isDisjoint(with: [.command, .control, .option])
         defer { lastKeyWasAt = typedAt && !lastKeyWasAt }
-        if typedAt && lastKeyWasAt {
+        // The picker is a child of the main window; with that hidden it would never appear and
+        // the erased @ would be lost, so the keys go through as typed.
+        let pickerCanShow = NSApp.windows.contains { $0 is KuronamiWindow && $0.isVisible }
+        if typedAt && lastKeyWasAt && pickerCanShow {
             _ = pressKey(named: "backspace")
             events?.surfaceMentionRequested()
             return
@@ -599,7 +649,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     // MARK: - Menu actions
 
     @objc func copy(_ sender: Any?) { performBinding("copy_to_clipboard") }
-    @objc func paste(_ sender: Any?) { performBinding("paste_from_clipboard") }
+    @objc func paste(_ sender: Any?) { lastKeyWasAt = false; performBinding("paste_from_clipboard") }
     @objc override func selectAll(_ sender: Any?) { performBinding("select_all") }
     @objc func clearScreen(_ sender: Any?) { performBinding("clear_screen") }
     @objc func increaseFontSize(_ sender: Any?) { performBinding("increase_font_size:1") }
@@ -623,6 +673,7 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        lastKeyWasAt = false
         switch string {
         case let value as NSAttributedString: markedText = NSMutableAttributedString(attributedString: value)
         case let value as String: markedText = NSMutableAttributedString(string: value)

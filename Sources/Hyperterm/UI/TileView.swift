@@ -14,8 +14,12 @@ final class TileView: NSView {
     private let model: TileHeaderModel
     private let border = CALayer()
     private let headerRule = CALayer()
-    private let attentionMarker = CALayer()
+    /// Waiting or finished-and-unseen: a 1px underline below the header, and a light streak that
+    /// sweeps along it once on arrival.
+    private let headerUnderline = CALayer()
+    private let sweep = CAGradientLayer()
     private var recapHost: NSHostingView<RecapBanner>?
+    private var closeBarHost: NSHostingView<CloseBar>?
     private var searchHost: NSHostingView<SearchBar>?
     let search = SearchModel()
 
@@ -48,6 +52,7 @@ final class TileView: NSView {
         let header: Bool
         let focused: Bool
         let attention: Bool
+        let finished: Bool
         let dropTarget: Bool
     }
 
@@ -71,13 +76,16 @@ final class TileView: NSView {
         border.zPosition = 20
         headerRule.backgroundColor = Ink.hairline.cgColor
         headerRule.zPosition = 9
-        attentionMarker.backgroundColor = NSColor(Palette.attention).cgColor
-        attentionMarker.cornerRadius = Size.hairline
-        attentionMarker.zPosition = 21
-        attentionMarker.isHidden = true
+        headerUnderline.zPosition = 10
+        headerUnderline.isHidden = true
+        sweep.zPosition = 11
+        sweep.isHidden = true
+        sweep.startPoint = CGPoint(x: 0, y: 0.5)
+        sweep.endPoint = CGPoint(x: 1, y: 0.5)
         content.layer?.addSublayer(headerRule)
+        content.layer?.addSublayer(headerUnderline)
+        content.layer?.addSublayer(sweep)
         layer?.addSublayer(border)
-        layer?.addSublayer(attentionMarker)
 
         content.addSubview(header)
         header.isHidden = true
@@ -148,6 +156,10 @@ final class TileView: NSView {
             let height = recapHost.fittingSize.height
             recapHost.frame = NSRect(x: (bounds.width - width) / 2, y: bounds.height - headerHeight - height - 12, width: width, height: height)
         }
+        if let closeBarHost {
+            let width = max(0, min(bounds.width - 24, 640))
+            closeBarHost.frame = NSRect(x: (bounds.width - width) / 2, y: 12, width: width, height: closeBarHost.fittingSize.height)
+        }
         if let searchHost {
             let size = searchHost.fittingSize
             searchHost.frame = NSRect(x: bounds.width - size.width - 12, y: bounds.height - headerHeight - size.height - 10,
@@ -158,7 +170,9 @@ final class TileView: NSView {
         border.frame = bounds
         headerRule.frame = NSRect(x: 0, y: bounds.height - headerHeight - 1, width: bounds.width, height: 1)
         headerRule.isHidden = !showsHeader
-        attentionMarker.frame = NSRect(x: 0, y: 12, width: 2, height: max(0, bounds.height - 24))
+        headerUnderline.frame = headerRule.frame
+        sweep.bounds = CGRect(x: 0, y: 0, width: max(60, bounds.width * 0.3), height: 2)
+        sweep.position = CGPoint(x: sweep.position.x, y: bounds.height - headerHeight)
         CATransaction.commit()
     }
 
@@ -169,12 +183,15 @@ final class TileView: NSView {
         let fill = Theme.window.tileFill(terminal: Theme.terminalBackground).cgColor
         content.layer?.backgroundColor = fill
         header.layer?.backgroundColor = fill
+        drawnChrome = nil
+        updateChrome()
     }
 
     private func updateChrome() {
         let chrome = Chrome(header: showsHeader, focused: isFocusedTile,
-                            attention: session.state.needsAttention, dropTarget: dropTarget)
+                            attention: session.state.needsAttention, finished: session.finishedUnseen, dropTarget: dropTarget)
         guard chrome != drawnChrome else { return }
+        let previous = drawnChrome
         drawnChrome = chrome
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -191,9 +208,41 @@ final class TileView: NSView {
             border.borderColor = Ink.hairline.cgColor
             border.borderWidth = 1
         }
-        attentionMarker.isHidden = !chrome.attention
+        // Waiting is gold, finished-and-unseen is green; both clear once seen. The border is untouched.
+        let tint: (color: NSColor, rule: CGFloat)? =
+            chrome.attention ? (NSColor(Palette.attention), 0.7)
+            : chrome.finished ? (NSColor(Palette.running), 0.6) : nil
+        headerUnderline.isHidden = tint == nil || !chrome.header
+        sweep.removeAllAnimations()
+        sweep.isHidden = true
+        if let tint {
+            headerUnderline.backgroundColor = tint.color.withAlphaComponent(tint.rule).cgColor
+            // The streak plays only on arrival into the state, never on layout or an unrelated refresh.
+            let arrived = previous != nil && chrome.header && !chrome.focused
+                && (previous?.attention != chrome.attention || previous?.finished != chrome.finished)
+            if arrived && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { playSweep(color: tint.color) }
+        }
         headerRule.backgroundColor = Ink.hairline.cgColor
         CATransaction.commit()
+    }
+
+    /// One bright streak left to right along the header's bottom edge.
+    private func playSweep(color: NSColor) {
+        sweep.colors = [color.withAlphaComponent(0).cgColor, color.cgColor, color.withAlphaComponent(0).cgColor]
+        sweep.isHidden = false
+        let half = sweep.bounds.width / 2
+        let slide = CABasicAnimation(keyPath: "position.x")
+        slide.fromValue = -half
+        slide.toValue = bounds.width + half
+        slide.duration = 2.2
+        slide.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        sweep.position.x = bounds.width + half
+        sweep.add(slide, forKey: "sweep")
+        // Hide it once it has left, so it never rests at the edge.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.3) { [weak self] in
+            guard let self, self.sweep.animation(forKey: "sweep") == nil else { return }
+            self.sweep.isHidden = true
+        }
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -226,6 +275,20 @@ final class TileView: NSView {
                 }
             }
         }
+    }
+
+    /// The question before closing something that holds work; replaces any earlier one.
+    func showCloseBar(_ model: CloseBarModel) {
+        hideCloseBar()
+        let host = NSHostingView(rootView: CloseBar(model: model))
+        content.addSubview(host, positioned: .above, relativeTo: nil)
+        closeBarHost = host
+        needsLayout = true
+    }
+
+    func hideCloseBar() {
+        closeBarHost?.removeFromSuperview()
+        closeBarHost = nil
     }
 
     func showSearch() {
@@ -301,7 +364,9 @@ struct TileHeaderSnapshot: Equatable {
     let summary: String?
     let overlap: OverlapBadge?
     let asleep: Bool
-    /// The organizer handles its waits; the tag's tooltip.
+    /// Finished and not yet looked at.
+    let finished: Bool
+    /// Sumi handles its waits; the tag's tooltip.
     let delegation: String?
 
     @MainActor init(session: TerminalSession) {
@@ -314,6 +379,7 @@ struct TileHeaderSnapshot: Equatable {
         statusWord = session.statusWord
         ports = session.ports
         asleep = session.isAsleep
+        finished = session.finishedUnseen
         if case .needsInput(let reason) = session.state {
             summary = session.pendingRequest ?? reason
         } else {
@@ -373,11 +439,16 @@ struct TileHeader: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: Space.xs)
+            if snapshot.state.needsAttention {
+                StatusPill(text: "Needs you", tint: Palette.attention)
+            } else if snapshot.finished {
+                StatusPill(text: "✓ Done", tint: Palette.running)
+            }
             if let overlap = snapshot.overlap, !compact {
                 Tag(text: overlap.title, tint: Palette.attention).help(overlap.detail)
             }
             if let delegation = snapshot.delegation, !compact {
-                Tag(text: "Organizer", tint: Palette.accent).help(delegation)
+                Tag(text: "Sumi", tint: Palette.accent).help(delegation)
             }
             if !snapshot.ports.isEmpty, !compact { PortChips(ports: snapshot.ports, compact: true) }
             if snapshot.kind == .browser {
@@ -437,6 +508,24 @@ struct TileHeader: View {
                 IconButton(symbol: "xmark", help: "Close (⌘W)", action: actions.close)
             }
         }
+    }
+}
+
+/// The arrival marker in a header: text in the color on a 15% tint of it. Never truncates; the title and summary give way first.
+private struct StatusPill: View {
+    let text: String
+    let tint: Color
+
+    var body: some View {
+        Text(text)
+            .font(Typeface.caption.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, Space.s)
+            .padding(.vertical, 1)
+            .background(tint.opacity(0.15), in: Capsule())
+            .lineLimit(1)
+            .fixedSize()
+            .layoutPriority(2)
     }
 }
 

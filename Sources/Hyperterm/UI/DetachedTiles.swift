@@ -11,6 +11,8 @@ final class DetachedTiles: NSObject, NSWindowDelegate {
     var onReturn: ((TerminalSession) -> Void)?
     /// A detached window came forward; its session becomes the selection.
     var onFocus: ((TerminalSession) -> Void)?
+    /// The tile's close button or menu item: the session itself is closing (the caller confirms).
+    var onClose: ((TerminalSession) -> Void)?
 
     private static let defaultSize = NSSize(width: 720, height: 460)
 
@@ -25,18 +27,18 @@ final class DetachedTiles: NSObject, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.tabbingMode = .disallowed
         window.minSize = NSSize(width: 320, height: 200)
-        if Theme.isTranslucent {
-            window.isOpaque = false
-            window.backgroundColor = .white.withAlphaComponent(0.001)
-        } else {
-            window.backgroundColor = Ink.floor
-        }
+        Self.style(window)
         window.title = "@" + session.label
         window.delegate = self
 
         let tile = TileView(session: session, actions: TileActions(
             select: { [weak self, weak session] in if let session { self?.onFocus?(session) } },
-            zoom: {}, minimize: {}, detach: {}, close: {},
+            // Detached, a tile is its own window: zoom and minimize are the window's, detach
+            // puts it back, and close ends the session.
+            zoom: { [weak self, weak session] in if let session { self?.tiles[session.id]?.window?.zoom(nil) } },
+            minimize: { [weak self, weak session] in if let session { self?.tiles[session.id]?.window?.miniaturize(nil) } },
+            detach: { [weak self, weak session] in if let session { self?.onReturn?(session) } },
+            close: { [weak self, weak session] in if let session { self?.onClose?(session) } },
             wake: { [weak session] in if let session { session.store?.wake(session) } },
             drag: { _ in }, dragEnded: {}))
         let content = NSView()
@@ -58,20 +60,44 @@ final class DetachedTiles: NSObject, NSWindowDelegate {
         } else {
             window.center()
         }
+        Self.blur(window)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(session.surface)
+    }
+
+    private static func style(_ window: NSWindow) {
+        if Theme.isTranslucent {
+            window.isOpaque = false
+            window.backgroundColor = .white.withAlphaComponent(0.001)
+        } else {
+            window.isOpaque = true
+            window.backgroundColor = Ink.floor
+        }
+    }
+
+    private static func blur(_ window: NSWindow) {
         if Theme.isTranslucent, let app = GhosttyRuntime.shared.app {
             ghostty_set_window_background_blur(app, Unmanaged.passUnretained(window).toOpaque())
         }
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(session.surface)
+    }
+
+    /// View › Theme changed: restyle the open windows in place.
+    func applyTheme() {
+        for tile in tiles.values {
+            tile.applyTheme()
+            if let window = tile.window { Self.style(window); Self.blur(window) }
+        }
     }
 
     /// Takes the session's window away without returning it anywhere (the caller remounts it,
     /// or the session is gone).
     func close(_ session: TerminalSession) {
-        guard let tile = tiles.removeValue(forKey: session.id), let window = tile.window else { return }
+        guard let tile = tiles.removeValue(forKey: session.id) else { return }
         tile.setVisible(false)
-        window.delegate = nil
-        window.orderOut(nil)
+        if let window = tile.window {
+            window.delegate = nil
+            window.orderOut(nil)
+        }
         tile.removeFromSuperview()
     }
 
@@ -86,6 +112,8 @@ final class DetachedTiles: NSObject, NSWindowDelegate {
     func attachSurface(_ session: TerminalSession) {
         tiles[session.id]?.attachSurface()
     }
+
+    func owns(_ window: NSWindow) -> Bool { tiles.values.contains { $0.window === window } }
 
     func tile(for id: UUID) -> TileView? { tiles[id] }
 

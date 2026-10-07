@@ -21,7 +21,7 @@ usage: ht <command>
   close @label
   whoami                           this terminal's label (inside Tako)
   mcp                              run the MCP server (used by agents)
-  browser                          open the embedded browser; prints its DevTools endpoint
+  browser [url|file]               open the embedded browser, on a URL or local .html file; prints its DevTools endpoint
   browser-mcp [port]               run the browser MCP server (used by agents)
   mcp-lazy --name n -- <command…>  run a stdio MCP server, started on first use (used by agents)
   hook <source> [payload]          forward an agent hook event (used by agents)
@@ -225,7 +225,8 @@ case "heavy":
     runHeavy(args)
 
 case "browser":
-    print(requireOK(request(.browser) { $0.from = callerSession }).text ?? "")
+    let target = args.first.map { BrowserTarget.address($0, cwd: FileManager.default.currentDirectoryPath) }
+    print(requireOK(request(.browser) { $0.from = callerSession; $0.url = target }).text ?? "")
 
 case "-h", "--help", "help":
     print(usage)

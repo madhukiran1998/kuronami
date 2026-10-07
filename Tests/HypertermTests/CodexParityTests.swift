@@ -127,7 +127,7 @@ final class CodexParityTests: XCTestCase {
         addTeardownBlock { @MainActor in session.terminate() }
         session.trustPromptSeen(true, reason: "Sign in to Codex")
         XCTAssertEqual(session.state, .needsInput("Sign in to Codex"))
-        XCTAssertTrue(TerminalSession.isUsersOwn("Sign in to Codex"), "never handed to the organizer")
+        XCTAssertTrue(TerminalSession.isUsersOwn("Sign in to Codex"), "never handed to Sumi")
         session.trustPromptSeen(true)
         XCTAssertEqual(session.state, .needsInput(TerminalSession.trustReason))
         session.trustPromptSeen(false)

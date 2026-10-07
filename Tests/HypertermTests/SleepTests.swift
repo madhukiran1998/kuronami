@@ -12,7 +12,7 @@ final class SleepTests: XCTestCase {
         for state in [AgentState.working, .starting, .needsInput("Bash: rm -rf build")] {
             XCTAssertFalse(store.canSleep(agent("busy", state: state)), "\(state)")
         }
-        XCTAssertFalse(store.canSleep(agent("organizer", organizer: true)))
+        XCTAssertFalse(store.canSleep(agent("sumi", sumi: true)))
         XCTAssertFalse(store.canSleep(agent("fresh", summary: nil)), "no turn yet: nothing to resume")
         XCTAssertFalse(store.canSleep(agent("codex", kind: .codex)), "no thread id learned yet")
         let shell = track(TerminalSession(spec: LaunchSpec(label: "sh", kind: .shell, cwd: "/tmp"), resume: false))
@@ -22,7 +22,7 @@ final class SleepTests: XCTestCase {
     func testAnAgentWithSubagentsRunningStaysAwake() {
         let store = SessionStore(previewSessions: [], previewLayout: .grid)
         let api = agent("api")
-        api.runningSubagents = ["a1"]
+        api.runningSubagents = ["a1": Subagent(type: "Explore", startedAt: Date())]
         XCTAssertFalse(store.canSleep(api), "quitting would end its background subagent")
         api.apply(.processStarted, source: "test", force: .starting)
         XCTAssertTrue(api.runningSubagents.isEmpty, "a relaunched CLI has none")
@@ -128,10 +128,10 @@ final class SleepTests: XCTestCase {
 
     // MARK: - Fixtures
 
-    private func agent(_ label: String, kind: SessionKind = .claude, organizer: Bool = false,
+    private func agent(_ label: String, kind: SessionKind = .claude, sumi: Bool = false,
                        state: AgentState = .idle, summary: String? = "Fixed the login bug") -> TerminalSession {
         var spec = LaunchSpec(label: label, kind: kind, cwd: "/tmp")
-        if organizer { spec.organizer = true }
+        if sumi { spec.sumi = true }
         let session = track(TerminalSession(spec: spec, resume: false))
         session.summary = summary
         session.apply(.processStarted, source: "test", force: state)

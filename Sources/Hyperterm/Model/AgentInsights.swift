@@ -47,6 +47,13 @@ struct TaskProgress: Equatable {
     var current: String? { order.first { !completed.contains($0) }.flatMap { subjects[$0] } }
 }
 
+/// A Claude subagent still running, from SubagentStart; SubagentStop removes it.
+struct Subagent: Equatable {
+    /// "Explore", "general-purpose", or a custom agent's name.
+    var type: String
+    var startedAt: Date
+}
+
 /// The last test run an agent did, from PostToolUse / PostToolUseFailure on test commands.
 struct TestEvidence: Equatable {
     var passed: Bool
@@ -72,7 +79,7 @@ struct PendingApproval {
     let source: String
     let toolName: String
     let summary: String
-    /// The whole request (full command, absolute path), which the organizer's guard checks.
+    /// The whole request (full command, absolute path), which Sumi's guard checks.
     var request = ""
     let suggestions: Any?
     let createdAt = Date()
@@ -80,11 +87,77 @@ struct PendingApproval {
 }
 
 enum TestCommand {
-    private static let patterns = ["test", "vitest", "jest", "pytest", "rspec", "go test", "cargo test", "xcodebuild test", "mocha", "phpunit", "swift test"]
+    /// Programs that are test runners by themselves.
+    private static let runners: Set<String> = ["pytest", "py.test", "jest", "vitest", "mocha", "phpunit", "rspec", "unittest", "ctest"]
+    /// Tools whose `test` subcommand runs the tests.
+    private static let testSubcommand: Set<String> = ["go", "cargo", "swift", "npm", "pnpm", "yarn", "bun", "make",
+                                                      "gradle", "gradlew", "mvn", "mvnw", "dotnet", "deno", "mix", "rails",
+                                                      "rake", "flutter", "dart", "bazel", "playwright", "manage.py"]
+    /// Tools that start another program: `npx vitest`, `pnpm jest`, `python -m pytest`, `bundle exec rspec`.
+    private static let launchers: Set<String> = ["npx", "pnpx", "bunx", "npm", "pnpm", "yarn", "bun", "python", "python3", "bundle", "uv", "poetry"]
+    /// Flags (lowercased) whose value is the next word: `make -C dir test`, `pnpm --filter x test`.
+    private static let valueFlags: Set<String> = ["-c", "-f", "--filter", "--prefix", "--cwd", "--dir", "-w", "--workspace"]
 
+    /// Whether any command in a shell line runs tests. Matches runner programs, not the word
+    /// "test" anywhere: `ls tests/`, `grep test` and `git commit -m "add tests"` aren't test runs.
     static func matches(_ command: String) -> Bool {
-        let lower = command.lowercased()
-        return patterns.contains { lower.contains($0) }
+        segments(command.lowercased()).contains(where: runsTests)
+    }
+
+    private static func runsTests(_ segment: [String]) -> Bool {
+        // Past `FOO=1`, `sudo`, `env`, `time` and `timeout 600`; `./node_modules/.bin/jest` is `jest`.
+        var words = segment.drop {
+            $0.contains("=") || $0.first?.isNumber == true
+                || ["sudo", "env", "time", "command", "timeout", "nice", "nohup"].contains($0)
+        }
+        guard let first = words.popFirst() else { return false }
+        let program = (first as NSString).lastPathComponent
+        // `bash -c "npm test"`: the quoted command is one word.
+        if ["bash", "sh", "zsh"].contains(program), words.first == "-c", let script = words.dropFirst().first {
+            return matches(script)
+        }
+        if runners.contains(program) { return true }
+        if program == "xcodebuild", words.contains(where: { $0 == "test" || $0 == "test-without-building" }) { return true }
+        // Past flags before the subcommand: `pnpm -r test`, `make -C dir test`, `yarn workspace a test`.
+        while let word = words.first, word.hasPrefix("-") || (program == "yarn" && word == "workspace") {
+            words = words.dropFirst()
+            if valueFlags.contains(word) || word == "workspace" { words = words.dropFirst() }
+        }
+        let next = words.first ?? ""
+        if testSubcommand.contains(program), next == "test" || next.hasPrefix("test:") { return true }
+        if program == "npm", next == "t" { return true }
+        if ["npm", "pnpm", "yarn", "bun"].contains(program), next == "run", words.dropFirst().first?.hasPrefix("test") == true { return true }
+        if program == "cargo", next == "nextest" { return true }
+        // `npx playwright test`, `python -m unittest`, `python manage.py test`, `bundle exec rake test`.
+        if launchers.contains(program) {
+            if ["exec", "x", "dlx", "run"].contains(next) { words = words.dropFirst() }
+            return runsTests(Array(words))
+        }
+        return false
+    }
+
+    /// The words of each command in a shell line, split at `;`, `&&`, `||`, `|`, `&` and newlines
+    /// outside quotes. Quotes are dropped; parentheses and braces around a subshell too.
+    private static func segments(_ line: String) -> [[String]] {
+        var result: [[String]] = [], words: [String] = [], word = ""
+        var quote: Character?
+        func endWord() { if !word.isEmpty { words.append(word); word = "" } }
+        func endSegment() { endWord(); if !words.isEmpty { result.append(words); words = [] } }
+        for character in line {
+            if let open = quote {
+                if character == open { quote = nil } else { word.append(character) }
+            } else if character == "\"" || character == "'" {
+                quote = character
+            } else if character == ";" || character == "&" || character == "|" || character == "\n" {
+                endSegment()
+            } else if character.isWhitespace || "(){}".contains(character) {
+                endWord()
+            } else {
+                word.append(character)
+            }
+        }
+        endSegment()
+        return result
     }
 
     /// "48 passed", "3 failed, 45 passed", "Tests: 2 failed" — the line a human would look for.

@@ -6,7 +6,7 @@ import Foundation
 func runMCPServer() -> Never {
     let selfLabel = ProcessInfo.processInfo.environment["HT_LABEL"]
     let sessionID = ProcessInfo.processInfo.environment["HT_SESSION_ID"]
-    var isOrganizer = false
+    var isSumi = false
 
     while let line = readLine(strippingNewline: true) {
         guard !line.isEmpty,
@@ -22,17 +22,17 @@ func runMCPServer() -> Never {
             let version = params["protocolVersion"] as? String ?? "2025-06-18"
             if ProcessInfo.processInfo.environment["HT_CHANNELS"] == "1" { startChannelLoop() }
             let me = currentSelf(sessionID)
-            isOrganizer = me?.organizer == true
+            isSumi = me?.sumi == true
             reply(id: id, result: [
                 "protocolVersion": version,
                 "capabilities": ["tools": [:], "experimental": ["claude/channel": [:]]],
                 "serverInfo": ["name": "hyperterm", "version": "0.1.0"],
-                "instructions": isOrganizer ? organizerInstructions : instructions(selfLabel: selfLabel, me: me),
+                "instructions": isSumi ? sumiInstructions : instructions(selfLabel: selfLabel, me: me),
             ])
         case "ping":
             reply(id: id, result: [:])
         case "tools/list":
-            reply(id: id, result: ["tools": isOrganizer ? organizerToolDefinitions : toolDefinitions])
+            reply(id: id, result: ["tools": isSumi ? sumiToolDefinitions : toolDefinitions])
         case "tools/call":
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
@@ -146,6 +146,15 @@ private let toolDefinitions: [[String: Any]] = [
         ],
     ],
     [
+        "name": "open_in_browser",
+        "description": "Show a page to the user in your own Tako browser (tiled next to you) instead of their outside Chrome: an HTML file you wrote, an artifact, a report, or a URL such as your dev server. Pass a file path or a URL. Use this whenever you'd otherwise open or tell the user to open a page.",
+        "inputSchema": [
+            "type": "object",
+            "properties": ["target": ["type": "string", "description": "A URL (https://…, localhost:3000) or a path to an .html file, absolute or relative to your working directory"]],
+            "required": ["target"],
+        ],
+    ],
+    [
         "name": "start_server",
         "description": "Start a long-running command (dev server, watcher, worker) in a new labeled Tako terminal instead of in the background of your own shell, so the user can see it and its ports. The user is asked to approve it in Tako first.",
         "inputSchema": [
@@ -160,8 +169,8 @@ private let toolDefinitions: [[String: Any]] = [
     ],
 ]
 
-private let organizerInstructions = """
-You are the organizer in Tako: the agent behind the round button in the window's bottom-left corner. \
+private let sumiInstructions = """
+You are Sumi, the agent in Tako behind the round button in the window's bottom-left corner. \
 The user opens your terminal from there to run their other terminals, so your job is managing sessions, \
 not doing project work yourself: agents do it. You have full access: read folders and run commands without asking. \
 Start agents in any project with start_agent (always pass folder). Give each a brief: the goal, the files it \
@@ -190,16 +199,28 @@ waiting only when the user asks, with the scope they gave, through handle_waitin
 take it back). When Tako tells you a handled session is waiting, read_terminal it and answer in the \
 spirit of the user's note and the agent's task: send_message for a question, answer_prompt approve or deny \
 for a permission prompt. Never approve anything you aren't sure the user would; if unsure, leave it: the \
-user is notified after 90 s. Tell the user briefly what you answered on their behalf. Keep notes in \
-\(ControlPaths.organizerNotes): the user's preferences, project folders and open threads. Read it at the start \
+user is notified after 90 s. Tell the user briefly what you answered on their behalf. When the user says they're \
+leaving or are on their phone ("phone mode on"), call phone_mode on; when they're back, phone_mode off. \
+In Phone Mode you are the user's control center for every agent on this Mac, Claude and Codex alike: they talk \
+only to you, from their phone. Tako messages you the moment an agent waits, finishes, fails or exits; tell the \
+user right away, always naming the agent (@api) so they can answer or tag it, and say in one line what it needs. \
+Act on their answer with your tools: answer_prompt for a permission or plan, choose_option for a multiple-choice \
+question, trust_folder (after they say yes) for a folder, sign_in for a signed-out agent (send them the link and \
+code), interrupt_agent to stop one, send_message for anything in words. When they tag an agent ("@web run the \
+tests"), send_message it and tell them when it's done. When they ask what's going on, list_terminals and answer \
+one line per agent. A message from Tako saying an agent is STILL waiting means the user hasn't seen it: send them \
+a push notification. Approve a risky request only after they say yes to that exact request (user_approved true). \
+Keep notes in \
+\(ControlPaths.sumiNotes): the user's preferences, project folders and open threads. Read it at the start \
 of a task when it may help, update it when you learn something durable, keep it under about 200 lines, and \
-never store secrets there. Start only the agents the user asked for. Keep replies short: say what you did in \
+never store secrets there. Never change the user's global settings (~/.claude, ~/.codex and the like, \
+such as a CLI's default model) unless they ask for exactly that. Start only the agents the user asked for. Keep replies short: say what you did in \
 a sentence or two.
 """
 
-/// The organizer's tools: reading and messaging like any agent, plus starting agents anywhere,
-/// arranging the view, and closing terminals. No renaming: it stays @organizer.
-private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
+/// Sumi's tools: reading and messaging like any agent, plus starting agents anywhere,
+/// arranging the view, and closing terminals. No renaming: it stays @sumi.
+private let sumiToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ["list_terminals", "send_message", "read_terminal", "start_server"].contains($0["name"] as? String)
 } + [
     [
@@ -213,7 +234,7 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
                 "kind": ["type": "string", "enum": ["claude", "codex"], "description": "Which agent (default: the same CLI you run on)"],
                 "label": ["type": "string", "description": "Short kebab-case label, e.g. \"checkout-bug\""],
                 "worktree": ["type": "boolean", "description": "Own worktree and branch when the folder is a repo (default true)"],
-                "count": ["type": "integer", "description": "How many agents take this same task, 1–\(organizerStartCap) (default 1)"],
+                "count": ["type": "integer", "description": "How many agents take this same task, 1–\(sumiStartCap) (default 1)"],
             ],
             "required": ["task", "folder"],
         ],
@@ -345,15 +366,67 @@ private let organizerToolDefinitions: [[String: Any]] = toolDefinitions.filter {
     ],
     [
         "name": "answer_prompt",
-        "description": "Approve or deny the permission request a session you handle (handle_waiting) is waiting on. Only for permission prompts: when it asked a question in chat, answer with send_message. Risky requests (deletes, pushes, deploys, secrets, sudo…) are left for the user.",
+        "description": "Approve or deny a permission request (or a plan) an agent is waiting on: any agent in Phone Mode, otherwise only sessions you handle (handle_waiting). For a multiple-choice question use choose_option; for a question in chat, send_message. Risky requests (deletes, pushes, deploys, secrets, sudo…) need the user's yes: in Phone Mode, ask them on their phone and pass user_approved true once they say yes.",
         "inputSchema": [
             "type": "object",
             "properties": [
                 "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
                 "answer": ["type": "string", "enum": ["approve", "deny"]],
                 "text": ["type": "string", "description": "With deny: why, which the agent sees"],
+                "user_approved": ["type": "boolean", "description": "Phone Mode only: the user said yes to this exact risky request on their phone"],
             ],
             "required": ["terminal", "answer"],
+        ],
+    ],
+    [
+        "name": "phone_mode",
+        "description": "Turn Phone Mode on when the user says they're away or on their phone, and off when they're back. While it's on, Tako approves agents' ordinary requests itself, every agent's questions and risky requests come to you, and starting or closing terminals needs no confirmation on the Mac.",
+        "inputSchema": [
+            "type": "object",
+            "properties": ["on": ["type": "boolean", "description": "true to turn on, false to turn off"]],
+            "required": ["on"],
+        ],
+    ],
+    [
+        "name": "choose_option",
+        "description": "Answer an agent's multiple-choice question (Claude's AskUserQuestion, Codex's own menus) by picking an option. Tako's message lists the options with numbers. In Phone Mode this works on any agent; otherwise only on sessions you handle (handle_waiting). Pick only what the user said, or what is clearly right for the task when they asked you to decide.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
+                "option": ["type": "integer", "description": "The option's number, starting at 1"],
+            ],
+            "required": ["terminal", "option"],
+        ],
+    ],
+    [
+        "name": "trust_folder",
+        "description": "Answer an agent's 'trust this folder?' prompt with yes. Ask the user first, naming the folder; call with user_approved true once they say yes.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "terminal": ["type": "string", "description": "Label, e.g. \"@api\""],
+                "user_approved": ["type": "boolean", "description": "The user said yes to trusting this folder"],
+            ],
+            "required": ["terminal"],
+        ],
+    ],
+    [
+        "name": "sign_in",
+        "description": "Sign a signed-out agent in from the user's phone: starts the CLI's device-code sign-in and returns a link and a one-time code. Send both to the user; once they enter the code, the agent continues by itself.",
+        "inputSchema": [
+            "type": "object",
+            "properties": ["terminal": ["type": "string", "description": "Label, e.g. \"@api\""]],
+            "required": ["terminal"],
+        ],
+    ],
+    [
+        "name": "interrupt_agent",
+        "description": "Stop an agent's current turn, as pressing Esc in its terminal does. Use when the user says stop, or it is clearly going wrong; then send_message it what to do instead.",
+        "inputSchema": [
+            "type": "object",
+            "properties": ["terminal": ["type": "string", "description": "Label, e.g. \"@api\""]],
+            "required": ["terminal"],
         ],
     ],
     [
@@ -478,6 +551,32 @@ private func callTool(_ name: String, _ arguments: [String: Any], sessionID: Str
         req.target = arguments["terminal"] as? String
         req.text = arguments["answer"] as? String
         req.label = arguments["text"] as? String
+        req.userApproved = arguments["user_approved"] as? Bool
+    case "choose_option":
+        req = ControlRequest(cmd: .act)
+        req.text = "choose"
+        req.target = arguments["terminal"] as? String
+        req.count = arguments["option"] as? Int
+    case "trust_folder":
+        req = ControlRequest(cmd: .act)
+        req.text = "trust"
+        req.target = arguments["terminal"] as? String
+        req.userApproved = arguments["user_approved"] as? Bool
+    case "sign_in":
+        req = ControlRequest(cmd: .act)
+        req.text = "signin"
+        req.target = arguments["terminal"] as? String
+    case "interrupt_agent":
+        req = ControlRequest(cmd: .act)
+        req.text = "interrupt"
+        req.target = arguments["terminal"] as? String
+    case "phone_mode":
+        req = ControlRequest(cmd: .phoneMode)
+        req.text = (arguments["on"] as? Bool) == true ? "on" : "off"
+    case "open_in_browser":
+        guard let target = arguments["target"] as? String, !target.isEmpty else { return ("target is required", true) }
+        req = ControlRequest(cmd: .browser)
+        req.url = BrowserTarget.address(target, cwd: FileManager.default.currentDirectoryPath)
     case "start_server":
         req = ControlRequest(cmd: .new)
         req.kind = "server"
@@ -506,7 +605,7 @@ private func describe(_ sessions: [SessionInfo], selfID: String?) -> String {
         if info.id == selfID, info.labelSource != "user" { line += " (auto-named: rename_terminal to describe your work)" }
         if let detail = info.stateDetail { line += " (\(detail))" }
         if let count = info.subagents { line += " (\(count) subagent\(count == 1 ? "" : "s") running)" }
-        if let handling = info.delegation { line += " (organizer handling: \(handling))" }
+        if let handling = info.delegation { line += " (sumi handling: \(handling))" }
         if info.detached == true { line += " (in its own window)" }
         if info.id == selfID { line += " ← you" }
         if !info.ports.isEmpty { line += " ports " + info.ports.map { ":\($0)" }.joined(separator: " ") }
@@ -539,7 +638,14 @@ private func write(_ object: [String: Any]) {
 
 /// Channel mode: long-poll Tako for messages addressed to this session and push each one
 /// into Claude as a `notifications/claude/channel` event.
+private let channelLoopStarted = NSLock()
+private nonisolated(unsafe) var channelLoopRunning = false
+
 private func startChannelLoop() {
+    channelLoopStarted.lock()
+    defer { channelLoopStarted.unlock() }
+    guard !channelLoopRunning else { return }
+    channelLoopRunning = true
     Thread.detachNewThread {
         while true {
             guard let response = try? sendControlRequest(ControlRequest(cmd: .subscribe), timeout: 60) else {

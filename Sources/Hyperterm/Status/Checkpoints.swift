@@ -47,8 +47,19 @@ enum Checkpoints {
         let realIndex = (gitDir as NSString).appendingPathComponent("index")
         let seeded = (try? FileManager.default.copyItem(atPath: realIndex, toPath: index)) != nil
         if !seeded, head != nil { _ = Git.run(["read-tree", "HEAD"], at: path, environment: environment) }
-        guard Git.run(["add", "-A", "--", ":/"] + excluding, at: path, environment: environment) != nil,
-              let tree = Git.run(["write-tree"], at: path, environment: environment) else { return nil }
+        func addAndWriteTree() -> String? {
+            guard Git.run(["add", "-A", "--", ":/"] + excluding, at: path, environment: environment) != nil else { return nil }
+            return Git.run(["write-tree"], at: path, environment: environment)
+        }
+        var written = addAndWriteTree()
+        // A conflicted index (mid-merge) keeps unmerged entries `add` didn't reach, an excluded
+        // path say, and write-tree refuses them. Start again from HEAD instead.
+        if written == nil, seeded {
+            try? FileManager.default.removeItem(atPath: index)
+            if head != nil { _ = Git.run(["read-tree", "HEAD"], at: path, environment: environment) }
+            written = addAndWriteTree()
+        }
+        guard let tree = written else { return nil }
         var args = ["commit-tree", tree, "-m", message.isEmpty ? "Tako checkpoint" : message]
         if let head { args += ["-p", head] }
         return Git.run(args, at: path, environment: extra.merging(Git.identity) { _, new in new })
@@ -206,6 +217,13 @@ enum Checkpoints {
 
     /// Deletes a session's checkpoints (when it's closed or its worktree archived).
     static func prune(at path: String, session: String) {
+        // The undo scope sits in the git dir of whichever checkout restored: this one's, or
+        // the main repository's when `path` is a worktree.
+        for flag in ["--absolute-git-dir", "--git-common-dir"] {
+            if let gitDir = Git.run(["rev-parse", "--path-format=absolute", flag], at: path) {
+                try? FileManager.default.removeItem(atPath: undoScopeFile(gitDir: gitDir, session: session))
+            }
+        }
         guard let listing = Git.run(["for-each-ref", "--format=%(refname)", prefix(session: session)], at: path) else { return }
         for name in listing.split(separator: "\n") { _ = Git.run(["update-ref", "-d", String(name)], at: path) }
     }

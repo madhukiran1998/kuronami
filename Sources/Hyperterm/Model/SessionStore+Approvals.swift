@@ -7,7 +7,7 @@ extension SessionStore {
     func registerApproval(for session: TerminalSession, source: String, payload: String, reply: @escaping ControlServer.Reply) {
         let json = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any] ?? [:]
         let tool = json["tool_name"] as? String ?? "tool"
-        if session.isOrganizer, Self.organizerTools.contains(tool) {
+        if session.isSumi, Self.sumiTools.contains(tool) {
             let approval = PendingApproval(source: source, toolName: tool, summary: tool, suggestions: nil, reply: reply)
             reply(ControlResponse.success(text: decisionJSON(approval, .approve, reason: nil)))
             return
@@ -18,15 +18,22 @@ extension SessionStore {
         let approval = PendingApproval(source: source, toolName: tool, summary: summary,
                                        request: RiskyRequest.text(tool: tool, input: input),
                                        suggestions: json["permission_suggestions"], reply: reply)
+        if approvesInPhoneMode(session, approval) {
+            reply(ControlResponse.success(text: decisionJSON(approval, .approve, reason: nil)))
+            session.record(.approval, "Allowed \(summary) (Phone Mode)")
+            return
+        }
         approvals[session.id] = approval
         session.hasHookApproval = true
+        session.heldToolCall = HeldToolCall(json: json)
         // Plan mode ends by asking to exit it; the plan is the request.
         session.pendingPlan = tool == "ExitPlanMode" ? (json["tool_input"] as? [String: Any])?["plan"] as? String : nil
         session.pendingRequest = summary
+        if tool == "AskUserQuestion" { session.pendingQuestion = PendingQuestion.parse(toolInput: input) }
         session.record(.approval, "Asked to run \(summary)")
         session.apply(.claudeHook(event: "Notification", notificationType: "permission_prompt", message: summary),
                       source: "permission hook", force: .needsInput(summary))
-        // The organizer was told instead; the user gets this banner if it doesn't answer.
+        // Sumi was told instead; the user gets this banner if it doesn't answer.
         if session.delegation?.toldAt == nil {
             notifier.postApproval(session: session, request: summary, alwaysRule: alwaysRuleText(approval))
         }
@@ -44,6 +51,7 @@ extension SessionStore {
             return session.answerPromptByKeys(answer)
         }
         session.hasHookApproval = false
+        session.heldToolCall = nil
         session.pendingPlan = nil
         approval.reply(ControlResponse.success(text: decisionJSON(approval, answer, reason: reason)))
         session.record(.approval, answer == .deny ? "Denied \(approval.summary)" : answer == .always ? "Always allowed \(approval.summary)" : "Allowed \(approval.summary)")
@@ -52,10 +60,23 @@ extension SessionStore {
         return .success(answer == .deny ? "denied" : "approved")
     }
 
+    /// Answers a single-select question by picking its option in the CLI's own list. A held
+    /// permission hook is released first so the CLI's list is the thing on screen; the keys follow
+    /// once it has drawn.
+    func answerQuestion(_ session: TerminalSession, option index: Int, completion: @escaping (Result<String, TerminalSession.PromptError>) -> Void) {
+        guard approvals[session.id] != nil else { return completion(session.answerQuestionByKeys(option: index)) }
+        dropApproval(for: session)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak session] in
+            guard let session else { return }
+            completion(session.answerQuestionByKeys(option: index))
+        }
+    }
+
     /// Releases a held hook with no decision, so the CLI's own prompt (or its outcome) stands.
     func dropApproval(for session: TerminalSession) {
         guard let approval = approvals.removeValue(forKey: session.id) else { return }
         session.hasHookApproval = false
+        session.heldToolCall = nil
         session.pendingPlan = nil
         approval.reply(ControlResponse.success())
         notifier.clearApproval(session: session)
@@ -94,4 +115,45 @@ extension SessionStore {
         let data = (try? JSONSerialization.data(withJSONObject: output)) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }
+}
+
+/// The tool call a held PermissionRequest hook asks about. Claude runs read-only tools alongside
+/// the one waiting for approval, so only this call's own PostToolUse means it moved on.
+struct HeldToolCall {
+    let name: String
+    let toolUseID: String?
+    let input: NSDictionary
+    /// The subagent that asked; nil for the main agent.
+    let agentID: String?
+
+    init(json: [String: Any]) {
+        name = json["tool_name"] as? String ?? ""
+        toolUseID = json["tool_use_id"] as? String
+        input = NSDictionary(dictionary: json["tool_input"] as? [String: Any] ?? [:])
+        agentID = json["agent_id"] as? String
+    }
+
+    /// Whether a tool hook payload reports this call: by tool_use_id when both carry one, else by
+    /// tool name and input. The permission flow can add to the input (AskUserQuestion's answers),
+    /// so every key held must be there unchanged; extra keys are fine. A payload naming no tool
+    /// can't be told apart, so it counts.
+    func matches(_ json: [String: Any]) -> Bool {
+        if let toolUseID, let other = json["tool_use_id"] as? String { return toolUseID == other }
+        guard let tool = json["tool_name"] as? String else { return true }
+        let other = NSDictionary(dictionary: json["tool_input"] as? [String: Any] ?? [:])
+        return tool == name && input.allSatisfy { key, value in (value as AnyObject).isEqual(other[key]) }
+    }
+
+    /// Whether another tool call can run while this one waits: a read-only tool Claude runs in
+    /// parallel, or any tool from a different agent. Anything else from the same agent means this
+    /// call was settled (allowed, denied or answered) and the agent moved on.
+    func runsAlongside(_ json: [String: Any]) -> Bool {
+        if json["agent_id"] as? String != agentID { return true }
+        guard let tool = json["tool_name"] as? String else { return false }
+        return Self.readOnlyTools.contains(tool) || ClaudeAdapter.browserReadOnlyTools.contains { "mcp__browser__" + $0 == tool }
+    }
+
+    private static let readOnlyTools: Set = [
+        "Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "NotebookRead", "TodoRead", "TodoWrite", "ToolSearch",
+    ]
 }

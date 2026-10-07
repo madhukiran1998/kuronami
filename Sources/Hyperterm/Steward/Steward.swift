@@ -19,7 +19,7 @@ struct StewardPolicy: Codable, Equatable {
     }
 }
 
-/// The machine and every session as the steward sees them, for the organizer.
+/// The machine and every session as the steward sees them, for Sumi.
 struct MachineStatus: Codable, Equatable {
     struct Session: Codable, Equatable {
         var id: String
@@ -85,7 +85,8 @@ final class Steward: ObservableObject {
     /// Called once per new escalation. The steward never acts on it.
     var onEscalation: ((Escalation) -> Void)?
     /// Called once when an idle, hidden session has been quiet for `sleepAfter`.
-    var onSleepCandidate: ((TerminalSession) -> Void)?
+    /// Returns whether the session fell asleep; when not, the steward offers it again later.
+    var onSleepCandidate: ((TerminalSession) -> Bool)?
     var policy = StewardPolicy.load() {
         didSet { policy.save(); rebalance() }
     }
@@ -115,6 +116,12 @@ final class Steward: ObservableObject {
     func start(store: SessionStore) {
         self.store = store
         store.$selectedID.combineLatest(store.$layout).dropFirst()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.rebalance() } }
+            .store(in: &observers)
+        // An agent starting or finishing work changes its band.
+        store.$sessions
+            .map { sessions in Publishers.MergeMany(sessions.map { $0.$state.dropFirst().map { _ in () } }) }
+            .switchToLatest()
             .sink { [weak self] _ in DispatchQueue.main.async { self?.rebalance() } }
             .store(in: &observers)
         NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
@@ -171,7 +178,7 @@ final class Steward: ObservableObject {
             }
             let sleepBand = StewardRules.band(state: session.state, isAgent: true, focused: awake.contains(session.id))
             if session.kind.isAgent, sleepTracker.update(sessionID: key, band: sleepBand, cpu: workCPU, now: now) {
-                onSleepCandidate?(session)
+                if onSleepCandidate?(session) != true { sleepTracker.retry(key, now: now) }
             }
         }
         let live = Set(store.sessions.map(\.id))
@@ -180,26 +187,44 @@ final class Steward: ObservableObject {
         conditionsChanged()
     }
 
+    /// Between ticks: keeps each sampled session's tree current, so children started since the
+    /// last tick are backgrounded with it.
+    func refreshTrees(_ snapshots: [String: ProcessSnapshot]) {
+        var changed = false
+        for (id, tree) in trees {
+            guard let pids = snapshots[id.uuidString]?.pids, !pids.isEmpty, pids != tree else { continue }
+            trees[id] = pids
+            changed = true
+        }
+        if changed { rebalance() }
+    }
+
     private func forget(_ id: UUID) {
-        trees[id] = nil
         meters[id] = nil
         workMeters[id] = nil
-        lowered[id] = nil
+        if lowered.removeValue(forKey: id) != nil {
+            for pid in trees[id] ?? [] { Priority.restore(pid) }
+        }
+        trees[id] = nil
         escalationTracker.forget(id.uuidString)
         sleepTracker.forget(id.uuidString)
     }
 
-    /// On screen, selected, the organizer, or pinned by the policy.
+    /// On screen, selected, Sumi, or pinned by the policy.
     private func focusedIDs(_ store: SessionStore) -> Set<UUID> {
         heldAwakeIDs(store).union(store.visibleIDs)
     }
 
-    /// What sleep leaves alone: the selected tile, the organizer and pinned sessions. A tile that
+    /// What sleep leaves alone: the selected tile, Sumi and pinned sessions. A tile that
     /// is merely on screen can sleep, since it keeps showing its last screen and wakes on a key.
     private func heldAwakeIDs(_ store: SessionStore) -> Set<UUID> {
         var ids = Set<UUID>()
         if let selected = store.selectedID { ids.insert(selected) }
-        for session in store.sessions where session.isOrganizer || policy.pinned.contains(session.label)
+        // A detached window that is on screen is being watched even when it isn't the selection.
+        for session in store.sessions where session.isDetached && session.surface.window?.isVisible == true {
+            ids.insert(session.id)
+        }
+        for session in store.sessions where session.isSumi || policy.pinned.contains(session.label)
             || policy.pinned.contains(session.id.uuidString) {
             ids.insert(session.id)
         }
@@ -248,6 +273,8 @@ final class Steward: ObservableObject {
         updateHeavyCapacity()
         heavy.reap()
         drainLaunches()
+        // Thermal state decides what is backgrounded.
+        rebalance()
     }
 
     private func updateHeavyCapacity() {
@@ -263,11 +290,11 @@ final class Steward: ObservableObject {
     /// policy's agent cap isn't reached.
     func canLaunchAgent() -> Bool { launchBlocker() == nil }
 
-    /// Why a new agent would wait right now, or nil. The organizer doesn't count toward the cap,
+    /// Why a new agent would wait right now, or nil. Sumi doesn't count toward the cap,
     /// and a launch stops being reserved once its session is starting (it's counted there).
     func launchBlocker() -> String? {
         reservations.removeAll { Date().timeIntervalSince($0) > 10 }
-        let sessions = (store?.sessions ?? []).filter { $0.kind.isAgent && !$0.isOrganizer }
+        let sessions = (store?.sessions ?? []).filter { $0.kind.isAgent && !$0.isSumi }
         let footprints = sessions.compactMap { samples[$0.id]?.footprint }
         let active = sessions.filter { $0.state == .working || $0.state == .starting }.count
         let recent = sessions.filter { Date().timeIntervalSince($0.createdAt) < 10 }.count
@@ -284,7 +311,8 @@ final class Steward: ObservableObject {
 
     var queuedLaunches: Int { launches.count }
 
-    private func drainLaunches() {
+    /// Starts queued launches that fit now. Cheap, so it runs on every poll, not only on a tick.
+    func drainLaunches() {
         while !launches.isEmpty, canLaunchAgent() {
             reservations.append(Date())
             launches.removeFirst()()
@@ -294,15 +322,22 @@ final class Steward: ObservableObject {
     // MARK: - Heavy jobs
 
     /// `ht heavy`: acquire replies once a slot is free; the slot frees on release or when the
-    /// holder process exits.
-    func handleHeavy(_ request: ControlRequest, reply: @escaping ControlServer.Reply) {
-        guard let raw = request.pid, raw > 0 else { reply(.failure("heavy needs the holder's pid")); return }
-        let pid = pid_t(raw)
+    /// holder process exits. The holder is the kernel's peer pid when the server knows it, so a
+    /// caller can't lease or release slots for other processes; `request.pid` is the fallback.
+    func handleHeavy(_ request: ControlRequest, peer: pid_t? = nil, reply: @escaping ControlServer.Reply) {
+        let pid: pid_t
+        if let peer, peer > 0 {
+            pid = peer
+        } else if let raw = request.pid, raw > 0 {
+            pid = pid_t(raw)
+        } else {
+            reply(.failure("heavy needs the holder's pid")); return
+        }
         switch request.text ?? "acquire" {
         case "acquire":
             guard HeavyQueue.isAlive(pid) else { reply(.failure("no such process")); return }
             heavy.reap()
-            heavy.acquire(pid) { reply(.success(text: "granted")) }
+            heavy.acquire(pid, ancestors: HeavyQueue.ancestors(of: pid)) { reply(.success(text: "granted")) }
         case "release":
             heavy.release(pid)
             reply(.success())

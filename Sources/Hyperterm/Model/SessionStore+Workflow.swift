@@ -91,7 +91,7 @@ extension SessionStore {
         spec.options = session.spec.options
         spec.account = session.spec.account
         spec.baseBranch = session.spec.baseBranch
-        spec.port = session.spec.port
+        // No port copied: two dev servers on one port collide, so the fork is given its own.
         Task { @MainActor [weak self, spec] in
             guard let self else { return }
             let fork = await self.launch(spec, resume: false)
@@ -171,7 +171,7 @@ extension SessionStore {
                     guard case .success = merged else { completion(merged); return }
                     winner.record(.note, "Picked: merged \(branch) into \(base)")
                     winner.spec.race = nil
-                    for loser in losers { self.close(loser.session) }
+                    for loser in losers where self.sessions.contains(where: { $0.id == loser.session.id }) { self.close(loser.session) }
                     // Closing stops each agent; its worktree lock goes with it a moment later.
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.5) {
                         for loser in losers where loser.isWorktree {
@@ -197,9 +197,9 @@ extension SessionStore {
         return (try? decoder.decode([LaunchSpec].self, from: data)) ?? []
     }
 
-    /// Every agent but the organizer is kept for reopening, with what it did and how it ended.
+    /// Every agent but Sumi is kept for reopening, with what it did and how it ended.
     func rememberClosed(_ session: TerminalSession) {
-        guard session.kind.isAgent, !session.isOrganizer else { return }
+        guard session.kind.isAgent, !session.isSumi else { return }
         var spec = session.spec
         spec.minimized = nil
         spec.asleep = nil
@@ -218,8 +218,15 @@ extension SessionStore {
             // Out of reach for good: its checkpoints can go too.
             let dropped = recentlyClosed.suffix(from: 50)
             recentlyClosed.removeLast(recentlyClosed.count - 50)
-            let targets = dropped.map { (path: $0.workPath, id: $0.id.uuidString) }
-            pruneQueue.async { for target in targets { Checkpoints.prune(at: target.path, session: target.id) } }
+            // An archived worktree's folder is gone, but its refs live in the shared repository:
+            // prune from the main checkout (Claude worktrees keep it as cwd) when that's all that's left.
+            let targets = dropped.map { (paths: [$0.workPath, expandTilde($0.cwd)], id: $0.id.uuidString) }
+            pruneQueue.async {
+                for target in targets {
+                    guard let path = target.paths.first(where: { FileManager.default.fileExists(atPath: $0) }) else { continue }
+                    Checkpoints.prune(at: path, session: target.id)
+                }
+            }
         }
         saveRecentlyClosed()
     }
@@ -246,9 +253,10 @@ extension SessionStore {
     }
 
     private func saveRecentlyClosed() {
+        guard persists else { return }
         let specs = recentlyClosed
         let url = Self.recentlyClosedURL
-        DispatchQueue.global(qos: .utility).async {
+        Self.persistQueue.async {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             if let data = try? encoder.encode(specs) { try? data.write(to: url, options: .atomic) }
@@ -259,7 +267,8 @@ extension SessionStore {
 
     /// When the account's limit resets, tells the agent to carry on.
     func continueAtReset(_ session: TerminalSession) {
-        guard let reset = [rateLimits?.fiveHourResets, rateLimits?.sevenDayResets].compactMap({ $0 })
+        let limits = self.limits(for: session)
+        guard let reset = [limits?.fiveHourResets, limits?.sevenDayResets].compactMap({ $0 })
             .filter({ $0 > Date() }).min() else { return }
         session.resumeAt = reset
         session.record(.note, "Will continue at \(reset.formatted(date: .omitted, time: .shortened))")
@@ -280,7 +289,8 @@ extension SessionStore {
     /// The reset time to offer, when an agent stopped on a rate limit.
     func rateLimitReset(for session: TerminalSession) -> Date? {
         guard case .failed(let reason) = session.state, reason.lowercased().contains("rate") else { return nil }
-        return [rateLimits?.fiveHourResets, rateLimits?.sevenDayResets].compactMap { $0 }.filter { $0 > Date() }.min()
+        let limits = self.limits(for: session)
+        return [limits?.fiveHourResets, limits?.sevenDayResets].compactMap { $0 }.filter { $0 > Date() }.min()
     }
 
     // MARK: - Project actions

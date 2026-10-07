@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import GhosttyKit
 import os
 
@@ -51,6 +52,15 @@ final class GhosttyRuntime {
         if let app { ghostty_app_tick(app) }
     }
 
+    /// Ghostty's `macos-auto-secure-input` (on by default): password prompts turn on secure input.
+    var autoSecureInput: Bool {
+        guard let config else { return true }
+        var value = true
+        let key = "macos-auto-secure-input"
+        _ = ghostty_config_get(config, &value, key, UInt(key.utf8.count))
+        return value
+    }
+
     // MARK: - Setup
 
     /// The user's Ghostty config (fonts, theme, keybinds) applies as-is. Load order does the
@@ -97,13 +107,48 @@ final class GhosttyRuntime {
         center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
                 if let app = GhosttyRuntime.shared.app { ghostty_app_set_focus(app, true) }
+                SecureInput.apply(active: true)
             }
         }
         center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
                 if let app = GhosttyRuntime.shared.app { ghostty_app_set_focus(app, false) }
+                SecureInput.apply(active: false)
             }
         }
+    }
+}
+
+/// Secure keyboard input is global to the system, so it is held only while Tako is active and a
+/// password prompt (or the app-wide toggle) wants it, and every enable is balanced by a disable.
+/// Adapted from Ghostty's macOS SecureInput.swift.
+@MainActor
+enum SecureInput {
+    /// Set by Ghostty's app-wide toggle_secure_input binding.
+    static var global = false {
+        didSet { apply() }
+    }
+
+    /// Surfaces at a password prompt, and whether each currently has focus.
+    private static var scoped: [ObjectIdentifier: Bool] = [:]
+    private static var enabled = false
+
+    static func setScoped(_ object: ObjectIdentifier, focused: Bool) {
+        scoped[object] = focused
+        apply()
+    }
+
+    static func removeScoped(_ object: ObjectIdentifier) {
+        guard scoped.removeValue(forKey: object) != nil else { return }
+        apply()
+    }
+
+    /// Yields secure input while another app is active; it affects every app on the system.
+    static func apply(active: Bool? = nil) {
+        let desired = (active ?? NSApp.isActive) && (global || scoped.values.contains(true))
+        guard enabled != desired else { return }
+        let status = desired ? EnableSecureEventInput() : DisableSecureEventInput()
+        if status == noErr { enabled = desired }
     }
 }
 
@@ -185,16 +230,21 @@ private func ghosttyReadClipboard(_ userdata: UnsafeMutableRawPointer?, _ locati
 
 private func ghosttyConfirmReadClipboard(_ userdata: UnsafeMutableRawPointer?, _ string: UnsafePointer<CChar>?, _ state: UnsafeMutableRawPointer?, _ request: ghostty_clipboard_request_e) {
     // Agents and programs asking to read the clipboard (OSC 52) is denied unless the user's
-    // Ghostty config allows it without confirmation; we have no confirmation UI.
+    // Ghostty config allows it without confirmation; we have no confirmation UI. A paste held
+    // back by paste protection (multi-line text) was started by the user, so it goes through.
     nonisolated(unsafe) let ud = userdata
     nonisolated(unsafe) let st = state
+    let pasted = request == GHOSTTY_CLIPBOARD_REQUEST_PASTE ? string.map { String(cString: $0) } : nil
     MainActor.assumeIsolated {
         guard let view = surfaceView(fromUserdata: ud), let surface = view.surface else { return }
-        "".withCString { ghostty_surface_complete_clipboard_request(surface, $0, st, true) }
+        (pasted ?? "").withCString { ghostty_surface_complete_clipboard_request(surface, $0, st, true) }
     }
 }
 
 private func ghosttyWriteClipboard(_ userdata: UnsafeMutableRawPointer?, _ location: ghostty_clipboard_e, _ content: UnsafePointer<ghostty_clipboard_content_s>?, _ len: Int, _ confirm: Bool) {
+    // `confirm` means the user's config asks before a program writes the clipboard (OSC 52).
+    // With no confirmation UI, that write is refused rather than made silently.
+    guard !confirm else { return }
     guard let content, len > 0 else { return }
     var text: String?
     for index in 0..<len {
@@ -251,6 +301,14 @@ enum GhosttyActionRouter {
         case GHOSTTY_ACTION_QUIT:
             NSApp.terminate(nil)
             return true
+        case GHOSTTY_ACTION_SECURE_INPUT:
+            switch action.action.secure_input {
+            case GHOSTTY_SECURE_INPUT_ON: SecureInput.global = true
+            case GHOSTTY_SECURE_INPUT_OFF: SecureInput.global = false
+            case GHOSTTY_SECURE_INPUT_TOGGLE: SecureInput.global.toggle()
+            default: break
+            }
+            return true
         case GHOSTTY_ACTION_RELOAD_CONFIG, GHOSTTY_ACTION_CONFIG_CHANGE, GHOSTTY_ACTION_COLOR_CHANGE,
              GHOSTTY_ACTION_RENDER, GHOSTTY_ACTION_QUIT_TIMER:
             return true
@@ -289,11 +347,21 @@ enum GhosttyActionRouter {
             let url = String(cString: payload.open_url.url)
             if let target = URL(string: url) { NSWorkspace.shared.open(target) }
         case GHOSTTY_ACTION_SCROLLBAR, GHOSTTY_ACTION_RENDERER_HEALTH, GHOSTTY_ACTION_INITIAL_SIZE,
-             GHOSTTY_ACTION_SIZE_LIMIT, GHOSTTY_ACTION_MOUSE_OVER_LINK, GHOSTTY_ACTION_SECURE_INPUT,
+             GHOSTTY_ACTION_SIZE_LIMIT, GHOSTTY_ACTION_MOUSE_OVER_LINK,
              GHOSTTY_ACTION_KEY_SEQUENCE, GHOSTTY_ACTION_KEY_TABLE, GHOSTTY_ACTION_SET_TAB_TITLE,
              GHOSTTY_ACTION_COLOR_CHANGE, GHOSTTY_ACTION_RENDER, GHOSTTY_ACTION_CONFIG_CHANGE:
             // Accepted with no host-side behavior yet.
             break
+        case GHOSTTY_ACTION_SECURE_INPUT:
+            // A password prompt: keystrokes stay out of other apps' event taps while it has focus,
+            // unless the user's `macos-auto-secure-input` turned that off.
+            guard GhosttyRuntime.shared.autoSecureInput else { break }
+            switch payload.secure_input {
+            case GHOSTTY_SECURE_INPUT_ON: view.passwordInput = true
+            case GHOSTTY_SECURE_INPUT_OFF: view.passwordInput = false
+            case GHOSTTY_SECURE_INPUT_TOGGLE: view.passwordInput.toggle()
+            default: break
+            }
         case GHOSTTY_ACTION_START_SEARCH:
             view.events?.surfaceSearch(total: nil, selected: nil, start: true)
         case GHOSTTY_ACTION_SEARCH_TOTAL:

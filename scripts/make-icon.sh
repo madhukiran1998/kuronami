@@ -1,5 +1,5 @@
 #!/bin/sh
-# Renders the app icon, favicon and the organizer button's layers from the SVGs in docs/brand.
+# Renders the app icon, favicon and Sumi button's layers from the SVGs in docs/brand.
 # Needs Google Chrome (headless) for SVG rendering; sips and iconutil ship with macOS.
 set -e
 cd "$(dirname "$0")/.."
@@ -23,6 +23,6 @@ done
 iconutil -c icns "$TMP/AppIcon.iconset" -o Resources/AppIcon.icns
 sips -z 256 256 "$TMP/icon.png" --out docs/icon.png >/dev/null
 
-# The organizer button stacks these so the sun can rise and set behind Tako.
+# Sumi button stacks these so the sun can rise and set behind Tako.
 for layer in ground sun tako; do render "docs/brand/mark-$layer.svg" 192 "Resources/Mark/$layer.png"; done
 echo "Rendered Resources/AppIcon.icns, docs/icon.png and Resources/Mark/{ground,sun,tako}.png"

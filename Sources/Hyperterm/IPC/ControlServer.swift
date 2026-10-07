@@ -7,7 +7,8 @@ import Foundation
 /// approval), so no thread is parked while it waits.
 final class ControlServer: @unchecked Sendable {
     typealias Reply = @Sendable (ControlResponse) -> Void
-    typealias Handler = @MainActor (ControlRequest, CallerIdentity, @escaping Reply) -> Void
+    /// The kernel's peer pid rides along for requests that lease resources per process (`heavy`).
+    typealias Handler = @MainActor (ControlRequest, CallerIdentity, pid_t?, @escaping Reply) -> Void
     typealias Identify = @Sendable (pid_t) -> CallerIdentity
 
     private static let maxRequestBytes = 1_000_000
@@ -91,7 +92,7 @@ final class ControlServer: @unchecked Sendable {
             reply = { [weak self] response in self?.respond(client, response) }
         }
         DispatchQueue.main.async {
-            MainActor.assumeIsolated { handler(request, caller, reply) }
+            MainActor.assumeIsolated { handler(request, caller, peer, reply) }
         }
     }
 

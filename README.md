@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://nikshepsvn.com/tako/">Website</a> ·
   <a href="#install">Install</a> ·
-  <a href="#why-kuronami">Why</a> ·
+  <a href="#why-tako">Why</a> ·
   <a href="#how-it-compares">Compare</a> ·
   <a href="#everything-it-does">Features</a>
 </p>
@@ -188,7 +188,7 @@ ht ls
 - **Permissions, model and effort per agent.** *Ask First*, *Accept Edits*, *Plan* or *Full Access*, translated to each CLI's own flags (`--permission-mode` for Claude; approval and sandbox flags for Codex). Pick a model (Claude's `opus`/`sonnet`/`haiku` aliases, or any name) and, for Codex, reasoning effort. Leave them alone and the agent's own config applies.
 - **Plans you approve.** An agent in plan mode shows *Plan ready* on its card with *Approve Plan* and *Keep Planning*; the inspector's Plan tab shows the whole plan.
 - **Fork a conversation.** Right-click a Claude agent → *Fork Conversation* starts a new agent that continues from this point (`--resume --fork-session`); the original carries on unchanged.
-- **Or ask the organizer.** The Tako mark in the window's corner (⌃⌘O) opens an organizer agent: tell it what you want started, arranged or watched, and it does it with Tako's own tools. It can also answer questions for sessions you hand it, and it remembers past sessions.
+- **Or ask Sumi.** The Tako mark in the window's corner (⌃⌘O) opens Sumi agent: tell it what you want started, arranged or watched, and it does it with Tako's own tools. It can also answer questions for sessions you hand it, and it remembers past sessions.
 - **Reopen closed agents.** Closed agents with a conversation stay under *Recently closed* in the sidebar (and in ⌘P), one click from resuming.
 
 #### Answer approvals from anywhere
@@ -234,7 +234,7 @@ Servers open on the shelf on the agent's own `$PORT`; other commands open a shel
 
 #### Browsers agents can drive
 - **Real Chromium inside Tako.** Browsers are sessions like terminals: labeled (`@api-web`), in the sidebar under their agent, tiled in split and grid, and restored where they left off. ⇧⌘B opens one, on the selected terminal's dev server when it has one.
-- **Every agent gets its own.** An agent's first browser action opens `@<agent>-web` next to it, and its tools act on that browser by default, so parallel agents never fight over a page. `list_pages` names every Tako browser by label, and an agent can use another one by passing its page id.
+- **Every agent gets its own.** An agent's first browser action opens `@<agent>-web` next to it, and its tools act on that browser by default, so parallel agents never fight over a page. `list_pages` names every Tako browser by label, and an agent can use another one by passing its page id. `new_page` opens an extra tab: another browser the agent owns, shown under it in the sidebar and made its default page. `close_page` closes only tabs the agent opened, never its first browser or another agent's.
 - **Watch and step in.** The tile shows who is driving (`@api · click`), and you can click, type, and log in yourself at any time.
 - **Your logins, if you want them.** *Import Chrome Logins…* (in a browser's ⋯ menu) copies your Chrome cookies into Tako's browser profile, which is kept separate from your own Chrome (`~/.hyperterm/browser`).
 - **Scoped by default.** Agents started in Tako use Tako's browsers, not your everyday Chrome. App menu → *Let Agents Use My Chrome* re-enables Claude in Chrome for them.
@@ -309,7 +309,7 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 | ⌘P | Go to a terminal, run an action, or `@label message` |
 | ⌘J | Jump to the agent waiting longest |
 | ⌥⌘R / ⌥⌘I | Review changes / toggle inspector |
-| ⌃⌘O | Open or hide the organizer |
+| ⌃⌘O | Open or hide Sumi |
 | ⌥⌘O | Open the selected workspace in your editor |
 | ⌘⌥1 · 2 · 3, ⌘⏎ | Focus · split · grid, zoom tile |
 | ⌥⌘0 | Even out tiles |
@@ -363,7 +363,7 @@ Sources/Hyperterm/Status    StatusReducer, ProcessInspector (identity, ports), G
 Sources/Hyperterm/IPC       control socket server and request handler (permissions)
 Sources/Hyperterm/Launch    agent wrappers, per-launch hooks/statusLine/MCP config
 Sources/Hyperterm/Browser   Chromium runtime (lazy start, DevTools port), browser surface and bar, Chrome logins import
-Sources/Hyperterm/UI        Design (tokens + components), LayoutTree, sidebar, organizer, tiles, inspector, switcher, sheets
+Sources/Hyperterm/UI        Design (tokens + components), LayoutTree, sidebar, sumi, tiles, inspector, switcher, sheets
 Sources/HypertermHelper     Chromium helper process (renderer, GPU, utility)
 Sources/ht                  CLI, hook/permission/statusline entry points, stdio MCP server, browser MCP proxy
 Tests/HypertermTests        state machine, layout tree, checkpoints (real Git), agent options, project actions, naming,
@@ -383,7 +383,7 @@ Tako is young and moves fast. On macOS 26 with Claude Code 2.1, it builds from s
 - accounts (`ht new --account`)
 - the security boundary, tested against key presses, double-fork escapes, environment stripping and shell injection
 
-Browsers are verified by driving `ht browser-mcp` directly: lazy start, per-agent default page, labeled `list_pages`, cross-browser access, and refused `new_page`. Importing Chrome logins is implemented but not yet verified end to end.
+Browsers are verified by driving `ht browser-mcp` directly: lazy start, per-agent default page, labeled `list_pages`, cross-browser access, `new_page` opening an owned tab, and `close_page` refusing anything but tabs the agent opened. Importing Chrome logins is implemented but not yet verified end to end.
 
 Codex is integrated throughout, but its live paths have had less hands-on time than Claude's. Issues and pull requests are very welcome.
 

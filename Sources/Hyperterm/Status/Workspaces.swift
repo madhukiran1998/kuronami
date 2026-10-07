@@ -54,7 +54,8 @@ enum Workspaces {
     static func prepare(spec: LaunchSpec) -> Result<LaunchSpec, WorktreeError> {
         guard let info = GitInspector.query(expandTilde(spec.cwd)) else { return .failure(.notARepo(spec.cwd)) }
         var spec = spec
-        spec.baseBranch = info.branch
+        // A detached HEAD has no branch to merge back into; "HEAD" would read as one.
+        spec.baseBranch = info.branch == "HEAD" ? nil : info.branch
         switch spec.kind {
         case .claude:
             spec.cwd = info.root

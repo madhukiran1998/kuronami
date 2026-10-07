@@ -1,6 +1,13 @@
 import AppKit
 import Combine
 
+/// A running Claude subagent.
+struct Helper: Identifiable {
+    let id: String
+    let type: String
+    let startedAt: Date
+}
+
 /// One labeled terminal: its launch spec, its live libghostty surface, and what it's doing.
 @MainActor
 final class TerminalSession: ObservableObject, Identifiable {
@@ -22,26 +29,41 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var foregroundProcess: String?
     /// Background shells under the agent CLI, from the last process snapshot (see `canSleep`).
     var backgroundShells = 0
+    /// Scripts running in a shell or server terminal, from the last process snapshot.
+    var nestedShells = 0
     @Published var unread = false
+    /// Finished a turn the user hasn't looked at since: its tile is marked until they do.
+    @Published var finishedUnseen = false
     /// What the agent is doing this moment ("Bash: pnpm test"), from tool-use hooks.
     @Published var activity: String?
     /// The agent's own one-line status, posted with the set_status tool.
     @Published var agentStatus: String?
     /// The request an agent is blocked on ("Bash: pnpm prisma migrate dev"), when known.
     @Published var pendingRequest: String?
-    /// The user handed this session's waits to the organizer (in memory only).
+    /// What the agent asked with AskUserQuestion, while it waits for the answer.
+    @Published var pendingQuestion: PendingQuestion?
+    /// The user handed this session's waits to Sumi (in memory only).
     @Published var delegation: Delegation?
     /// True while a PermissionRequest hook is held open, so approvals go through the CLI's API.
     @Published var hasHookApproval = false
+    /// The tool call the held hook asks about, so a parallel tool finishing doesn't release it.
+    var heldToolCall: HeldToolCall?
     @Published var git: GitInfo?
     @Published var timeline: [TimelineEvent] = []
     @Published var usage = UsageSnapshot()
     @Published var tasks = TaskProgress()
     /// Claude subagents started and not yet stopped, by agent id. Background ones keep working
     /// after the session's own turn ends, so it isn't done while any remain.
-    @Published var runningSubagents: Set<String> = []
+    @Published var runningSubagents: [String: Subagent] = [:]
     @Published var testEvidence: TestEvidence?
     @Published var diffStat: DiffStat?
+    /// Worktree agents: what closing would lose (uncommitted files, commits not in the base).
+    @Published var atRisk: WorkAtRisk?
+    /// The running subagents as sidebar rows, oldest first.
+    var helpers: [Helper] {
+        runningSubagents.map { Helper(id: $0.key, type: $0.value.type, startedAt: $0.value.startedAt) }
+            .sorted { $0.startedAt < $1.startedAt }
+    }
     /// Finished a turn with changes that the user hasn't opened in review yet.
     @Published var readyForReview = false
     /// Servers normally sit in the canvas's strip; pinned ones get a grid tile.
@@ -102,7 +124,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     var label: String { spec.label }
     var kind: SessionKind { spec.kind }
     var isMinimized: Bool { spec.minimized == true }
-    var isOrganizer: Bool { spec.organizer == true }
+    var isSumi: Bool { spec.sumi == true }
 
     init(spec: LaunchSpec, resume: Bool, task: String? = nil) {
         self.id = spec.id
@@ -154,7 +176,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         pendingInput = AgentIntegration.initialInput(for: spec, resume: resume, task: task)
         guard pendingInput != nil else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            guard let self, self.inputGeneration == generation else { return }
+            guard let self, self.inputGeneration == generation, !self.resumeAwaitsExit else { return }
             self.sendPendingInput()
         }
     }
@@ -174,7 +196,11 @@ final class TerminalSession: ObservableObject, Identifiable {
         store?.dropApproval(for: self)
         endSleep()
         isWaking = false
+        resumeAwaitsExit = false
         wakeDraft = ""
+        userDraftInProgress = false
+        submitInFlight = false
+        flushScheduled = false
         shellAtPrompt = false
         surface.events = nil
         destroySurface()
@@ -208,15 +234,22 @@ final class TerminalSession: ObservableObject, Identifiable {
         isAsleep = true
         fellAsleepAt = Date()
         spec.asleep = true
+        // The CLI holds the terminal until it quits; the shell's next prompt (OSC 7) says it has.
+        shellAtPrompt = false
+        sleepExitSeen = false
         record(.note, "Asleep: the agent quit to free memory; its conversation resumes on the next message")
         type(kind.adapter?.exitCommand ?? "/exit", submit: true, countsAsWork: false)
     }
 
     /// Resumes the conversation in the same shell, which is back at its prompt.
     func wakeUp() {
+        // Woken while the CLI is still quitting (a key right after the exit command): the resume
+        // waits until it has, so it is never typed into the live CLI.
+        let quitting = isAsleep && !sleepExitSeen && !shellAtPrompt
         endSleep()
         isWaking = true
         record(.note, "Woke: resuming the conversation")
+        resumeAwaitsExit = quitting
         scheduleInitialInput(resume: true)
         agentProcessSeen = false
         createdAt = Date()
@@ -227,6 +260,38 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     /// When it was told to quit, to notice a CLI that didn't.
     private(set) var fellAsleepAt: Date?
+    /// The CLI quit after its exit command: its shell prompt came back, or the poll found it gone.
+    /// True when restored asleep, since no CLI ran then.
+    private var sleepExitSeen = true
+    /// Woken before the CLI was seen to quit; the resume command is held until it has.
+    private(set) var resumeAwaitsExit = false
+
+    /// The poll found no agent CLI process while it slept or was waking.
+    func cliExitSeen() {
+        if isAsleep { sleepExitSeen = true }
+        guard resumeAwaitsExit else { return }
+        resumeAwaitsExit = false
+        // A moment for the shell to draw its prompt.
+        let generation = inputGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(300)) { [weak self] in
+            guard let self, self.inputGeneration == generation else { return }
+            self.sendPendingInput()
+        }
+    }
+
+    /// Woken while quitting, and the CLI never did (it asked something instead): drop the resume,
+    /// close what it asked and keep the live CLI, as `abortSleep` does.
+    func cliStayedRunning() {
+        guard resumeAwaitsExit else { return }
+        resumeAwaitsExit = false
+        pendingInput = nil
+        inputGeneration += 1
+        _ = surface.pressKey(named: "esc")
+        fellAsleepAt = nil
+        record(.note, "Stayed awake: the agent didn't quit when asked")
+        agentProcessSeen = true
+        apply(.processStarted, source: "process", force: .idle)
+    }
 
     /// The CLI is still running after its exit command (it asked something instead): close
     /// whatever it asked and show the live terminal again, awake.
@@ -251,9 +316,15 @@ final class TerminalSession: ObservableObject, Identifiable {
     private func finishWaking() {
         isWaking = false
         (surface as? TerminalSurfaceView)?.thawFrame()
+        deliverWakeDraft()
+    }
+
+    /// Types the draft kept while waking once the agent can take it; held while it asks something
+    /// or has failed, and delivered when it next goes idle or works.
+    private func deliverWakeDraft() {
         let draft = wakeDraft
-        wakeDraft = ""
         guard !draft.isEmpty, state == .idle || state == .working else { return }
+        wakeDraft = ""
         // A draft holds queued messages back, as one the user typed would.
         userDraftInProgress = true
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(400)) { [weak self] in
@@ -298,16 +369,17 @@ final class TerminalSession: ObservableObject, Identifiable {
         guard !isAsleep else { return }
         let next = force ?? reduceState(state, kind: kind, event: event)
         guard next != state else { return }
-        if !next.needsAttention { pendingRequest = nil }
+        if !next.needsAttention { pendingRequest = nil; pendingQuestion = nil }
         if next == .idle || next == .exited(0) { activity = nil }
+        if next != .idle { finishedUnseen = false }
         // A CLI that exited or relaunched took its subagents with it.
-        if next == .starting { runningSubagents = [] }
-        if case .exited = next { runningSubagents = [] }
+        if next == .starting { runningSubagents = [:] }
+        if case .exited = next { runningSubagents = [:] }
         let previous = state
         state = next
         stateSource = source
         stateChangedAt = Date()
-        if isWaking, next != .starting { finishWaking() }
+        if isWaking, next != .starting { finishWaking() } else if !isWaking, !wakeDraft.isEmpty { deliverWakeDraft() }
         // Without a prompt hook a turn starts when work starts from rest. Claude's turns come
         // from its UserPromptSubmit and Stop hooks instead.
         if kind.adapter?.reportsPrompts == false, !reportsTurnsByHook, next == .working, previous == .idle || previous == .starting,
@@ -352,13 +424,19 @@ final class TerminalSession: ObservableObject, Identifiable {
         guard showingTrustPrompt || mayShow else { return }
         let screen = surface.readViewport()
         if PromptScreen.hasSignIn(screen, kind: kind) {
-            trustPromptSeen(true, reason: "Sign in to \(kind.displayName)")
+            let reason = "Sign in to \(kind.displayName)"
+            trustPromptSeen(true, reason: reason)
+            // After the state change: `apply` drops the question whenever the wait ends.
+            if showingTrustPrompt, state == .needsInput(reason), pendingQuestion == nil {
+                pendingQuestion = PendingQuestion.fromScreen(screen, question: reason)
+            }
         } else {
+            if pendingQuestion?.selectsByNumber == true { pendingQuestion = nil }
             trustPromptSeen(PromptScreen.hasTrustDialog(screen))
         }
     }
 
-    static let trustReason = "Trust this folder?"
+    nonisolated static let trustReason = "Trust this folder?"
 
     /// Waits only the user can answer: trusting a folder, signing in.
     static func isUsersOwn(_ reason: String) -> Bool {
@@ -424,13 +502,69 @@ final class TerminalSession: ObservableObject, Identifiable {
         return .success(answer == .deny ? "denied" : "approved")
     }
 
+    /// Picks option `index` of the single-select question on screen by pressing the arrow keys and
+    /// enter (or, for a menu read off the screen, its number). Re-reads the screen first, like
+    /// `answerPromptByKeys`, so nothing stray is typed.
+    func answerQuestionByKeys(option index: Int) -> Result<String, PromptError> {
+        guard kind.isAgent, state.needsAttention else { return .failure(.notWaiting(label)) }
+        guard let question = pendingQuestion, question.mode == .options, question.items[0].options.indices.contains(index) else {
+            return .failure(.noPromptOnScreen(label))
+        }
+        let screen = surface.readViewport()
+        let first = String(question.items[0].options[0].label.prefix(12))
+        guard screen.contains(first) else { return .failure(.noPromptOnScreen(label)) }
+        let keys = question.selectsByNumber ? PromptScreen.keys(toOption: index + 1, screen: screen, kind: kind)
+            : question.keysToPick(option: index)
+        keys.forEach { _ = surface.pressKey(named: $0) }
+        record(.approval, "Answered \(question.items[0].options[index].label) in Tako")
+        pendingQuestion = nil
+        // A screen menu (signing in) comes before the CLI is up: back to starting, where the
+        // screen is still watched, rather than working.
+        apply(.userSubmitted, source: "approval", force: question.selectsByNumber ? .starting : .working)
+        return .success(question.items[0].options[index].label)
+    }
+
+    /// Signs a signed-out Codex in with a device code, for someone away from this Mac: picks
+    /// "Sign in with Device Code" on its sign-in screen, then waits for the link and one-time code
+    /// to show and passes them on.
+    func signInWithDeviceCode(completion: @escaping (Result<String, PromptError>) -> Void) {
+        guard kind == .codex, !isAsleep else { return completion(.failure(.noPromptOnScreen(label))) }
+        let screen = surface.readViewport()
+        guard PromptScreen.hasSignIn(screen, kind: kind),
+              let option = PromptScreen.options(screen).first(where: { $0.text.lowercased().contains("device code") }) else {
+            return completion(.failure(.noPromptOnScreen(label)))
+        }
+        PromptScreen.keys(toOption: option.number, screen: screen, kind: kind).forEach { _ = surface.pressKey(named: $0) }
+        record(.note, "Signing in with a device code from Tako")
+        pendingQuestion = nil
+        apply(.userSubmitted, source: "approval", force: .starting)
+        waitForDeviceCode(attemptsLeft: 30, completion: completion)
+    }
+
+    /// Polls the screen every half second, up to 15 seconds, for the device-code link and code.
+    private func waitForDeviceCode(attemptsLeft: Int, completion: @escaping (Result<String, PromptError>) -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500)) { [weak self] in
+            guard let self else { return completion(.failure(.signIn("the session closed before a code appeared"))) }
+            let screen = self.surface.readViewport()
+            if let found = PromptScreen.deviceCode(in: screen) {
+                return completion(.success("Open \(found.url) and enter code \(found.code)"))
+            }
+            if let message = PromptScreen.signInFailure(in: screen) { return completion(.failure(.signIn(message))) }
+            guard attemptsLeft > 1 else {
+                return completion(.failure(.signIn("no device code showed on @\(self.label)'s screen; open it to sign in")))
+            }
+            self.waitForDeviceCode(attemptsLeft: attemptsLeft - 1, completion: completion)
+        }
+    }
+
     enum PromptError: Error, CustomStringConvertible {
-        case notWaiting(String), noPromptOnScreen(String), noAlwaysOption
+        case notWaiting(String), noPromptOnScreen(String), noAlwaysOption, signIn(String)
         var description: String {
             switch self {
             case .notWaiting(let label): return "@\(label) isn't waiting on a prompt"
             case .noPromptOnScreen(let label): return "couldn't find the prompt on @\(label)'s screen; open it to answer"
             case .noAlwaysOption: return "this prompt has no \"don't ask again\" option"
+            case .signIn(let message): return "sign-in failed: \(message)"
             }
         }
     }
@@ -580,7 +714,7 @@ final class TerminalSession: ObservableObject, Identifiable {
             cwd: abbreviateHome(spec.cwd), command: spec.command, ports: ports, unread: unread,
             agentSessionId: spec.agentSessionId, labelSource: (spec.labelSource ?? .user).rawValue,
             activity: activity, project: git?.project, branch: git?.branch,
-            organizer: isOrganizer ? true : nil, conflicts: conflictsByLabel, asleep: isAsleep ? true : nil,
+            sumi: isSumi ? true : nil, conflicts: conflictsByLabel, asleep: isAsleep ? true : nil,
             delegation: delegation?.shortScope, detached: isDetached ? true : nil,
             subagents: runningSubagents.isEmpty ? nil : runningSubagents.count)
     }
@@ -602,6 +736,9 @@ extension TerminalSession: TerminalSurfaceEvents {
 
     func surfacePwdChanged(_ pwd: String) {
         shellAtPrompt = true
+        // The shell's prompt is back, so the CLI told to quit has.
+        if isAsleep { sleepExitSeen = true }
+        resumeAwaitsExit = false
         if pendingInput != nil { sendPendingInput() }
         guard !pwd.isEmpty, let url = URL(string: pwd), url.isFileURL || pwd.hasPrefix("/") else { return }
         let path = url.isFileURL ? url.path : pwd
@@ -704,6 +841,27 @@ func isSafeIdentifier(_ value: String) -> Bool {
 /// Reading agent TUIs from their screen text.
 enum PromptScreen {
     /// Numbered option lines like "❯ 1. Yes" or "  2. Yes, and don't ask again".
+    /// The keys that pick option `number`. Claude acts on the digit itself. Codex's menus only
+    /// confirm with Enter, so it walks the highlight there with the arrows first: a digit alone
+    /// does nothing, and Enter alone would take whatever is highlighted.
+    static func keys(toOption number: Int, screen: String, kind: SessionKind) -> [String] {
+        guard kind == .codex else { return [String(number)] }
+        let current = highlighted(screen) ?? 1
+        let step = number > current ? "down" : "up"
+        return Array(repeating: step, count: abs(number - current)) + ["enter"]
+    }
+
+    /// The number of the menu option the cursor marker ("›", "❯" or ">") is on, if any.
+    static func highlighted(_ screen: String) -> Int? {
+        for raw in screen.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard let marker = ["❯", "›", ">"].first(where: line.hasPrefix) else { continue }
+            let rest = line.dropFirst(marker.count).trimmingCharacters(in: .whitespaces)
+            if let dot = rest.firstIndex(of: "."), let number = Int(rest[..<dot]), (1...9).contains(number) { return number }
+        }
+        return nil
+    }
+
     static func options(_ screen: String) -> [(number: Int, text: String)] {
         screen.split(separator: "\n").compactMap { raw in
             var line = raw.trimmingCharacters(in: .whitespaces)
@@ -734,6 +892,23 @@ enum PromptScreen {
         return kind.adapter?.signInMarkers.contains(where: lower.contains) ?? false
     }
 
+    /// The verification link and one-time code of a device-code sign-in, once both are on screen.
+    /// The code is groups of 4–5 capitals or digits joined by dashes ("ABCD-1234", "ABCD-EFGHI").
+    static func deviceCode(in screen: String) -> (url: String, code: String)? {
+        let urls = screen.split(whereSeparator: \.isWhitespace).filter { $0.hasPrefix("https://") }
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:)]}>'\"")) }
+        guard let url = urls.first(where: { $0.lowercased().contains("device") }) ?? urls.first else { return nil }
+        let text = screen.split(whereSeparator: \.isWhitespace).filter { !$0.contains("://") }.joined(separator: " ")
+        guard let range = text.range(of: #"\b[A-Z0-9]{4,5}(-[A-Z0-9]{4,5})+\b"#, options: .regularExpression) else { return nil }
+        return (url, String(text[range]))
+    }
+
+    /// Why a sign-in can't go on, when the screen says so (device-code login turned off).
+    static func signInFailure(in screen: String) -> String? {
+        screen.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { $0.lowercased().contains("not enabled") }
+    }
+
     static func inputIsEmpty(_ screen: String, kind: SessionKind) -> Bool {
         let lines = screen.split(separator: "\n", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
         let marker = kind.adapter?.promptMarker ?? "❯"
@@ -749,11 +924,12 @@ enum PromptScreen {
         let options = options(screen)
         guard hasDialog(screen) || kind.adapter?.optionsAloneMakeDialog == true, !options.isEmpty else { return nil }
         func pick(_ predicate: (String) -> Bool) -> [String]? {
-            options.first { predicate($0.text.lowercased()) }.map { [String($0.number)] }
+            options.first { predicate($0.text.lowercased()) }.map { keys(toOption: $0.number, screen: screen, kind: kind) }
         }
         switch answer {
         case .approve:
-            return pick { $0.hasPrefix("yes") && !$0.contains("don't ask") && !$0.contains("always") && !$0.contains("auto") }
+            // "Yes, proceed" for a command; "Trust and continue" for Codex's folder prompt.
+            return pick { ($0.hasPrefix("yes") || $0.hasPrefix("trust")) && !$0.contains("don't ask") && !$0.contains("always") && !$0.contains("auto") }
         case .always:
             return pick { $0.contains("don't ask again") || $0.contains("always") }
         case .deny:

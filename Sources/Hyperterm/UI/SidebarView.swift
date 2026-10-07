@@ -86,7 +86,7 @@ struct SidebarView: View {
             .padding(.top, Space.l)
             .padding(.bottom, Space.xs)
             if showsClosed {
-                // The sidebar shows the latest few; the organizer can reach the rest.
+                // The sidebar shows the latest few; Sumi can reach the rest.
                 ForEach(store.recentlyClosed.prefix(15)) { spec in
                     ClosedRow(spec: spec) { store.reopen(spec) }
                 }
@@ -106,16 +106,25 @@ struct SidebarView: View {
 /// The row behind a session: selection fill, hover, click, context menu.
 private struct RowChrome: ViewModifier {
     let selected: Bool
+    var waiting = false
     let action: () -> Void
     @State private var hovering = false
+
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Radius.row, style: .continuous) }
+    private var rowFill: Color { selected || waiting ? Tone.raised : hovering ? Tone.surface : .clear }
 
     func body(content: Content) -> some View {
         content
             .padding(.horizontal, Space.s)
             .padding(.vertical, Space.s - 1)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? Tone.raised : hovering ? Tone.surface : .clear,
-                        in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+            .background(rowFill, in: shape)
+            // A waiting row lifts off the list like a card: a warm tint, a thin attention hairline
+            // and a soft shadow. Every other row stays flat.
+            .background(Palette.attention.opacity(waiting ? 0.06 : 0), in: shape)
+            .overlay(shape.strokeBorder(Palette.attention.opacity(0.5), lineWidth: Size.hairline).opacity(waiting ? 1 : 0))
+            .shadow(color: .black.opacity(waiting ? 0.35 : 0), radius: 8, y: 3)
+            .zIndex(waiting ? 1 : 0)
             .contentShape(RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)
@@ -140,6 +149,11 @@ struct AgentRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .layoutPriority(1)
+                if let risk = session.atRisk {
+                    Circle().fill(Palette.attention).frame(width: 6, height: 6)
+                        .help(risk.headline(base: session.spec.baseBranch) + ". Closing it will ask first.")
+                        .accessibilityLabel("Has work that isn't merged")
+                }
                 Spacer(minLength: Space.xs)
                 if session.unread {
                     Circle().fill(Palette.accent).frame(width: 6, height: 6).accessibilityLabel("Unread")
@@ -164,8 +178,9 @@ struct AgentRow: View {
                 badges
             }
             .padding(.leading, Size.avatar + Space.s)
+            HelpersLine(session: session)
         }
-        .modifier(RowChrome(selected: selected) { store.select(session) })
+        .modifier(RowChrome(selected: selected, waiting: session.state.needsAttention) { store.select(session) })
         .contextMenu { SessionMenu(session: session, actions: actions) }
         .opacity(session.isMinimized ? 0.6 : 1)
         .help(tooltip)
@@ -203,11 +218,10 @@ struct AgentRow: View {
         let racing = store.raceSiblings(of: session).count
         let overlap = session.overlapBadge
         let delegation = session.delegation
-        let subagents = session.runningSubagents.count
-        if review != nil || queued > 0 || racing > 0 || overlap != nil || delegation != nil || subagents > 0 {
+        if review != nil || queued > 0 || racing > 0 || overlap != nil || delegation != nil {
             HStack(spacing: Space.xs) {
                 if let delegation {
-                    Tag(text: "Organizer", tint: Palette.accent).help(delegation.help)
+                    Tag(text: "Sumi", tint: Palette.accent).help(delegation.help)
                 }
                 if let overlap {
                     Tag(text: overlap.title, tint: Palette.attention).help(overlap.detail)
@@ -231,10 +245,6 @@ struct AgentRow: View {
                     .buttonStyle(.plain)
                     .help("Review \(review.files) changed file\(review.files == 1 ? "" : "s") (⌥⌘R)")
                 }
-                if subagents > 0 {
-                    Tag(text: "\(subagents) subagent\(subagents == 1 ? "" : "s")")
-                        .help("Still running, even after its own turn ends. It stays awake until they finish.")
-                }
                 if queued > 0 { Tag(text: "\(queued) queued") }
             }
         }
@@ -257,7 +267,7 @@ struct StateLabel: View {
 
     var body: some View {
         // Only the clock ticks; the rest of the row re-renders when the session changes.
-        TimelineView(.periodic(from: .now, by: session.state == .working ? 15 : 60)) { context in
+        TimelineView(.periodic(from: .now, by: 15)) { context in
             // Two Texts joined, so the symbol stays a symbol (interpolating it into a String prints
             // the Image's description).
             ((session.isAsleep ? Text(Image(systemName: "moon.zzz")) + Text(" ") : Text(verbatim: "")) + Text(text(now: context.date)))
@@ -268,12 +278,14 @@ struct StateLabel: View {
         }
     }
 
+    private var isDone: Bool { session.state == .idle && session.statusWord == "Done" }
+
     private func text(now: Date) -> String {
         let since = elapsed(since: session.stateChangedAt, now: now)
         switch session.state {
         case .working: return "Working \(since)"
         case .needsInput: return "Needs you"
-        case .idle: return "\(session.statusWord) · \(since)"
+        case .idle: return "\(isDone ? "✓ " : "")\(session.statusWord) · \(since)"
         default: return session.statusWord
         }
     }
@@ -283,8 +295,104 @@ struct StateLabel: View {
         case .working, .starting: return Palette.working
         case .needsInput: return Palette.attention
         case .failed: return Palette.failed
+        case .idle where isDone && (session.unread || session.finishedUnseen): return Palette.running
         default: return Tone.faint
         }
+    }
+}
+
+/// A muted "▸ 2 helpers" with a live spinner; opened, a rail hangs off the avatar's column with
+/// one tick and one leaf per helper.
+private struct HelpersLine: View {
+    @ObservedObject var session: TerminalSession
+    @State private var open = false
+
+    var body: some View {
+        let helpers = session.helpers
+        if !helpers.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                Button { open.toggle() } label: {
+                    HStack(spacing: Space.xs + 1) {
+                        Text("\(open ? "▾" : "▸") \(helpers.count) helper\(helpers.count == 1 ? "" : "s")")
+                        BrailleSpinner()
+                    }
+                    .font(Typeface.caption)
+                    .foregroundStyle(Tone.muted)
+                    .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, Size.avatar + Space.s)
+                .help(summary(helpers))
+                .accessibilityLabel("\(helpers.count) helper\(helpers.count == 1 ? "" : "s"), \(open ? "shown" : "hidden")")
+                if open {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(helpers.enumerated()), id: \.element.id) { index, helper in
+                                HStack(spacing: Space.xs + 1) {
+                                    HelperRail(last: index == helpers.count - 1)
+                                        .stroke(Tone.hairline, lineWidth: Size.hairline)
+                                        .frame(width: Size.avatar + Space.s - Space.xs)
+                                    BrailleSpinner()
+                                    Text(helper.type).lineLimit(1).truncationMode(.tail)
+                                    Spacer(minLength: Space.xs)
+                                    Text(elapsed(since: helper.startedAt, now: context.date)).monospacedDigit()
+                                }
+                                .font(Typeface.caption)
+                                .foregroundStyle(Tone.muted)
+                                .padding(.vertical, 2)
+                                .padding(.leading, Space.xs)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// "general-purpose ×2, Explore", for the tooltip.
+    private func summary(_ helpers: [Helper]) -> String {
+        var counts: [(type: String, n: Int)] = []
+        for helper in helpers {
+            if let i = counts.firstIndex(where: { $0.type == helper.type }) { counts[i].n += 1 } else { counts.append((helper.type, 1)) }
+        }
+        return counts.map { $0.n > 1 ? "\($0.type) ×\($0.n)" : $0.type }.joined(separator: ", ")
+    }
+}
+
+/// One leaf's piece of the rail: the vertical line down the avatar's column (stopping at the tick
+/// on the last leaf) and a short horizontal tick to the leaf.
+private struct HelperRail: Shape {
+    let last: Bool
+
+    func path(in rect: CGRect) -> Path {
+        let x = Size.avatar / 2 - Space.xs, mid = rect.midY
+        var path = Path()
+        path.move(to: CGPoint(x: x, y: rect.minY))
+        path.addLine(to: CGPoint(x: x, y: last ? mid : rect.maxY))
+        path.move(to: CGPoint(x: x, y: mid))
+        path.addLine(to: CGPoint(x: rect.maxX - Space.xs, y: mid))
+        return path
+    }
+}
+
+/// A small braille spinner; still (one glyph) with Reduce Motion.
+private struct BrailleSpinner: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                Text(Self.frames[0])
+            } else {
+                TimelineView(.periodic(from: .now, by: 0.1)) { context in
+                    Text(Self.frames[Int(context.date.timeIntervalSinceReferenceDate * 10) % Self.frames.count])
+                }
+            }
+        }
+        .font(Typeface.codeSmall)
+        .foregroundStyle(Palette.working)
+        .accessibilityHidden(true)
     }
 }
 
@@ -296,7 +404,18 @@ private struct ApprovalStrip: View {
     let actions: SessionActions
     @State private var error: String?
 
+    private var asksTrust: Bool { session.state == .needsInput(TerminalSession.trustReason) }
+
     var body: some View {
+        // A question shows what was asked; only permission requests get Allow / Deny.
+        if let question = session.pendingQuestion, session.pendingPlan == nil, !asksTrust {
+            QuestionCard(session: session, store: store, question: question)
+        } else {
+            permissionCard
+        }
+    }
+
+    private var permissionCard: some View {
         VStack(alignment: .leading, spacing: Space.s) {
             if let plan = session.pendingPlan {
                 Text(planTitle(plan))
@@ -314,7 +433,7 @@ private struct ApprovalStrip: View {
                 Text(session.state.detail ?? "Waiting for you").font(Typeface.callout).foregroundStyle(Tone.muted)
             }
             HStack(spacing: Space.xs) {
-                Button(session.pendingPlan != nil ? "Approve Plan" : "Allow") { answer(.approve) }
+                Button(session.pendingPlan != nil ? "Approve Plan" : asksTrust ? "Trust Folder" : "Allow") { answer(.approve) }
                     .buttonStyle(PanelButtonStyle(prominent: true, tint: Palette.attention))
                     .help(session.pendingPlan != nil ? "Approve the plan and let the agent start (⌥⌘Y)" : "Allow once (⌥⌘Y)")
                 Button(session.pendingPlan != nil ? "Keep Planning" : "Deny") { answer(.deny) }
@@ -357,6 +476,136 @@ private struct ApprovalStrip: View {
             error = failure.description
             store.select(session)
         }
+    }
+}
+
+/// What the agent actually asked (AskUserQuestion): the question, its real options as numbered rows
+/// that answer in the terminal on click, and a way into the terminal for anything else. Several
+/// questions, multi-select, or an unreadable payload offer "Answer in terminal" / "Open terminal"
+/// instead, since only a single-select list is driven reliably by keystrokes.
+private struct QuestionCard: View {
+    @ObservedObject var session: TerminalSession
+    let store: SessionStore
+    let question: PendingQuestion
+    @State private var expanded = false
+    @State private var error: String?
+
+    /// More options than this scroll inside a fixed height rather than growing the row.
+    private static let visibleOptions = 4
+    private static let listHeight: CGFloat = 150
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            Text(label).font(Typeface.micro).foregroundStyle(Palette.attention)
+            switch question.mode {
+            case .unavailable:
+                Text(session.state.detail ?? "Waiting for you").font(Typeface.callout).foregroundStyle(Tone.muted)
+                terminalButton("Open terminal")
+            case .terminalOnly:
+                questionText(question.items[0].question)
+                terminalButton("Answer in terminal")
+            case .options:
+                let item = question.items[0]
+                questionText(item.question)
+                if item.options.count > Self.visibleOptions {
+                    ScrollView { optionList(item) }
+                        .scrollIndicators(.automatic)
+                        .frame(height: Self.listHeight)
+                } else {
+                    optionList(item)
+                }
+            }
+            if let error {
+                Text(error).font(Typeface.caption).foregroundStyle(Tone.muted)
+            }
+        }
+    }
+
+    private var label: String {
+        question.items.count > 1 ? "Question · \(question.items.count) questions" : "Question"
+    }
+
+    /// Three lines, then tap to read the rest.
+    private func questionText(_ text: String) -> some View {
+        Text(text)
+            .font(Typeface.callout)
+            .foregroundStyle(Tone.text)
+            .lineLimit(expanded ? nil : 3)
+            .fixedSize(horizontal: false, vertical: true)
+            .contentShape(Rectangle())
+            .onTapGesture { expanded.toggle() }
+            .help(expanded ? "" : text)
+    }
+
+    private func optionList(_ item: PendingQuestion.Item) -> some View {
+        VStack(alignment: .leading, spacing: Space.xxs) {
+            ForEach(Array(item.options.enumerated()), id: \.offset) { index, option in
+                QuestionOptionRow(number: index + 1, title: option.label, detail: option.description) { choose(index) }
+            }
+            QuestionOptionRow(number: nil, title: "Type something…", detail: nil, muted: true) { store.select(session) }
+        }
+    }
+
+    private func terminalButton(_ title: String) -> some View {
+        Button(title) { store.select(session) }
+            .buttonStyle(PanelButtonStyle())
+            .help("Show the terminal to answer there")
+    }
+
+    private func choose(_ index: Int) {
+        store.answerQuestion(session, option: index) { result in
+            switch result {
+            case .success: error = nil
+            case .failure(let failure):
+                error = failure.description
+                store.select(session)
+            }
+        }
+    }
+}
+
+/// One numbered answer: the label on one line (tail-truncated, full text on hover) and, under it,
+/// the option's description in at most two lines.
+private struct QuestionOptionRow: View {
+    let number: Int?
+    let title: String
+    let detail: String?
+    var muted = false
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                Text(number.map(String.init) ?? "…")
+                    .font(Typeface.caption.monospacedDigit())
+                    .foregroundStyle(Tone.faint)
+                    .frame(minWidth: 10)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(Typeface.callout)
+                        .foregroundStyle(muted ? Tone.muted : Tone.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let detail {
+                        Text(detail)
+                            .font(Typeface.caption)
+                            .foregroundStyle(Tone.faint)
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Space.xs + 2)
+            .padding(.vertical, Space.xs)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(hovering ? Tone.surface : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help([title, detail].compactMap { $0 }.joined(separator: "\n"))
     }
 }
 
@@ -442,7 +691,7 @@ private struct SidebarTopBar: View {
 
 // MARK: - Composer
 
-/// Types a task straight to new agents, no organizer in between. Several agents on one task race,
+/// Types a task straight to new agents, no sumi in between. Several agents on one task race,
 /// each in its own worktree.
 private struct Composer: View {
     @ObservedObject var store: SessionStore
@@ -592,7 +841,7 @@ private struct SidebarFooter: View {
                 if let limits = store.codexRateLimits { UsageMeter(limits: limits, label: both || store.rateLimits == nil ? "Codex" : nil) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            // The organizer's mark floats in this corner (OrganizerDock), so the row starts past it
+            // Sumi's mark floats in this corner (SumiDock), so the row starts past it
             // and is as tall as its button.
             .frame(minHeight: buttonSize)
             .padding(.leading, Space.m + buttonSize + Space.s)
@@ -601,7 +850,7 @@ private struct SidebarFooter: View {
         }
     }
 
-    private var buttonSize: CGFloat { OrganizerDock.markSize(for: NSScreen.main) + Space.s }
+    private var buttonSize: CGFloat { SumiDock.markSize(for: NSScreen.main) + Space.s }
 }
 
 /// The window's actions (there is no toolbar): search, run, editor, layout, inspector, and new.
@@ -623,6 +872,7 @@ private struct WindowControls: View {
             }
             LayoutPicker(selection: store.layout, choose: store.setLayout)
             IconButton(symbol: "sidebar.right", help: "Show or hide the inspector (⌥⌘I)", action: actions.toggleInspector)
+            if store.phoneModeAvailable || store.isPhoneModeOn { PhoneModeButton(store: store) }
             Spacer(minLength: Space.xs)
             let waiting = store.attentionCount
             if waiting > 0 { WaitingBadge(count: waiting, action: store.selectNextNeedingAttention) }
@@ -846,7 +1096,7 @@ struct SessionMenu: View {
         Button("Restart") { actions.restart(session) }
         if session.isAsleep {
             Button("Wake") { session.store?.wake(session) }
-        } else if session.kind.isAgent, !session.isOrganizer {
+        } else if session.kind.isAgent, !session.isSumi {
             Button("Sleep") { session.store?.sleep(session) }
                 .disabled(session.store?.canSleep(session) != true)
                 .help("Quit the agent to free its memory; its next message resumes the conversation")

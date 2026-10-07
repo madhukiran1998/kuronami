@@ -4,7 +4,7 @@ import AppKit
 extension SessionStore {
     /// Payloads can be large (PostToolUse carries whole tool output), so they're parsed on a
     /// serial background queue and applied on main in arrival order.
-    private static let parseQueue = DispatchQueue(label: "dev.hyperterm.hook-parse", qos: .userInitiated)
+    private nonisolated static let parseQueue = DispatchQueue(label: "dev.hyperterm.hook-parse", qos: .userInitiated)
 
     private func parseOffMain(_ payload: String, then apply: @escaping @MainActor ([String: Any]) -> Void) {
         Self.parseQueue.async {
@@ -98,13 +98,21 @@ extension SessionStore {
     private func handleAgentHook(_ session: TerminalSession, _ json: [String: Any], source: String) {
         let event = json["hook_event_name"] as? String ?? ""
         let cwd = json["cwd"] as? String
+        var question: PendingQuestion?
         // Only conversations with at least one prompt can be resumed.
         if ["UserPromptSubmit", "Stop", "PostToolUse"].contains(event) {
             session.recordAgentSessionId(json["session_id"] as? String)
         }
+        // A tool running alongside the one held for approval (Claude runs read-only tools in
+        // parallel, subagents run their own) says nothing about the dialog, which is still up.
+        // So does the held call's own PreToolUse, which can arrive after its PermissionRequest.
+        let toolEvent = ["PreToolUse", "PostToolUse", "PostToolUseFailure"].contains(event)
+        let held = toolEvent && session.hasHookApproval ? session.heldToolCall : nil
+        let parallelTool = held.map { $0.matches(json) ? event == "PreToolUse" : $0.runsAlongside(json) } ?? false
         // A tool call moving on means a prompt held open was answered in the terminal itself.
-        if ["PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "UserPromptSubmit"].contains(event) {
+        if !parallelTool, held != nil || ["PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "UserPromptSubmit"].contains(event) {
             dropApproval(for: session)
+            session.pendingQuestion = nil
         }
 
         switch event {
@@ -130,7 +138,11 @@ extension SessionStore {
                 let input = json["tool_input"] as? [String: Any] ?? [:]
                 let text = AgentText.describeTool(name: tool, input: input, cwd: cwd)
                 session.activity = text
-                session.pendingRequest = text
+                if !parallelTool {
+                    session.pendingRequest = text
+                    question = tool == "AskUserQuestion" ? PendingQuestion.parse(toolInput: input) : nil
+                    session.pendingQuestion = question
+                }
                 let isEdit = ["Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"].contains(tool)
                 if tool != "Read" && tool != "Glob" && tool != "Grep" { session.record(isEdit ? .edit : .tool, text) }
             }
@@ -146,7 +158,7 @@ extension SessionStore {
             refreshReview(session)
         case "StopFailure":
             session.activity = nil
-            let reason = failureReason(type: json["error"] as? String, details: json["error_details"] as? String)
+            let reason = failureReason(type: json["error"] as? String, details: json["error_details"] as? String, limits: limits(for: session))
             session.record(.failure, reason)
             session.apply(.claudeHook(event: event, notificationType: nil, message: reason), source: source)
             return
@@ -165,14 +177,20 @@ extension SessionStore {
             if let id = json["task_id"] as? String { session.tasks.completed.insert(id) }
             return
         case "SubagentStart":
-            if let id = json["agent_id"] as? String { session.runningSubagents.insert(id) }
+            if let id = json["agent_id"] as? String {
+                session.runningSubagents[id] = Subagent(type: json["agent_type"] as? String ?? "", startedAt: Date())
+            }
             session.record(.note, "Started subagent \(json["agent_type"] as? String ?? "")")
             return
         case "SubagentStop":
-            guard let id = json["agent_id"] as? String, session.runningSubagents.remove(id) != nil else { return }
+            guard let id = json["agent_id"] as? String, session.runningSubagents.removeValue(forKey: id) != nil else { return }
             session.record(.note, "Subagent finished \(json["agent_type"] as? String ?? "")")
             // The last background subagent finishing after the turn ended is when the work is done.
-            if session.runningSubagents.isEmpty, session.state == .idle { reportToOrganizer(session, from: .working) }
+            if session.runningSubagents.isEmpty, session.state == .idle {
+                reportToSumi(session, from: .working)
+                markFinished(session)
+                onStatusChange?()
+            }
             return
         case "Notification":
             // With a PermissionRequest hook waiting, its request is the precise one.
@@ -181,12 +199,16 @@ extension SessionStore {
             break
         }
 
+        // The held request keeps the session waiting on the user.
+        if parallelTool { return }
         let notificationType = json["notification_type"] as? String
         let message = json["message"] as? String
         let detail = notificationType == "permission_prompt" ? (session.pendingRequest ?? message) : message
         let keepRequest = session.pendingRequest
         session.apply(.claudeHook(event: event, notificationType: notificationType, message: detail), source: source)
         if session.state.needsAttention { session.pendingRequest = keepRequest }
+        // A state change away from the wait clears the question; this one is still being asked.
+        if let question { session.pendingQuestion = question }
     }
 
     private func recordTestEvidence(_ session: TerminalSession, _ json: [String: Any], failed: Bool) {
@@ -203,10 +225,10 @@ extension SessionStore {
     }
 
     /// StopFailure's error type, in words, with the reset time when it's a rate limit.
-    private func failureReason(type: String?, details: String?) -> String {
+    private func failureReason(type: String?, details: String?, limits: RateLimits?) -> String {
         switch type {
         case "rate_limit":
-            if let resets = rateLimits?.fiveHourResets ?? rateLimits?.sevenDayResets {
+            if let resets = limits?.fiveHourResets ?? limits?.sevenDayResets {
                 return "Rate-limited · resets \(resets.formatted(date: .omitted, time: .shortened))"
             }
             return "Rate-limited"
@@ -264,7 +286,7 @@ extension SessionStore {
     }
 
     private func recordLimits(_ limits: RateLimits, for session: TerminalSession) {
-        let key = "\(session.kind.rawValue)/\(session.spec.account ?? AgentAccount.defaultID)"
+        let key = limitsKey(for: session)
         if accountLimits[key] != limits {
             accountLimits[key] = limits
             saveUsage()
@@ -338,6 +360,7 @@ enum HookLog {
         guard let handle, let end = try? handle.seekToEnd() else { return }
         if end > maxBytes {
             try? handle.truncate(atOffset: 0)
+            try? handle.seek(toOffset: 0)
         }
         try? handle.write(contentsOf: data)
     }

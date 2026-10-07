@@ -1,7 +1,7 @@
 import XCTest
 @testable import Hyperterm
 
-/// Sessions the user hands to the organizer: scope accounting, the risky-request guard, and who
+/// Sessions the user hands to Sumi: scope accounting, the risky-request guard, and who
 /// hears a wait. Preview stores post no banners.
 @MainActor
 final class DelegationTests: XCTestCase {
@@ -15,7 +15,7 @@ final class DelegationTests: XCTestCase {
         wait(api, store, "Run the migration?")
 
         XCTAssertNil(api.delegation)
-        XCTAssertTrue(store.organizerDigest.events.contains(OrganizerEvent(label: "api", kind: .stoppedHandling("scope used up"))))
+        XCTAssertTrue(store.sumiDigest.events.contains(SumiEvent(label: "api", kind: .stoppedHandling("scope used up"))))
     }
 
     func testTurnScopeEndsWhenTheAgentFinishesWithNothingPending() {
@@ -28,7 +28,7 @@ final class DelegationTests: XCTestCase {
         set(api, .idle, store)
 
         XCTAssertNil(api.delegation)
-        XCTAssertEqual(store.organizerDigest.events.last?.line, "stopped handling @api: it finished its task")
+        XCTAssertEqual(store.sumiDigest.events.last?.line, "stopped handling @api: it finished its task")
     }
 
     func testUntilScopeEndsAtItsTime() {
@@ -42,7 +42,7 @@ final class DelegationTests: XCTestCase {
         XCTAssertNil(api.delegation)
     }
 
-    func testDelegatedWaitWakesTheOrganizerInsteadOfTheUserUntilTheFallback() {
+    func testDelegatedWaitWakesTheSumiInsteadOfTheUserUntilTheFallback() {
         let (store, api, _) = fixture()
         api.store = store
         let now = Date()
@@ -51,9 +51,9 @@ final class DelegationTests: XCTestCase {
         api.apply(.processStarted, source: "test", force: .needsInput("Use pnpm or npm?"))
 
         XCTAssertFalse(api.unread, "the user isn't notified")
-        XCTAssertEqual(store.organizerDigest.events,
-                       [OrganizerEvent(label: "api", kind: .needsYou("Use pnpm or npm?", note: "prefer pnpm"))])
-        XCTAssertEqual(store.organizerDigest.events.first?.line, "@api is waiting: Use pnpm or npm? (handle per: prefer pnpm)")
+        XCTAssertEqual(store.sumiDigest.events,
+                       [SumiEvent(label: "api", kind: .needsYou("Use pnpm or npm?", note: "prefer pnpm"))])
+        XCTAssertEqual(store.sumiDigest.events.first?.line, "@api is waiting: Use pnpm or npm? (handle per: prefer pnpm)")
         let told = api.delegation?.toldAt ?? now
 
         store.sweepDelegations(now: told.addingTimeInterval(Delegation.fallback - 1))
@@ -62,17 +62,17 @@ final class DelegationTests: XCTestCase {
 
         XCTAssertNil(api.delegation?.toldAt)
         XCTAssertEqual(api.delegation?.handled, 1)
-        XCTAssertTrue(api.timeline.last?.text.hasPrefix("Left for you: the organizer didn't answer") == true)
+        XCTAssertTrue(api.timeline.last?.text.hasPrefix("Left for you: Sumi didn't get an answer within 90 s") == true)
     }
 
-    func testUndelegatedOrAbsentOrganizerLeavesWaitsToTheUser() {
+    func testUndelegatedOrAbsentSumiLeavesWaitsToTheUser() {
         let (store, api, _) = fixture()
-        XCTAssertFalse(store.organizerTakesWait(api, reason: "Proceed?"))
+        XCTAssertFalse(store.sumiTakesWait(api, reason: "Proceed?"))
 
         let lone = agent("web")
         let alone = SessionStore(previewSessions: [lone])
         _ = alone.delegate(lone, scope: .turn, note: nil)
-        XCTAssertFalse(alone.organizerTakesWait(lone, reason: "Proceed?"), "no organizer to hear it")
+        XCTAssertFalse(alone.sumiTakesWait(lone, reason: "Proceed?"), "no sumi to hear it")
     }
 
     func testFolderTrustIsNeverDelegated() {
@@ -81,27 +81,38 @@ final class DelegationTests: XCTestCase {
 
         XCTAssertNil(store.delegate(api, scope: .turn, note: nil))
         XCTAssertNil(api.delegation?.toldAt)
-        XCTAssertFalse(store.organizerTakesWait(api, reason: TerminalSession.trustReason))
-        XCTAssertTrue(store.organizerDigest.isEmpty)
-        guard case .failure(let error) = store.answerForOrganizer(api, .approve, reason: nil) else { return XCTFail() }
+        XCTAssertFalse(store.sumiTakesWait(api, reason: TerminalSession.trustReason))
+        XCTAssertTrue(store.sumiDigest.isEmpty)
+        guard case .failure(let error) = store.answerForSumi(api, .approve, reason: nil) else { return XCTFail() }
         XCTAssertTrue(error.description.contains("trusting a folder"))
     }
 
-    func testOrganizerNeverAnswersAlwaysOrQuestionsOrUndelegatedSessions() {
+    func testSumiIsToldWhenItsAgentStopsAtFolderTrust() {
+        let (store, api, _) = fixture()
+        api.apply(.processStarted, source: "test", force: .needsInput(TerminalSession.trustReason))
+        store.reportToSumi(api, from: .idle)
+        XCTAssertTrue(store.sumiDigest.isEmpty, "a user-launched agent's trust prompt is not Sumi's business")
+
+        api.spec.labelSource = .agent
+        store.reportToSumi(api, from: .idle)
+        XCTAssertTrue(store.sumiDigest.events.last?.line.contains("Only the user can answer") == true)
+    }
+
+    func testSumiNeverAnswersAlwaysOrQuestionsOrUndelegatedSessions() {
         let (store, api, _) = fixture()
         set(api, .needsInput("Bash: pnpm test"), store)
         api.pendingRequest = "Bash: pnpm test"
 
-        guard case .failure(let notHanded) = store.answerForOrganizer(api, .approve, reason: nil) else { return XCTFail() }
+        guard case .failure(let notHanded) = store.answerForSumi(api, .approve, reason: nil) else { return XCTFail() }
         XCTAssertTrue(notHanded.description.contains("isn't handed to you"))
 
         _ = store.delegate(api, scope: .turn, note: nil)
-        guard case .failure(let always) = store.answerForOrganizer(api, .always, reason: nil) else { return XCTFail() }
+        guard case .failure(let always) = store.answerForSumi(api, .always, reason: nil) else { return XCTFail() }
         XCTAssertTrue(always.description.contains("always"))
 
         set(api, .needsInput("Should I also update the docs?"), store)
         api.pendingRequest = "Bash: pnpm test"
-        guard case .failure(let question) = store.answerForOrganizer(api, .approve, reason: nil) else { return XCTFail() }
+        guard case .failure(let question) = store.answerForSumi(api, .approve, reason: nil) else { return XCTFail() }
         XCTAssertTrue(question.description.contains("send_message"))
     }
 
@@ -111,7 +122,7 @@ final class DelegationTests: XCTestCase {
         api.pendingRequest = "Bash: git push origin main"
         _ = store.delegate(api, scope: .count(3), note: nil)
 
-        guard case .failure(let error) = store.answerForOrganizer(api, .approve, reason: nil) else { return XCTFail() }
+        guard case .failure(let error) = store.answerForSumi(api, .approve, reason: nil) else { return XCTFail() }
 
         XCTAssertEqual(error.description, "left for the user: a git push")
         XCTAssertEqual(api.state, .needsInput("Bash: git push origin main"), "still waiting, for the user")
@@ -158,15 +169,15 @@ final class DelegationTests: XCTestCase {
     // MARK: - Helpers
 
     private func fixture() -> (SessionStore, TerminalSession, TerminalSession) {
-        let api = agent("api"), organizer = agent("organizer", organizer: true)
-        organizer.apply(.processStarted, source: "test", force: .working)
-        return (SessionStore(previewSessions: [api, organizer], previewLayout: .grid), api, organizer)
+        let api = agent("api"), sumi = agent("sumi", sumi: true)
+        sumi.apply(.processStarted, source: "test", force: .working)
+        return (SessionStore(previewSessions: [api, sumi], previewLayout: .grid), api, sumi)
     }
 
-    /// One delegated wait: it starts, the organizer hears, and the agent moves on.
+    /// One delegated wait: it starts, Sumi hears, and the agent moves on.
     private func wait(_ session: TerminalSession, _ store: SessionStore, _ reason: String) {
         set(session, .needsInput(reason), store)
-        XCTAssertTrue(store.organizerTakesWait(session, reason: reason))
+        XCTAssertTrue(store.sumiTakesWait(session, reason: reason))
         set(session, .working, store)
     }
 
@@ -177,9 +188,9 @@ final class DelegationTests: XCTestCase {
         store.delegationStateChanged(session, from: previous)
     }
 
-    private func agent(_ label: String, organizer: Bool = false) -> TerminalSession {
+    private func agent(_ label: String, sumi: Bool = false) -> TerminalSession {
         var spec = LaunchSpec(label: label, kind: .claude, cwd: "/workspace/atlas")
-        if organizer { spec.organizer = true }
+        if sumi { spec.sumi = true }
         let session = TerminalSession(spec: spec, resume: false)
         session.apply(.processStarted, source: "test", force: .idle)
         return session

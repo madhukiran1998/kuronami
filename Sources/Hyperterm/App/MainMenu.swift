@@ -96,7 +96,7 @@ enum MainMenu {
         let menu = NSMenu(title: "View")
         menu.addItem(item("Toggle Sidebar", #selector(AppDelegate.toggleSidebarPane(_:)), "s", [.command, .control], target: target))
         menu.addItem(item("Toggle Inspector", #selector(AppDelegate.toggleInspectorPane(_:)), "i", [.command, .option], target: target))
-        menu.addItem(item("Toggle Organizer", #selector(AppDelegate.toggleOrganizer(_:)), "o", [.command, .control], target: target))
+        menu.addItem(item("Toggle Sumi", #selector(AppDelegate.toggleSumi(_:)), "o", [.command, .control], target: target))
         let theme = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
         theme.submenu = NSMenu(title: "Theme")
         for option in WindowTheme.allCases {

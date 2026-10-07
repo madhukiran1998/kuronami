@@ -8,7 +8,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let store: SessionStore
     private let terminalArea = TerminalAreaView()
     private var sheetWindow: NSWindow?
-    private lazy var organizerDock = OrganizerDock(store: store)
+    private lazy var sumiDock = SumiDock(store: store)
     private let detachedTiles = DetachedTiles()
     private lazy var projectActionsMenu = ProjectActionsMenu(store: store)
 
@@ -54,7 +54,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             MainActor.assumeIsolated { self?.applyTheme() }
         }
         bindStore()
-        organizerDock.install(in: window)
+        sumiDock.install(in: window)
+        sumiDock.keepsOpenForClicks = { [weak self] clicked in
+            guard let self else { return false }
+            return clicked === self.switcher || clicked === self.mentionPicker || self.detachedTiles.owns(clicked)
+        }
     }
 
     /// View › Theme's colours and opacity, applied in place: nothing is rebuilt, no session restarts.
@@ -66,6 +70,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         paneBackings.forEach { $0.layer?.backgroundColor = theme.paneFill.cgColor }
         canvas.applyTheme()
         terminalArea.applyTheme()
+        detachedTiles.applyTheme()
         // The user's own Ghostty `background-blur`, if they set one; nothing is added on top.
         if theme.isTranslucent, let app = GhosttyRuntime.shared.app {
             ghostty_set_window_background_blur(app, Unmanaged.passUnretained(window).toOpaque())
@@ -195,11 +200,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// With the sidebar hidden the traffic lights sit over the canvas, so the tiles start below a
-    /// titlebar band that holds them and the sidebar's button. Otherwise, and in full screen
-    /// (no traffic lights), the tiles reach the top edge.
+    /// titlebar band that holds them and the sidebar's button and "N needs you" pill. Full screen
+    /// keeps the band too (the pill must stay reachable), just without the traffic lights.
+    /// Otherwise the tiles reach the top edge.
     private func updateCanvasBand() {
-        guard let window = window as? KuronamiWindow, let sidebarItem else { return }
-        let band = sidebarItem.isCollapsed && !window.isFullScreen
+        guard let sidebarItem else { return }
+        let band = sidebarItem.isCollapsed
         guard band != canvasBandShown else { return }
         canvasBandShown = band
         terminalTop?.constant = band ? Size.titlebar : 0
@@ -207,7 +213,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         canvasSidebarButton?.isHidden = !band
     }
 
-    func toggleOrganizer() { organizerDock.toggle() }
+    func toggleSumi() { sumiDock.toggle() }
 
     func toggleInspector() {
         guard let inspectorItem else { return }
@@ -235,23 +241,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] error in MainActor.assumeIsolated { self?.reportLaunchError(error) } }
             .store(in: &subscriptions)
-        // The organizer's terminal lives in its floating panel; every other session gets a tile.
+        // Sumi's terminal lives in its floating panel; every other session gets a tile.
         // Detached sessions live in their own windows.
         store.onSurfaceChange = { [weak self] session in
-            if session.isOrganizer { self?.organizerDock.attach(session) }
+            if session.isSumi { self?.sumiDock.attach(session) }
             else if session.isDetached { self?.detachedTiles.attachSurface(session) }
             else { self?.terminalArea.mount(session) }
         }
         store.onRemove = { [weak self] session in
-            if session.isOrganizer { self?.organizerDock.detach(session) }
+            if session.isSumi { self?.sumiDock.detach(session) }
             else if session.isDetached { self?.detachedTiles.close(session) }
             else { self?.terminalArea.unmount(session) }
         }
-        store.onShowOrganizer = { [weak self] in self?.organizerDock.open() }
+        store.onShowSumi = { [weak self] in self?.sumiDock.open() }
         store.onShowDetached = { [weak self] session in self?.detachedTiles.show(session) }
         store.onDetach = { [weak self] session in self?.detach(session) }
         store.onReattach = { [weak self] session in self?.reattach(session) }
         detachedTiles.onReturn = { [weak self] session in self?.reattach(session) }
+        detachedTiles.onClose = { [weak self] session in self?.confirmClose(session) }
         detachedTiles.onFocus = { [weak self] session in
             guard let self, self.store.selectedID != session.id else { return }
             self.store.select(session)
@@ -260,7 +267,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         store.onArrangeTiles = { [weak self] root in self?.terminalArea.setTree(root, for: .grid) }
         store.onStatusChange = { [weak self] in self?.arrange(takeFocus: false) }
         store.confirmHandler = { [weak self] title, message, completion in
-            guard let window = self?.window else { completion(false); return }
+            guard let window = self?.windowForSheet() else { completion(false); return }
             let alert = NSAlert()
             alert.messageText = title
             alert.informativeText = message
@@ -288,6 +295,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         terminalArea.onReorder = { [weak self] order in self?.store.setTileOrder(order) }
         store.onMentionRequest = { [weak self] session in self?.showMentionPicker(for: session) }
+        store.onArchiveRequest = { [weak self] session in self?.requestArchive(session) }
         store.onSearchUpdate = { [weak self] session, total, selected, start in
             guard let self else { return }
             if let tile = self.detachedTiles.tile(for: session.id) {
@@ -305,7 +313,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     /// Pops a tile out of the canvas into its own window, opening where the tile was.
     func detach(_ session: TerminalSession) {
-        guard !session.isDetached, !session.isOrganizer else { return }
+        guard !session.isDetached, !session.isSumi else { return }
         let frame = terminalArea.screenFrame(of: session.id)
         session.isDetached = true
         terminalArea.unmount(session)
@@ -313,11 +321,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         arrange(takeFocus: false)
     }
 
+    /// The main window or a detached tile's: where ⌘W closes a terminal rather than the window.
+    func isTerminalWindow(_ candidate: NSWindow) -> Bool {
+        candidate === window || detachedTiles.owns(candidate)
+    }
+
     /// Puts a detached tile back in the canvas, focused.
     func reattach(_ session: TerminalSession) {
         guard session.isDetached else { return }
-        detachedTiles.close(session)
+        // Cleared first: closing the tile can make this window key, which must not treat the
+        // session as still detached and select another one.
         session.isDetached = false
+        detachedTiles.close(session)
         terminalArea.mount(session)
         window?.makeKeyAndOrderFront(nil)
         store.select(session)
@@ -349,10 +364,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func presentWorktreeCleanup() {
-        guard let window, sheetWindow == nil else { return }
+        guard sheetWindow == nil, let window = windowForSheet() else { return }
         let roots = store.sessions.compactMap { $0.git.map(GitInfo.mainRoot) }
         let inUse = Set(store.sessions.map(\.spec.workPath))
-        let view = WorktreeCleanupView(repoRoots: roots, inUse: inUse) { [weak self] in self?.dismissSheet() }
+        // Closed agents' checkpoints live in the shared repo; archiving their worktree prunes them.
+        let closedIDs = Dictionary(grouping: store.recentlyClosed, by: \.workPath).mapValues { $0.map(\.id.uuidString) }
+        let view = WorktreeCleanupView(repoRoots: roots, inUse: inUse, sessionIDs: closedIDs) { [weak self] in self?.dismissSheet() }
         let sheet = NSWindow(contentViewController: NSHostingController(rootView: view))
         sheetWindow = sheet
         window.beginSheet(sheet)
@@ -452,7 +469,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Sheets
 
     func presentNewSession(kind: SessionKind? = nil) {
-        guard let window, sheetWindow == nil else { return }
+        guard sheetWindow == nil, let window = windowForSheet() else { return }
         var draft = NewSessionDraft()
         if let current = store.selected { draft.cwd = current.spec.cwd }
         if let kind { draft.kind = kind }
@@ -471,6 +488,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let sheet = NSWindow(contentViewController: NSHostingController(rootView: view))
         sheetWindow = sheet
         window.beginSheet(sheet)
+    }
+
+    /// The window, brought back if the red button hid it: a sheet on a hidden window never shows,
+    /// and one that never shows is never dismissed.
+    private func windowForSheet() -> NSWindow? {
+        guard let window else { return nil }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        if !window.isVisible { showWindow(nil) }
+        return window
     }
 
     private func dismissSheet() {
@@ -497,7 +523,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let parts = error.components(separatedBy: ". ")
         alert.messageText = parts[0].hasSuffix(".") ? parts[0] : parts[0] + "."
         alert.informativeText = parts.dropFirst().joined(separator: ". ")
-        if let window { alert.beginSheetModal(for: window) }
+        if let window = windowForSheet() { alert.beginSheetModal(for: window) }
     }
 
     /// One-keystroke creation in the current session's folder.
@@ -522,41 +548,167 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         alert.addButton(withTitle: "Rename")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
-        guard let window else { return }
+        guard let window = windowForSheet() else { return }
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn else { return }
             self?.store.rename(session, to: field.stringValue)
         }
     }
 
+    /// Closing something that holds work asks first, on the agent itself; anything else just closes.
     func confirmClose(_ session: TerminalSession) {
+        askBeforeRemoving(session, archive: false)
+    }
+
+    /// The inspector's Archive: the same question, with "keep it on the branch" as the way out.
+    func requestArchive(_ session: TerminalSession) {
+        askBeforeRemoving(session, archive: true)
+    }
+
+    private func askBeforeRemoving(_ session: TerminalSession, archive: Bool) {
         // A browser has no process to lose; closing it just closes the page.
-        let running = session.kind != .browser
-            && (session.state == .working || session.state == .running || session.state.needsAttention)
-        guard running, let window else { store.close(session); return }
+        guard session.kind != .browser else { store.close(session); return }
+        // A shell or server reads as running while it lives, so it holds work only while a program
+        // other than its shell is running in it.
+        let running = session.state == .working || session.state.needsAttention
+            || (session.state == .running && (session.kind.isAgent || session.foregroundProcess != nil || session.nestedShells > 0))
+        let spec = session.spec
+        guard spec.isWorktree else {
+            if running { presentCloseBar(for: session, risk: nil, running: true, archive: archive) } else { store.close(session) }
+            return
+        }
+        Task {
+            let risk = await Task.detached { WorkAtRisk.evaluate(at: spec.workPath, base: spec.baseBranch) }.value
+            guard store.sessions.contains(where: { $0.id == session.id }) else { return }
+            if running || !(risk?.isEmpty ?? true) {
+                presentCloseBar(for: session, risk: risk, running: running, archive: archive)
+            } else {
+                closeAndRemoveFolder(session, saveWork: false, reportFailure: archive)
+            }
+        }
+    }
+
+    private func presentCloseBar(for session: TerminalSession, risk: WorkAtRisk?, running: Bool, archive: Bool, retry: Bool = true) {
+        let spec = session.spec
+        var parts: [String] = []
+        if let risk, !risk.isEmpty { parts.append(risk.headline(base: spec.baseBranch) + ".") }
+        if running { parts.append(session.kind.isAgent ? "Still working." : "Still running.") }
+        let canMerge = !running && spec.isWorktree && spec.baseBranch != nil && risk?.isEmpty == false && risk?.baseUnknown != true
+        let leaveTitle = running ? (archive ? "Stop and archive" : "Stop and close") : archive ? "Archive, keep work on branch" : "Close, leave work in folder"
+        let model = CloseBarModel(message: parts.joined(separator: " "),
+                                  mergeTitle: canMerge ? (archive ? "Merge, then archive" : "Merge, then close") : nil,
+                                  leaveTitle: leaveTitle)
+        guard let tile = terminalArea.tile(for: session.id) ?? detachedTiles.tile(for: session.id), !tile.isHidden else {
+            // Not on screen (parked, or hidden by the layout): bring it up so the question sits on its own agent.
+            guard retry else { return presentCloseAlert(for: session, model: model, archive: archive) }
+            store.select(session)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                MainActor.assumeIsolated { self?.presentCloseBar(for: session, risk: risk, running: running, archive: archive, retry: false) }
+            }
+            return
+        }
+        model.onKeep = { [weak tile] in tile?.hideCloseBar() }
+        model.onLeave = { [weak self, weak tile] in
+            tile?.hideCloseBar()
+            if archive { self?.closeAndRemoveFolder(session, saveWork: true, reportFailure: true) }
+            else { self?.store.close(session) }
+        }
+        model.onMerge = { [weak self, weak tile, weak model] in self?.mergeThenClose(session, model: model, tile: tile) }
+        tile.showCloseBar(model)
+    }
+
+    /// Fallback when the agent has no tile to carry the bar: the same question as a sheet.
+    private func presentCloseAlert(for session: TerminalSession, model: CloseBarModel, archive: Bool) {
+        guard let window = windowForSheet() else { return }
         let alert = NSAlert()
         alert.messageText = "Close @\(session.label)?"
-        alert.informativeText = "Its process is still running and will be stopped."
-        alert.addButton(withTitle: "Close")
-        alert.addButton(withTitle: "Cancel")
+        alert.informativeText = model.message
+        alert.addButton(withTitle: "Keep Open")
+        alert.addButton(withTitle: model.leaveTitle)
         alert.beginSheetModal(for: window) { [weak self] response in
-            if response == .alertFirstButtonReturn { self?.store.close(session) }
+            guard response == .alertSecondButtonReturn, let self else { return }
+            if archive { self.closeAndRemoveFolder(session, saveWork: true, reportFailure: true) } else { self.store.close(session) }
+        }
+    }
+
+    /// Commits what's there, merges the branch into its base, then closes and cleans up. A merge
+    /// that can't happen (your own checkout is in the way, a conflict) says so on the bar and
+    /// leaves the agent open.
+    private func mergeThenClose(_ session: TerminalSession, model: CloseBarModel?, tile: TileView?) {
+        guard let base = session.spec.baseBranch else { return }
+        let path = session.spec.workPath
+        let root = session.git.map(GitInfo.mainRoot) ?? path
+        let label = session.label
+        model?.busy = true
+        model?.error = nil
+        Task {
+            let outcome: Result<String, ReviewError> = await Task.detached {
+                guard let branch = Review.currentBranch(at: path), branch != "HEAD" else { return .failure(.git("not on a branch")) }
+                if !(runGit(["-C", path, "status", "--porcelain"]) ?? "").isEmpty,
+                   case .failure(let error) = Review.commit(at: path, message: "Work from @\(label) (Tako)") {
+                    return .failure(error)
+                }
+                return Review.merge(branch: branch, into: base, mainRoot: root)
+            }.value
+            model?.busy = false
+            switch outcome {
+            case .failure(let error): model?.error = error.description
+            case .success:
+                tile?.hideCloseBar()
+                closeAndRemoveFolder(session, saveWork: false, reportFailure: false)
+            }
+        }
+    }
+
+    /// Closes the agent and, once its process is gone, removes its worktree folder; the branch
+    /// stays. Without `saveWork` the folder is only removed if it is still empty of risk by then.
+    private func closeAndRemoveFolder(_ session: TerminalSession, saveWork: Bool, reportFailure: Bool) {
+        let spec = session.spec
+        let path = spec.workPath, base = spec.baseBranch, label = session.label
+        let root = session.git.map(GitInfo.mainRoot) ?? path
+        let id = session.id.uuidString
+        let shared = store.sessions.contains { $0.id != session.id && $0.spec.workPath == path }
+        store.close(session)
+        guard spec.isWorktree, !shared else { return }
+        // Closing stops the agent; its worktree lock goes with it once the reaper has stopped
+        // its process tree (SIGKILL after the grace period), plus a moment for the kill to land.
+        SessionReaper.whenStopped(session: id) { [weak self] in
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                if !saveWork {
+                    guard let risk = WorkAtRisk.evaluate(at: path, base: base), risk.isEmpty else { return }
+                }
+                let outcome = Review.archive(worktree: path, mainRoot: root)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        switch outcome {
+                        case .success: Checkpoints.prune(at: root, session: id)
+                        case .failure(let error):
+                            guard reportFailure, let window = self?.windowForSheet() else { return }
+                            let alert = NSAlert()
+                            alert.messageText = "Couldn't archive @\(label)'s worktree"
+                            alert.informativeText = error.description
+                            alert.beginSheetModal(for: window)
+                        }
+                    }
+                }
+            }
         }
     }
 
     func confirmPickWinner(_ session: TerminalSession) {
-        guard let window else { return }
+        guard let window = windowForSheet() else { return }
         let others = store.raceSiblings(of: session)
         let alert = NSAlert()
         alert.messageText = "Keep \(session.label)'s work?"
         alert.informativeText = "Its changes are committed and merged into \(session.spec.baseBranch ?? "the base branch"). "
-            + "\(others.map(\.label).joined(separator: ", ")) will be closed and their worktrees archived; their branches stay."
+            + "\(others.map(\.label).joined(separator: ", ")) will be closed and their worktrees archived. "
+            + "Anything they hadn't committed is saved on their branches, which stay."
         alert.addButton(withTitle: "Merge and Close Others")
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
             self.store.pickWinner(session) { [weak self] result in
-                guard let self, let window = self.window else { return }
+                guard let self, let window = self.windowForSheet() else { return }
                 let done = NSAlert()
                 switch result {
                 case .success(let text): done.messageText = text
@@ -570,7 +722,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func confirmRestart(_ session: TerminalSession) {
-        guard session.state == .working || session.state.needsAttention, let window else { session.restart(); return }
+        guard session.state == .working || session.state.needsAttention, let window = windowForSheet() else { session.restart(); return }
         let alert = NSAlert()
         alert.messageText = "Restart @\(session.label)?"
         alert.informativeText = session.kind.isAgent
@@ -588,6 +740,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// The red button hides the window like any Mac app; sessions keep running, the Dock icon
     /// brings it back, and ⌘Q quits.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Sumi's panel is the window's child and would be left open with nothing under it.
+        sumiDock.close(restoreFocus: false)
         sender.orderOut(nil)
         return false
     }
@@ -613,11 +767,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidExitFullScreen(_ notification: Notification) { updateCanvasBand() }
 
-    func windowDidResize(_ notification: Notification) { organizerDock.reposition() }
+    func windowDidResize(_ notification: Notification) { sumiDock.reposition() }
 
     func windowDidBecomeKey(_ notification: Notification) {
-        // Hiding the window drops its child windows; bring the organizer's button back with it.
-        if let window { organizerDock.install(in: window) }
+        // Hiding the window drops its child windows; bring Sumi's button back with it.
+        if let window { sumiDock.install(in: window) }
+        // Coming back from a detached tile's window: the main window takes a session it holds.
+        if let session = store.selected, session.isDetached,
+           let fallback = store.visibleIDs.first.flatMap({ id in store.sessions.first { $0.id == id } }) {
+            store.select(fallback)
+        }
         guard let window, window.firstResponder == nil || window.firstResponder === window else { return }
         if let session = store.selected, session.surface.window === window { window.makeFirstResponder(session.surface) }
     }
