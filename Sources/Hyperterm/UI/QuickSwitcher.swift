@@ -10,6 +10,8 @@ struct SwitcherItem: Identifiable {
     let tint: Color
     let kind: Kind
     var group = "Actions"
+    /// Drawn as this kind's mark (an agent's logo) instead of `symbol`.
+    var mark: SessionKind?
 }
 
 /// ⌘P: jump to a terminal, run an action, or "@label message" to message a terminal.
@@ -32,7 +34,8 @@ enum SwitcherModel {
             let session = result.session
             return SwitcherItem(id: session.id.uuidString, title: session.label,
                                 subtitle: [session.statusWord, session.summary ?? shortPath(session.spec.cwd)].joined(separator: " · "),
-                                symbol: session.kind.symbol, tint: session.kind.tint, kind: .session(session), group: "Sessions")
+                                symbol: session.kind.symbol, tint: session.kind.tint, kind: .session(session), group: "Sessions",
+                                mark: session.kind)
         }
         return sessions + (query.hasPrefix("@") ? [] : actions(search, store: store, quickCreate: quickCreate))
     }
@@ -70,7 +73,7 @@ enum SwitcherModel {
         }
         all += SessionKind.allCases.filter { $0 != .server }.map { kind in
             SwitcherItem(id: "new-\(kind.rawValue)", title: "New \(kind.displayName)", subtitle: "In the current folder",
-                         symbol: kind.symbol, tint: kind.tint, kind: .action { quickCreate(kind) }, group: "Create")
+                         symbol: kind.symbol, tint: kind.tint, kind: .action { quickCreate(kind) }, group: "Create", mark: kind)
         }
         all += store.recentlyClosed.prefix(5).map { spec in
             SwitcherItem(id: "reopen-\(spec.id)", title: "Reopen \(spec.label)", subtitle: spec.summary ?? shortPath(spec.cwd),
@@ -209,10 +212,11 @@ struct QuickSwitcherView: View {
 
     private func row(_ item: SwitcherItem, selected: Bool) -> some View {
         HStack(spacing: Space.m) {
-            Image(systemName: item.symbol)
-                .font(Typeface.body)
-                .foregroundStyle(item.tint)
-                .frame(width: Space.l + Space.xs)
+            Group {
+                if let mark = item.mark { KindMark(kind: mark, font: Typeface.body) } else { Image(systemName: item.symbol).font(Typeface.body) }
+            }
+            .foregroundStyle(item.tint)
+            .frame(width: Space.l + Space.xs)
             Text(item.title).font(Typeface.body).lineLimit(1)
             if let subtitle = item.subtitle {
                 Text(subtitle).font(Typeface.callout).foregroundStyle(Tone.faint).lineLimit(1)

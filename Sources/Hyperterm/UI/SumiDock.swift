@@ -340,12 +340,12 @@ private struct SumiMark: View {
     }
 }
 
-/// Which CLI runs Sumi: its monogram in its own color, tucked into the mark's corner.
+/// Which CLI runs Sumi: its logo in its own color, tucked into the mark's corner.
 private struct CLIBadge: View {
     let kind: SessionKind
 
     var body: some View {
-        KindMark(kind: kind, font: Typeface.micro)
+        KindMark(kind: kind, font: Typeface.micro, size: Size.markBadge - 4)
             .foregroundStyle(kind.tint)
             .frame(width: Size.markBadge, height: Size.markBadge)
             .background(Tone.deep, in: Circle())

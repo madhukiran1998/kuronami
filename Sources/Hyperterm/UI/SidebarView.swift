@@ -218,8 +218,11 @@ struct AgentRow: View {
         let racing = store.raceSiblings(of: session).count
         let overlap = session.overlapBadge
         let delegation = session.delegation
-        if review != nil || queued > 0 || racing > 0 || overlap != nil || delegation != nil {
+        if review != nil || queued > 0 || racing > 0 || overlap != nil || delegation != nil || session.isMinimized {
             HStack(spacing: Space.xs) {
+                if session.isMinimized {
+                    Tag(text: "Parked").help("Minimized off the canvas. Click to bring it back.")
+                }
                 if let delegation {
                     Tag(text: "Sumi", tint: Palette.accent).help(delegation.help)
                 }
@@ -636,6 +639,9 @@ private struct UtilityRow: View {
                 }
             }
             Spacer(minLength: Space.xs)
+            if session.isMinimized {
+                Text("Parked").font(Typeface.micro).foregroundStyle(Tone.faint)
+            }
             if session.kind != .browser {
                 PortChips(ports: session.ports, compact: true)
                 StatusDot(state: session.state, size: 6)

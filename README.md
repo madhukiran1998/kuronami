@@ -29,7 +29,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/workspace.png" alt="Tako: three agents in a grid. One waits on an approval with Allow and Deny on its card and a Sumi tag, since its prompts are handed to Sumi; one has finished and is ready for review; a dev server sits on the shelf, and the inspector is open" width="100%">
+  <img src="docs/images/workspace.png" alt="Tako: three agents in a grid. One waits on an approval with Allow and Deny on its card and a Sumi tag, since its prompts are handed to Sumi; one has finished and is ready for review; a dev server is listed in the sidebar, and the inspector is open" width="100%">
 </p>
 
 > **蛸 (tako)**: *octopus*. Eight arms, many agents, one calm head. (Formerly Kuronami.)
@@ -215,7 +215,7 @@ ht ls
 - **Stable positions.** Cards never reorder when states change, so ⌘1–9 and muscle memory keep working. Attention is shown, not sorted.
 - **Grid, split, or focus.** Every live terminal as a tile (⌘⌥3), the last two side by side (⌘⌥2), or one (⌘⌥1). ⌘⏎ zooms a tile.
 - **Resize anything.** Drag the gap between two tiles to resize them; it snaps to halves and thirds, and double-clicking evens that split out again. ⌥⌘0 evens out every tile. Split and grid each remember their own arrangement across launches.
-- **Arrange it your way.** Drag a tile by its header and drop it on another to trade places. Minimize a tile (⇧⌘M or the – on its header) to park it on the shelf under the canvas, next to your dev servers; click it there, or in the sidebar, to bring it back.
+- **Arrange it your way.** Drag a tile by its header and drop it on another to trade places. Minimize a tile (⇧⌘M or the – on its header) to park it: it stays in the sidebar marked *Parked*, and a click brings it back. The tiles always get the whole canvas; with the sidebar hidden, a small pill in the canvas's corner lists your servers and parked tiles.
 - **Close to hide.** The red close button hides the window and leaves agents running; the Dock or the menu bar brings it back. ⌘Q quits.
 - **Since you left.** Come back to an agent and a banner sums up what happened: edits, commands, approvals, tests, and the final answer.
 
@@ -286,7 +286,7 @@ The play button in the sidebar footer (and ⌘P) runs your project's commands. T
     { "name": "Storybook", "command": "pnpm storybook --port $PORT", "icon": "book", "server": true }
 ] }
 ```
-Servers open on the shelf on the agent's own `$PORT`; other commands open a shell tile that keeps the output. Running an action again restarts it.
+Servers start on the agent's own `$PORT` and show under *Servers and shells* in the sidebar; other commands open a shell tile that keeps the output. Running an action again restarts it.
 
 #### Isolated workspaces
 - **Quick dispatch.** Type a task in the sidebar's *Ask a new agent…* field and press Return. A new agent starts on it, auto-named from the task, in its own git worktree.
@@ -383,7 +383,7 @@ ht layout grid   ·   ht focus @ui   ·   ht restart @web   ·   ht rename @api 
 | ⌘⌥1 · 2 · 3, ⌘⏎ | Focus · split · grid, zoom tile |
 | ⌥⌘0 | Even out tiles |
 | ⌃⌥Space | Quick Ask from any app: type a task, Return starts an agent |
-| ⇧⌘M | Minimize the selected tile to the shelf (again to restore) |
+| ⇧⌘M | Park the selected tile (again to restore) |
 | ⌘F, ⌘G | Find in terminal (scrollback included) |
 | ⇧⌘B | New browser (on the selected terminal's dev server, if it has one) |
 | ⇧⌘O | Open the selected server's port in a preview window |

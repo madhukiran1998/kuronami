@@ -211,6 +211,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         terminalTop?.constant = band ? Size.titlebar : 0
         canvasBarHeight?.constant = band ? Size.titlebar : LayoutTree.gap
         canvasSidebarButton?.isHidden = !band
+        updateShelfButton()
+    }
+
+    /// The shelf pill shows only with the sidebar hidden, and only when there's something to list.
+    private func updateShelfButton() {
+        let shows = sidebarItem?.isCollapsed == true
+            && !(ShelfButton.servers(store).isEmpty && ShelfButton.parked(store).isEmpty)
+        if terminalArea.showsShelfButton != shows { terminalArea.showsShelfButton = shows }
     }
 
     func toggleSumi() { sumiDock.toggle() }
@@ -233,9 +241,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func evenOutTiles() { terminalArea.evenOutTiles() }
 
     private func bindStore() {
-        let strip = NSHostingView(rootView: ServerStrip(store: store))
-        strip.sizingOptions = []
-        terminalArea.serverStrip = strip
+        let shelf = NSHostingView(rootView: ShelfButton(store: store))
+        shelf.sizingOptions = [.intrinsicContentSize]
+        terminalArea.shelfButton = shelf
         store.$lastError
             .compactMap { $0 }
             .receive(on: DispatchQueue.main)
@@ -340,9 +348,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     private func arrange(takeFocus: Bool) {
         terminalArea.apply(mode: store.layout, visible: store.visibleIDs, focused: store.selectedID, takeFocus: takeFocus)
-        let showsStrip = store.layout != .focus
-            && store.sessions.contains { ($0.kind == .server && !$0.pinnedToGrid) || $0.isMinimized }
-        if terminalArea.showsServerStrip != showsStrip { terminalArea.showsServerStrip = showsStrip }
+        updateShelfButton()
         terminalArea.refreshAttention()
         let title: String, subtitle: String
         if let session = store.selected {

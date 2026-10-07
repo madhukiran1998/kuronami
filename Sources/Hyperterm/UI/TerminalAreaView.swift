@@ -45,23 +45,30 @@ final class TerminalAreaView: NSView {
     var onReorder: (([UUID]) -> Void)?
     /// The tile being dragged and where it started.
     private var drag: (id: UUID, origin: NSRect)?
-    /// Where tiles go: the bounds minus the server/shelf strip, inset from the edges.
+    /// Where tiles go: the bounds, inset from the edges.
     private var tileArea: NSRect = .zero
-    /// Servers strip along the bottom in split and grid layouts.
-    var serverStrip: NSView? {
+    /// The shelf pill (servers and parked tiles) in the bottom-right corner, over the tiles. It takes
+    /// no space from them, and shows only while the sidebar, which lists the same things, is hidden.
+    var shelfButton: NSView? {
         didSet {
             oldValue?.removeFromSuperview()
-            if let serverStrip { addSubview(serverStrip) }
+            guard let shelfButton else { return }
+            shelfButton.translatesAutoresizingMaskIntoConstraints = false
+            shelfButton.isHidden = !showsShelfButton
+            addSubview(shelfButton)
+            NSLayoutConstraint.activate([
+                shelfButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -LayoutTree.gap * 2),
+                shelfButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -LayoutTree.gap * 2),
+            ])
         }
     }
-    var showsServerStrip = false {
+    var showsShelfButton = false {
         didSet {
-            guard showsServerStrip != oldValue else { return }
-            serverStrip?.isHidden = !showsServerStrip
+            guard showsShelfButton != oldValue else { return }
+            shelfButton?.isHidden = !showsShelfButton
             needsLayout = true
         }
     }
-    private static let stripHeight: CGFloat = 32
     var onZoomTile: ((UUID) -> Void)?
 
     override init(frame: NSRect) {
@@ -186,11 +193,7 @@ final class TerminalAreaView: NSView {
     override func layout() {
         super.layout()
         emptyState.frame = bounds
-        var area = bounds
-        if showsServerStrip, let serverStrip {
-            serverStrip.frame = NSRect(x: 0, y: 0, width: bounds.width, height: Self.stripHeight)
-            area = NSRect(x: 0, y: Self.stripHeight, width: bounds.width, height: max(0, bounds.height - Self.stripHeight))
-        }
+        let area = bounds
         // Panes float inset from the window edges, like content panes in Apple's apps.
         let inset = min(LayoutTree.gap, max(0, min(area.width, area.height) / 2))
         tileArea = area.insetBy(dx: inset, dy: inset)
@@ -200,6 +203,10 @@ final class TerminalAreaView: NSView {
             if tiles[id]?.frame != aligned { tiles[id]?.frame = aligned }
         }
         updateHandles()
+        // Tiles mount behind the handles, which can put them over the pill; keep it on top.
+        if showsShelfButton, let shelfButton, subviews.last !== shelfButton {
+            addSubview(shelfButton, positioned: .above, relativeTo: nil)
+        }
     }
 
     /// Reconciles the current tree with what's visible and returns every tile's frame.
