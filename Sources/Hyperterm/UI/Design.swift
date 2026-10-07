@@ -64,6 +64,8 @@ enum Size {
     static let iconButton: CGFloat = 22
     static let statusDot: CGFloat = 7
     static let avatar: CGFloat = 22
+    /// An agent's logo, sized to sit on a name's line.
+    static let mark: CGFloat = 16
     static let hairline: CGFloat = 1
     /// The window's titlebar band (there is no toolbar): the traffic lights sit in it.
     static let titlebar: CGFloat = 28
@@ -123,9 +125,10 @@ enum Palette {
     /// Live servers, passing tests, added lines: matcha.
     static let running = Color(nsColor: NSColor(srgbRed: 0.557, green: 0.749, blue: 0.494, alpha: 1))
     static let idle = Tone.faint
-    /// Which agent it is: used only on the agent's own mark.
-    static let claude = Color(nsColor: NSColor(srgbRed: 0.851, green: 0.502, blue: 0.396, alpha: 1))
-    static let codex = Color(nsColor: NSColor(srgbRed: 0.353, green: 0.682, blue: 1.0, alpha: 1))
+    /// Which agent it is: used only on the agent's own mark. Claude's coral, and OpenAI's mark in
+    /// the text color, as each company draws it.
+    static let claude = Color(nsColor: NSColor(srgbRed: 0.851, green: 0.467, blue: 0.341, alpha: 1))
+    static var codex: Color { Tone.text }
 
     static func status(_ state: AgentState) -> Color {
         switch state {
@@ -556,14 +559,17 @@ struct WaveMark: View {
     }
 }
 
-/// One glyph language everywhere: agents are monograms (C, X), everything else a plain symbol.
+/// One glyph language everywhere: agents are their own logos (Claude, OpenAI), everything else a
+/// plain symbol.
 struct KindMark: View {
     let kind: SessionKind
     var font: Font = Typeface.caption
+    /// The logo's side; the same everywhere so marks line up across cards, tiles and lists.
+    var size: CGFloat = Size.mark
 
     var body: some View {
         if let image = AgentMarkImage.image(for: kind) {
-            Image(nsImage: image).renderingMode(.template).resizable().scaledToFit().frame(width: Size.avatar * 0.62, height: Size.avatar * 0.62)
+            Image(nsImage: image).renderingMode(.template).resizable().interpolation(.high).scaledToFit().frame(width: size, height: size)
         } else if let letter = kind.monogram {
             Text(letter).font(font.weight(.bold)).fontDesign(.rounded)
         } else {
@@ -579,7 +585,7 @@ enum AgentMarkImage {
 
     static func image(for kind: SessionKind) -> NSImage? {
         if let cached = cache[kind] { return cached }
-        let name: String? = { switch kind { case .claude: return "claude"; case .codex: return "codex"; default: return nil } }()
+        let name: String? = { switch kind { case .claude: return "claude"; case .codex: return "openai"; default: return nil } }()
         let image = name.flatMap { Bundle.main.url(forResource: $0, withExtension: "png", subdirectory: "Mark") }
             .flatMap { NSImage(contentsOf: $0) }
         image?.isTemplate = true
@@ -588,18 +594,19 @@ enum AgentMarkImage {
     }
 }
 
-/// The agent's mark on a tile filled with its own color; other kinds keep the quiet square. State
-/// is shown by the dot beside it, so the mark never changes color.
+/// The agent's logo, bare, in its own color; other kinds keep the quiet square. State is shown by
+/// the words and pill beside it, so the mark never changes color and nothing else competes.
 struct AgentAvatar: View {
     let kind: SessionKind
     var dimmed = false
 
     var body: some View {
-        let filled = kind.monogram != nil
+        let isAgent = AgentMarkImage.image(for: kind) != nil
         KindMark(kind: kind)
-            .foregroundStyle(filled ? Color(nsColor: NSColor(srgbRed: 0.078, green: 0.071, blue: 0.063, alpha: 1)) : kind.tint.opacity(dimmed ? 0.45 : 1))
+            .foregroundStyle(kind.tint.opacity(dimmed ? 0.45 : 1))
+            // The avatar's column stays the same width, so rows below line up with the name.
             .frame(width: Size.avatar, height: Size.avatar)
-            .background(filled ? kind.tint.opacity(dimmed ? 0.45 : 1) : Tone.surface, in: RoundedRectangle(cornerRadius: Radius.control + 1, style: .continuous))
+            .background(isAgent ? Color.clear : Tone.surface, in: RoundedRectangle(cornerRadius: Radius.control + 1, style: .continuous))
             .accessibilityHidden(true)
     }
 }
