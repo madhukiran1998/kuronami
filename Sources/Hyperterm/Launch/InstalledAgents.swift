@@ -15,7 +15,7 @@ final class InstalledAgents: ObservableObject {
     func refresh() {
         Task {
             let path = await Task.detached(priority: .userInitiated) { Self.loginPATH() }.value
-            kinds = Self.installed(SessionStore.organizerChoices, path: path ?? ProcessInfo.processInfo.environment["PATH"] ?? "",
+            kinds = Self.installed(SessionStore.sumiChoices, path: path ?? ProcessInfo.processInfo.environment["PATH"] ?? "",
                                    skipping: AgentIntegration.binDirectory.path)
         }
     }

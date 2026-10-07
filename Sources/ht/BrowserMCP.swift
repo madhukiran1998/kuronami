@@ -13,7 +13,9 @@ let chromeDevtoolsMCP = "chrome-devtools-mcp@1.10.1"
 /// - `pageId` defaults to the agent's own browser and stops being required, so agents never act
 ///   on another agent's page by accident; passing another browser's pageId is still allowed.
 /// - `list_pages` names each page's Tako browser, so agents can find others by @label.
-/// - `new_page`/`close_page` are refused: Tako browsers are sessions the user can see.
+/// - `new_page` opens another Tako browser owned by this agent (a tab the user can see under it)
+///   and makes it the default; `close_page` closes only tabs the agent opened, never its first
+///   browser or another agent's.
 func runBrowserMCP(port: Int) -> Never {
     let proxy = BrowserProxy(port: port)
     proxy.run()
@@ -40,6 +42,13 @@ private final class BrowserProxy: @unchecked Sendable {
     private var rewrites: [String: Rewrite] = [:]
     private var labelsByPage: [Int: String] = [:]
     private var ownLabel: String?
+    /// A different endpoint Tako reported while the server was running; the next call restarts there.
+    private var movedEndpoint: String?
+    /// Tabs this agent opened with new_page, and the one tools act on by default (nil: ownLabel).
+    private var openedLabels: Set<String> = []
+    /// Closed tabs whose Chromium page lingers after Tako closes its browser; hidden from list_pages.
+    private var closedLabels: Set<String> = []
+    private var activeLabel: String?
     private var pageScopedTools: Set<String> = []
 
     private var hiddenCounter = 0
@@ -56,13 +65,34 @@ private final class BrowserProxy: @unchecked Sendable {
         signal(SIGPIPE, SIG_IGN)
         let capture = (try? JSONSerialization.jsonObject(with: Data(browserMCPCapture.utf8))) as? [String: Any] ?? [:]
         staticTools = rewritten(["result": ["tools": capture["tools"] ?? []]], .toolsList)["result"] as? [String: Any] ?? [:]
+        // The server goes when the agent does.
+        var sources: [DispatchSourceSignal] = []
+        for sig in [SIGTERM, SIGINT, SIGHUP] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+            source.setEventHandler { [self] in
+                withState { self.child }?.terminate()
+                exit(0)
+            }
+            source.resume()
+            sources.append(source)
+        }
         while let line = readLine(strippingNewline: false) {
             handleAgentLine(line, capture: capture)
         }
+        shutDown()
+    }
+
+    /// Closes the server's stdin and gives it 3 seconds to exit before terminating it.
+    private func shutDown() -> Never {
         let (process, input) = withState { (self.child, self.toChild) }
         try? input?.close()
-        process?.waitUntilExit()
-        exit(process?.terminationStatus ?? 0)
+        if let process {
+            let deadline = Date().addingTimeInterval(3)
+            while process.isRunning, Date() < deadline { usleep(50_000) }
+            if process.isRunning { process.terminate() }
+        }
+        exit(process.map { $0.isRunning ? 0 : $0.terminationStatus } ?? 0)
     }
 
     // MARK: - Server process
@@ -136,13 +166,26 @@ private final class BrowserProxy: @unchecked Sendable {
     }
 
     private func stopServer(_ process: Process) {
-        withState {
-            guard self.child === process else { return }
+        let input = withState { () -> FileHandle? in
+            guard self.child === process else { return nil }
             self.child = nil
-            self.toChild = nil
+            defer { self.toChild = nil }
+            return self.toChild
         }
+        try? input?.close()
         process.terminate()
         childGone(process)
+    }
+
+    /// Starts the server again so it sees pages opened since it attached. The agent's calls in
+    /// flight get up to 10 seconds to be answered first, since stopping the server fails them.
+    private func restartServer() -> Bool {
+        let deadline = Date().addingTimeInterval(10)
+        while withState({ !self.pending.isEmpty }), Date() < deadline { usleep(50_000) }
+        startLock.lock()
+        defer { startLock.unlock() }
+        if let process = withState({ self.child }) { stopServer(process) }
+        return startServer()
     }
 
     /// The server exited: fail what it was asked and let the next call start a new one.
@@ -155,6 +198,8 @@ private final class BrowserProxy: @unchecked Sendable {
             guard self.child == nil else { return ([], []) }
             let orphans = Array(self.pending.values), waiters = Array(self.hiddenWaiters.values)
             for key in self.pending.keys { self.rewrites[key] = nil }
+            // A new server numbers its pages afresh.
+            self.labelsByPage = [:]
             self.pending = [:]
             self.hiddenWaiters = [:]
             return (orphans, waiters)
@@ -206,10 +251,6 @@ private final class BrowserProxy: @unchecked Sendable {
         var message = message
         var params = message["params"] as? [String: Any] ?? [:]
         let tool = params["name"] as? String ?? ""
-        if tool == "new_page" || tool == "close_page" {
-            replyError(id: id, "Tako browsers are sessions the user can see, so pages aren't opened or closed from here. Navigate your own browser with navigate_page; ask the user to open another browser (⇧⌘B) if you need two.")
-            return
-        }
         startLock.lock()
         guard let (own, fresh) = ensureBrowser(tool: tool) else {
             startLock.unlock()
@@ -223,15 +264,53 @@ private final class BrowserProxy: @unchecked Sendable {
         }
         if fresh { refreshPageMap(alreadyMarked: true) }
         startLock.unlock()
+        if tool == "new_page" {
+            openTab(params["arguments"] as? [String: Any] ?? [:], id: id)
+            return
+        }
+        if tool == "close_page" {
+            closeTab(params["arguments"] as? [String: Any] ?? [:], id: id, own: own)
+            return
+        }
         if tool == "list_pages" {
             refreshPageMap()
             track(id, .listPages)
         } else if pageScoped(tool) {
             var arguments = params["arguments"] as? [String: Any] ?? [:]
-            if staleMap() || ownPage(own) == nil { refreshPageMap() }
+            let active = withState { self.activeLabel } ?? own
+            let labelBefore = withState { self.ownLabel }
+            var untagged = 0
+            if staleMap() || ownPage(active) == nil { untagged = refreshPageMap() }
+            // The refresh's mark names the agent's browser anew (another one if the user closed it).
+            let mine = withState { self.ownLabel } ?? own
             let requested = arguments["pageId"] as? Int
-            // Explicitly naming another Tako browser is allowed; anything else means "mine".
-            if requested == nil || label(ofPage: requested!) == nil, let page = ownPage(own) {
+            // Selecting another agent's browser is allowed (like naming it in any call), but only
+            // the agent's own tabs become its default page.
+            if tool == "select_page", let requested, let chosen = label(ofPage: requested),
+               chosen == mine || withState({ self.openedLabels.contains(chosen) }) {
+                withState { self.activeLabel = chosen }
+            }
+            // Explicitly naming another Tako browser is allowed; anything else means "mine"
+            // (the tab the agent last opened or selected, else its first browser).
+            if requested == nil || label(ofPage: requested!) == nil {
+                var found = ownPage(active) ?? ownPage(mine)
+                // A page mid-load has no tag yet: give it a moment rather than restarting the server.
+                if found == nil, untagged > 0 {
+                    Thread.sleep(forTimeInterval: 0.3)
+                    untagged = refreshPageMap(alreadyMarked: true)
+                    found = ownPage(active) ?? ownPage(mine)
+                }
+                // A browser Tako made since the server attached is invisible to it until it restarts.
+                let newBrowser = withState { self.ownLabel } != labelBefore
+                if found == nil, untagged == 0 || newBrowser, restartServer() {
+                    refreshPageMap(alreadyMarked: true)
+                    found = ownPage(active) ?? ownPage(mine)
+                }
+                // Without a pageId the server would act on whichever page is selected, maybe another agent's.
+                guard let page = found else {
+                    replyError(id: id, "Couldn't find your Tako browser. Call the tool again; if it keeps failing, ask the user to check the browser in Tako.")
+                    return
+                }
                 arguments["pageId"] = page
             }
             params["arguments"] = arguments
@@ -240,9 +319,65 @@ private final class BrowserProxy: @unchecked Sendable {
         forward(message, id: id)
     }
 
+    /// new_page: Tako opens another browser owned by this agent; it becomes the default page.
+    private func openTab(_ arguments: [String: Any], id: Any) {
+        var req = ControlRequest(cmd: .browser)
+        req.from = callerSession
+        req.text = "new_tab"
+        req.command = arguments["url"] as? String
+        guard let response = try? sendControlRequest(req, timeout: 30), response.ok, let label = response.text else {
+            replyError(id: id, "Couldn't open a tab in Tako. Ask the user to check the browser.")
+            return
+        }
+        withState {
+            self.openedLabels.insert(label)
+            self.closedLabels.remove(label)
+            self.activeLabel = label
+        }
+        // chrome-devtools-mcp only sees the pages that existed when it attached, so it starts
+        // again to pick up the new one (the page map is relearned from the new server).
+        guard restartServer() else {
+            replyRPCError(id: id, "Opened @\(label), but couldn't restart the browser tools. Call a tool again to retry.")
+            return
+        }
+        refreshPageMap(alreadyMarked: true)
+        let page = ownPage(label).map { " (pageId \($0))" } ?? ""
+        replyText(id: id, "Opened a new tab @\(label)\(page). It is now your default page; tools act on it unless you pass another pageId.")
+    }
+
+    /// close_page: only tabs this agent opened. Its first browser and other agents' stay.
+    private func closeTab(_ arguments: [String: Any], id: Any, own: String) {
+        refreshPageMap()
+        guard let page = arguments["pageId"] as? Int, let label = label(ofPage: page) else {
+            replyError(id: id, "Pass the pageId of a tab you opened (see list_pages).")
+            return
+        }
+        guard label != own, withState({ self.openedLabels.contains(label) }) else {
+            replyError(id: id, label == own
+                ? "That's your main browser; it stays open. Close only tabs you opened with new_page."
+                : "Page \(page) (@\(label)) isn't a tab you opened, so it can't be closed from here.")
+            return
+        }
+        var req = ControlRequest(cmd: .browser)
+        req.from = callerSession
+        req.text = "close_tab"
+        req.target = label
+        guard let response = try? sendControlRequest(req, timeout: 10), response.ok else {
+            replyError(id: id, "Tako couldn't close @\(label).")
+            return
+        }
+        withState {
+            self.openedLabels.remove(label)
+            self.closedLabels.insert(label)
+            if self.activeLabel == label { self.activeLabel = nil }
+        }
+        refreshPageMap()
+        replyText(id: id, "Closed @\(label).")
+    }
+
     /// Sends an agent request to the server, failing it if there is no server to answer.
     private func forward(_ message: [String: Any], id: Any) {
-        let key = "\(id)"
+        let key = mcpRequestKey(id)
         let registered = withState { () -> Bool in
             guard self.child != nil else { return false }
             self.pending[key] = id
@@ -267,8 +402,20 @@ private final class BrowserProxy: @unchecked Sendable {
         var req = ControlRequest(cmd: .browser)
         req.from = callerSession
         req.text = tool
+        if let moved = withState({ () -> String? in
+            defer { self.movedEndpoint = nil }
+            return self.movedEndpoint
+        }), moved != browserURL, let process = withState({ self.child }) {
+            // The browser took another port while the server ran: restart it there (the handshake is replayed).
+            browserURL = moved
+            stopServer(process)
+        }
         if let ownLabel = withState({ self.ownLabel }), serverRunning {
-            DispatchQueue.global().async { _ = try? sendControlRequest(req, timeout: 2) }
+            DispatchQueue.global().async { [self] in
+                if let endpoint = (try? sendControlRequest(req, timeout: 2))?.endpoint, endpoint != browserURL {
+                    withState { self.movedEndpoint = endpoint }
+                }
+            }
             return (ownLabel, false)
         }
         guard let response = try? sendControlRequest(req, timeout: 30), response.ok, let label = response.text else {
@@ -281,23 +428,36 @@ private final class BrowserProxy: @unchecked Sendable {
 
     /// Learns which chrome-devtools-mcp page number is which Tako browser: Tako tags
     /// each page with its label, and each page is asked for its tag.
-    private func refreshPageMap(alreadyMarked: Bool = false) {
+    /// Returns how many listed pages had no readable tag (usually still loading).
+    @discardableResult
+    private func refreshPageMap(alreadyMarked: Bool = false) -> Int {
         if !alreadyMarked {
             var req = ControlRequest(cmd: .browser)
             req.from = callerSession
             req.text = "mark"
-            _ = try? sendControlRequest(req, timeout: 5)
+            // It replies with the agent's browser, which Tako makes again if the user closed it.
+            if let response = try? sendControlRequest(req, timeout: 5), response.ok, let label = response.text {
+                withState { self.ownLabel = label }
+            }
         }
-        guard let listing = hiddenCall("list_pages", [:]) else { return }
+        guard let listing = hiddenCall("list_pages", [:]) else { return 0 }
+        let previous = withState { self.labelsByPage }
         var map: [Int: String] = [:]
+        var untagged = 0
         for page in pageNumbers(in: listing) {
-            let reply = hiddenCall("evaluate_script", ["pageId": page, "function": "() => window.__hyperterm ?? null"])
-            if let reply, let tag = firstQuotedString(in: reply) { map[page] = tag }
+            // Only reads the tag, so there's no DOM to wait for.
+            let reply = hiddenCall("evaluate_script", ["pageId": page, "function": "() => window.__hyperterm ?? null",
+                                                       "waitForStableDom": false], timeout: 5)
+            if let reply, let tag = pageTag(in: reply) { map[page] = tag; continue }
+            // Navigation wipes the tag until the load ends; keep what the page was known as.
+            untagged += 1
+            if let known = previous[page] { map[page] = known }
         }
         withState {
             self.labelsByPage = map
             self.mapRefreshedAt = Date()
         }
+        return untagged
     }
 
     private func staleMap() -> Bool { withState { Date().timeIntervalSince(self.mapRefreshedAt) > 15 } }
@@ -308,7 +468,7 @@ private final class BrowserProxy: @unchecked Sendable {
     // MARK: - Hidden calls
 
     /// A tool call of our own; its reply is consumed here, never shown to the agent.
-    private func hiddenCall(_ tool: String, _ arguments: [String: Any]) -> String? {
+    private func hiddenCall(_ tool: String, _ arguments: [String: Any], timeout: Double = 15) -> String? {
         let id = withState { () -> String in
             self.hiddenCounter += 1
             return "ht-\(self.hiddenCounter)"
@@ -316,7 +476,7 @@ private final class BrowserProxy: @unchecked Sendable {
         let semaphore = DispatchSemaphore(value: 0)
         withState { self.hiddenWaiters[id] = semaphore }
         let message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": "tools/call", "params": ["name": tool, "arguments": arguments]]
-        guard sendToChild(message), semaphore.wait(timeout: .now() + 15) == .success else {
+        guard sendToChild(message), semaphore.wait(timeout: .now() + timeout) == .success else {
             withState { self.hiddenWaiters[id] = nil }
             return nil
         }
@@ -328,9 +488,11 @@ private final class BrowserProxy: @unchecked Sendable {
 
     private func relayChildOutput(from pipe: Pipe, of process: Process) {
         defer { childGone(process) }
-        guard let stream = fdopen(pipe.fileHandleForReading.fileDescriptor, "r") else { return }
+        // A dup, so closing the stream doesn't close the Pipe's own descriptor twice.
+        guard let stream = fdopen(dup(pipe.fileHandleForReading.fileDescriptor), "r") else { return }
         var buffer: UnsafeMutablePointer<CChar>?
         var capacity = 0
+        defer { free(buffer); fclose(stream) }
         while getline(&buffer, &capacity, stream) > 0, let buffer {
             let line = String(cString: buffer)
             handleServerLine(line)
@@ -343,14 +505,17 @@ private final class BrowserProxy: @unchecked Sendable {
             writeToAgent(line)
             return
         }
-        let key = "\(id)"
+        let key = mcpRequestKey(id)
         if message["method"] == nil { withState { self.pending[key] = nil } }
-        if let waiter = withState({ self.hiddenWaiters.removeValue(forKey: key) }) {
-            withState { self.hiddenReplies[key] = message }
+        // Hidden calls use string ids and are keyed by them directly.
+        if let hiddenKey = id as? String, let waiter = withState({ self.hiddenWaiters.removeValue(forKey: hiddenKey) }) {
+            withState { self.hiddenReplies[hiddenKey] = message }
             waiter.signal()
             return
         }
         guard let rewrite = withState({ self.rewrites.removeValue(forKey: key) }) else {
+            // A late reply to one of our own timed-out hidden requests is not the agent's to see.
+            if message["method"] == nil, let text = id as? String, text.hasPrefix("ht-") { return }
             writeToAgent(line)
             return
         }
@@ -362,7 +527,7 @@ private final class BrowserProxy: @unchecked Sendable {
         guard var result = message["result"] as? [String: Any] else { return message }
         switch rewrite {
         case .initialize:
-            let note = "Each Tako agent has its own browser, shown to the user as a session. Tools act on yours by default, so leave out pageId. list_pages names every Tako browser by @label; pass another browser's pageId only when you mean to use it."
+            let note = "Each Tako agent has its own browser, shown to the user as a session. Tools act on yours by default, so leave out pageId. new_page opens another tab (a browser under you in Tako) and makes it the default; close_page closes only tabs you opened. list_pages names every Tako browser by @label; pass another browser's pageId only when you mean to use it."
             let existing = result["instructions"] as? String
             result["instructions"] = existing.map { note + "\n\n" + $0 } ?? note
         case .toolsList:
@@ -371,7 +536,10 @@ private final class BrowserProxy: @unchecked Sendable {
             for index in tools.indices {
                 guard var schema = tools[index]["inputSchema"] as? [String: Any],
                       var properties = schema["properties"] as? [String: Any], properties["pageId"] != nil else { continue }
-                scoped.insert(tools[index]["name"] as? String ?? "")
+                let name = tools[index]["name"] as? String ?? ""
+                // close_page keeps pageId required: defaulting it would close your own browser.
+                if name == "close_page" { continue }
+                scoped.insert(name)
                 schema["required"] = (schema["required"] as? [String] ?? []).filter { $0 != "pageId" }
                 if var pageId = properties["pageId"] as? [String: Any] {
                     pageId["description"] = "Optional. Defaults to your own Tako browser; pass another page's id (see list_pages) to use that browser."
@@ -380,18 +548,34 @@ private final class BrowserProxy: @unchecked Sendable {
                 schema["properties"] = properties
                 tools[index]["inputSchema"] = schema
             }
-            tools.removeAll { ["new_page", "close_page"].contains($0["name"] as? String ?? "") }
+            for index in tools.indices {
+                switch tools[index]["name"] as? String {
+                case "new_page":
+                    tools[index]["description"] = "Open a new tab in your own Tako browser (shown under you in Tako) and load a URL. It becomes your default page."
+                    if var schema = tools[index]["inputSchema"] as? [String: Any], var properties = schema["properties"] as? [String: Any] {
+                        properties["background"] = nil
+                        properties["isolatedContext"] = nil
+                        schema["properties"] = properties
+                        tools[index]["inputSchema"] = schema
+                    }
+                case "close_page":
+                    tools[index]["description"] = "Close a tab you opened with new_page. Your first browser and other agents' browsers can't be closed."
+                default: break
+                }
+            }
             withState { self.pageScopedTools = scoped }
             result["tools"] = tools
         case .listPages:
             let own = withState { self.ownLabel }
+            let (opened, closed) = withState { (self.openedLabels, self.closedLabels) }
             let labels = withState { self.labelsByPage }
             if var content = result["content"] as? [[String: Any]] {
                 for index in content.indices {
                     guard let text = content[index]["text"] as? String else { continue }
-                    content[index]["text"] = text.split(separator: "\n", omittingEmptySubsequences: false).map { line -> String in
+                    content[index]["text"] = text.split(separator: "\n", omittingEmptySubsequences: false).compactMap { line -> String? in
                         guard let page = pageNumber(in: line), let label = labels[page] else { return String(line) }
-                        return line + "  — @\(label)" + (label == own ? " (your browser)" : "")
+                        if closed.contains(label) { return nil }
+                        return line + "  — @\(label)" + (label == own ? " (your browser)" : opened.contains(label) ? " (your tab)" : "")
                     }.joined(separator: "\n")
                 }
                 result["content"] = content
@@ -403,7 +587,11 @@ private final class BrowserProxy: @unchecked Sendable {
 
     // MARK: - Plumbing
 
-    private func track(_ id: Any, _ rewrite: Rewrite) { withState { self.rewrites["\(id)"] = rewrite } }
+    private func track(_ id: Any, _ rewrite: Rewrite) { withState { self.rewrites[mcpRequestKey(id)] = rewrite } }
+
+    private func replyText(id: Any, _ text: String) {
+        writeToAgent(["jsonrpc": "2.0", "id": id, "result": ["content": [["type": "text", "text": text]]]])
+    }
 
     private func replyError(id: Any, _ text: String) {
         writeToAgent(["jsonrpc": "2.0", "id": id, "result": ["content": [["type": "text", "text": text]], "isError": true]])
@@ -449,8 +637,11 @@ private let supportedProtocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26
 
 // MARK: - Parsing chrome-devtools-mcp's text output
 
+/// Nil for an error reply: its message is not the tool's output.
 private func text(of message: [String: Any]?) -> String? {
-    let content = (message?["result"] as? [String: Any])?["content"] as? [[String: Any]]
+    let result = message?["result"] as? [String: Any]
+    if result?["isError"] as? Bool == true { return nil }
+    let content = result?["content"] as? [[String: Any]]
     return content?.compactMap { $0["text"] as? String }.joined(separator: "\n")
 }
 
@@ -465,7 +656,16 @@ private func pageNumbers(in listing: String) -> [Int] {
     listing.split(separator: "\n").compactMap(pageNumber(in:))
 }
 
-/// evaluate_script replies with the value as JSON in a code block: `"charlie"` or `null`.
+/// evaluate_script replies with the value as JSON in a ```json code block: `"charlie"` or `null`.
+/// Without that block, falls back to the first quoted string.
+private func pageTag(in text: String) -> String? {
+    guard let fence = text.range(of: "```json") else { return firstQuotedString(in: text) }
+    let body = text[fence.upperBound...]
+    let json = body.range(of: "```").map { body[..<$0.lowerBound] } ?? body
+    let value = (try? JSONSerialization.jsonObject(with: Data(json.utf8), options: .fragmentsAllowed)) as? String
+    return value?.isEmpty == false ? value : nil
+}
+
 private func firstQuotedString(in text: String) -> String? {
     guard let start = text.firstIndex(of: "\"") else { return nil }
     let rest = text[text.index(after: start)...]

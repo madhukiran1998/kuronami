@@ -60,7 +60,9 @@ enum AgentIntegration {
     /// agent arguments (typed by the user, never by agents) are passed through as written.
     static func initialInput(for spec: LaunchSpec, resume: Bool, task: String? = nil) -> String? {
         let extra = spec.command.map { " " + $0 } ?? ""
-        let prompt = task.flatMap { $0.isEmpty ? nil : " " + shellQuote($0) } ?? ""
+        // `--` ends option parsing (Claude and Codex both honour it), so a task that looks like a
+        // flag ("--dangerously-skip-permissions") stays the prompt. Adapters put it last.
+        let prompt = task.flatMap { $0.isEmpty ? nil : " -- " + shellQuote($0) } ?? ""
         let options = (spec.options?.arguments(for: spec.kind) ?? []).map { " " + shellQuote($0) }.joined()
         if let adapter = spec.kind.adapter {
             return adapter.launchCommand(for: spec, resume: resume, options: options, extra: extra, prompt: prompt)

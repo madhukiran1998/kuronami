@@ -13,22 +13,26 @@ final class SessionStore: ObservableObject {
     var onSurfaceChange: ((TerminalSession) -> Void)?
     /// Called whenever the visible set, layout, or focused session changes.
     var onArrangementChange: (() -> Void)?
-    /// The organizer set the grid's tiles; the canvas adopts the shape as if the user had.
+    /// Sumi set the grid's tiles; the canvas adopts the shape as if the user had.
     var onArrangeTiles: ((LayoutNode) -> Void)?
-    /// The organizer is between being asked for and its session existing; one start at a time.
-    var organizerStarting = false
-    /// Something asked for the organizer (e.g. the switcher); the window opens its panel.
-    var onShowOrganizer: (() -> Void)?
+    /// Sumi is between being asked for and its session existing; one start at a time.
+    var sumiStarting = false
+    /// Phone Mode was switched on while Sumi was still launching; Remote Control opens once it exists.
+    var remoteControlWhenSumiUp = false
+    /// When Phone Mode last restarted a Sumi that quit, to stop retrying one that can't start.
+    var sumiRestarts: [Date] = []
+    /// Something asked for Sumi (e.g. the switcher); the window opens its panel.
+    var onShowSumi: (() -> Void)?
     /// A detached session was chosen; the window brings its own window forward.
     var onShowDetached: ((TerminalSession) -> Void)?
-    /// Pop a tile out into its own window, or put it back in the canvas (the organizer asks).
+    /// Pop a tile out into its own window, or put it back in the canvas (Sumi asks).
     var onDetach: ((TerminalSession) -> Void)?
     var onReattach: ((TerminalSession) -> Void)?
-    /// Terminals the organizer waits on, each with the note it left for when that one finishes.
-    var organizerWatches: [UUID: String] = [:]
-    var organizerDigest = OrganizerDigest()
-    /// What the organizer opened in the last few seconds (see showOpenedByOrganizer).
-    var organizerOpened: [(id: UUID, at: Date)] = []
+    /// Terminals Sumi waits on, each with the note it left for when that one finishes.
+    var sumiWatches: [UUID: String] = [:]
+    var sumiDigest = SumiDigest()
+    /// What Sumi opened in the last few seconds (see showOpenedBySumi).
+    var sumiOpened: [(id: UUID, at: Date)] = []
     var overlapWatch = OverlapWatch()
     /// Called when a session's status changes. It can change which tiles show (grid hides exited
     /// sessions) and their chrome, but must not pull keyboard focus away from where the user is.
@@ -36,6 +40,8 @@ final class SessionStore: ObservableObject {
     var onRemove: ((TerminalSession) -> Void)?
     var onSearchUpdate: ((TerminalSession, Int?, Int?, Bool) -> Void)?
     var onMentionRequest: ((TerminalSession) -> Void)?
+    /// The inspector's "Archive Worktree": the window asks about anything at risk, then removes it.
+    var onArchiveRequest: ((TerminalSession) -> Void)?
 
     /// Most recently selected first; split view shows the top two.
     private var recent: [UUID] = []
@@ -73,6 +79,8 @@ final class SessionStore: ObservableObject {
     /// Usage windows per account ("claude/work", "codex/default"), so the Accounts window can
     /// show which account still has room.
     @Published var accountLimits: [String: RateLimits] = [:]
+    /// Set while Phone Mode is on (SessionStore+PhoneMode). Never persisted: quitting turns it off.
+    @Published var phoneModeSince: Date?
     /// Labels of closed user-named terminals, kept from agents for an hour so messages meant for
     /// them can't be captured by a rename.
     private var reservedLabels: [String: Date] = [:]
@@ -82,6 +90,8 @@ final class SessionStore: ObservableObject {
     private var channelWaiters: [UUID: ControlServer.Reply] = [:]
     private var channelInbox: [UUID: [String]] = [:]
     private var channelLastSeen: [UUID: Date] = [:]
+    /// Identifies the waiter a timeout belongs to, so an old timer can't end a newer long-poll.
+    private var channelWaiterTokens: [UUID: UUID] = [:]
 
     nonisolated static var channelsEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "channels") }
@@ -98,8 +108,12 @@ final class SessionStore: ObservableObject {
         }
         channelWaiters.removeValue(forKey: session.id)?(ControlResponse.success())
         channelWaiters[session.id] = reply
+        let token = UUID()
+        channelWaiterTokens[session.id] = token
         DispatchQueue.main.asyncAfter(deadline: .now() + 45) { [weak self] in
-            guard let self, let waiting = self.channelWaiters.removeValue(forKey: session.id) else { return }
+            guard let self, self.channelWaiterTokens[session.id] == token,
+                  let waiting = self.channelWaiters.removeValue(forKey: session.id) else { return }
+            self.channelWaiterTokens[session.id] = nil
             waiting(ControlResponse.success())
         }
     }
@@ -115,6 +129,16 @@ final class SessionStore: ObservableObject {
             waiter(response)
         } else {
             channelInbox[session.id, default: []].append(text)
+            // A poller that died inside the freshness window never drains this: if the message is
+            // still waiting, call the channel dead and type it instead.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self, weak session] in
+                guard let self, let session, var inbox = self.channelInbox[session.id],
+                      let index = inbox.firstIndex(of: text) else { return }
+                inbox.remove(at: index)
+                self.channelInbox[session.id] = inbox.isEmpty ? nil : inbox
+                self.channelLastSeen[session.id] = nil
+                _ = session.deliver(text, from: nil)
+            }
         }
         return true
     }
@@ -128,6 +152,8 @@ final class SessionStore: ObservableObject {
     let notifier = AttentionNotifier()
     /// Previews and tests post no banners.
     private(set) var notifiesUser = true
+    /// Previews and tests write nothing to disk: the test host shares the app's support folder.
+    private(set) var persists = true
 
     init() {}
 
@@ -137,6 +163,7 @@ final class SessionStore: ObservableObject {
         sessions = previewSessions
         layout = previewLayout
         notifiesUser = false
+        persists = false
         tileOrder = []
         selectedID = previewSessions.first?.id
         recent = previewSessions.map(\.id)
@@ -151,19 +178,23 @@ final class SessionStore: ObservableObject {
     var visibleIDs: [UUID] {
         switch layout {
         case .focus:
-            return selectedID.map { [$0] } ?? []
+            // A detached session shows in its own window; the canvas falls back to one it holds.
+            guard let selected, selected.isDetached else { return selectedID.map { [$0] } ?? [] }
+            let onCanvas = sessions.filter { !$0.isMinimized && !$0.isSumi && !$0.isDetached }
+            let ids = Set(onCanvas.map(\.id))
+            return (recent.first { ids.contains($0) } ?? onCanvas.first?.id).map { [$0] } ?? []
         case .split:
-            let hidden = Set(sessions.filter { $0.isMinimized || $0.isOrganizer || $0.isDetached }.map(\.id))
+            let hidden = Set(sessions.filter { $0.isMinimized || $0.isSumi || $0.isDetached }.map(\.id))
             let pair = Set(recent.filter { !hidden.contains($0) }.prefix(2))
             return arranged(sessions.filter { pair.contains($0.id) }).map(\.id)
         case .grid:
             // Servers live in the strip below the canvas unless pinned or selected; minimized
-            // sessions wait on the shelf. The organizer answers in the sidebar's box instead, and
+            // sessions wait on the shelf. Sumi answers in the sidebar's box instead, and
             // detached sessions in their own windows.
             return arranged(sessions.filter { session in
                 (session.kind != .server || session.pinnedToGrid || session.id == selectedID)
                     && (!isExited(session) || session.id == selectedID)
-                    && !session.isMinimized && !session.isOrganizer && !session.isDetached
+                    && !session.isMinimized && !session.isSumi && !session.isDetached
             }).map(\.id)
         }
     }
@@ -193,8 +224,11 @@ final class SessionStore: ObservableObject {
         session.spec.minimized = minimized ? true : nil
         persist()
         if minimized, selectedID == session.id {
-            let next = visibleIDs.first { $0 != session.id }
-            select(next.flatMap { id in sessions.first { $0.id == id } })
+            // Focus shows only the selection, so there may be nothing else on screen: fall back
+            // like close does, to a session the canvas holds.
+            let next = visibleIDs.first { $0 != session.id }.flatMap { id in sessions.first { $0.id == id } }
+                ?? sessions.last { $0.id != session.id && !$0.isSumi && !$0.isMinimized && !$0.isDetached }
+            select(next)
         } else {
             onArrangementChange?()
         }
@@ -253,7 +287,7 @@ final class SessionStore: ObservableObject {
     var projects: [(name: String, agents: [TerminalSession])] {
         var order: [String] = []
         var groups: [String: [TerminalSession]] = [:]
-        for session in sessions where session.kind.isAgent && !session.isOrganizer {
+        for session in sessions where session.kind.isAgent && !session.isSumi {
             let name = session.git?.project ?? "Scratch"
             if groups[name] == nil { order.append(name) }
             groups[name, default: []].append(session)
@@ -268,9 +302,9 @@ final class SessionStore: ObservableObject {
         sessions.filter { $0.kind == .browser && $0.spec.owner == agent.id }
     }
 
-    /// The organizer has no sidebar row, so its browsers are loose too.
+    /// Sumi has no sidebar row, so its browsers are loose too.
     var looseBrowsers: [TerminalSession] {
-        let agents = Set(sessions.filter { $0.kind.isAgent && !$0.isOrganizer }.map(\.id))
+        let agents = Set(sessions.filter { $0.kind.isAgent && !$0.isSumi }.map(\.id))
         return sessions.filter { $0.kind == .browser && !($0.spec.owner.map(agents.contains) ?? false) }
     }
 
@@ -407,16 +441,20 @@ final class SessionStore: ObservableObject {
         if session.spec.labelSource == .user || session.spec.labelSource == nil {
             reservedLabels[session.label] = Date()
         }
-        // Its events stop with the process, so a watch or handoff ends here, told to the organizer.
-        let organizerHears = organizer.map { $0.id != session.id && !$0.isExitedProcess } ?? false
-        if organizerWatches.removeValue(forKey: session.id) != nil, organizerHears {
-            addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .exited))
+        // Its events stop with the process, so a watch or handoff ends here, told to Sumi.
+        let sumiHears = sumi.map { $0.id != session.id && !$0.isExitedProcess } ?? false
+        if sumiWatches.removeValue(forKey: session.id) != nil, sumiHears {
+            addToSumiDigest(SumiEvent(label: session.label, kind: .exited))
         }
         if session.delegation != nil {
             session.delegation = nil
-            if organizerHears { addToOrganizerDigest(OrganizerEvent(label: session.label, kind: .stoppedHandling("it was closed"))) }
+            if sumiHears { addToSumiDigest(SumiEvent(label: session.label, kind: .stoppedHandling("it was closed"))) }
         }
         session.terminate()
+        channelWaiters.removeValue(forKey: session.id)?(ControlResponse.success())
+        channelWaiterTokens[session.id] = nil
+        channelInbox[session.id] = nil
+        channelLastSeen[session.id] = nil
         sessions.removeAll { $0.id == session.id }
         forgetOverlaps(with: session)
         childCancellables[session.id] = nil
@@ -425,17 +463,19 @@ final class SessionStore: ObservableObject {
         // Next in view, so closing a tile never brings back one the shelf or a window holds.
         if selectedID == session.id {
             select(visibleIDs.compactMap { id in sessions.first { $0.id == id } }.last
-                ?? sessions.last { !$0.isOrganizer && !$0.isMinimized && !$0.isDetached })
+                ?? sessions.last { !$0.isSumi && !$0.isMinimized && !$0.isDetached })
+        } else {
+            // The others re-flow into the space it left. A status-style refresh: the selection
+            // didn't change, so keyboard focus stays where the user is (Sumi or ht may close it).
+            onStatusChange?()
         }
         persist()
         notifier.updateBadge(count: attentionCount)
     }
 
     func select(_ session: TerminalSession?) {
-        // The organizer has no tile; choosing it opens its panel.
-        if let session, session.isOrganizer { onShowOrganizer?(); return }
-        // A detached session is chosen by bringing its window forward.
-        if let session, session.isDetached { onShowDetached?(session) }
+        // Sumi has no tile; choosing it opens its panel.
+        if let session, session.isSumi { onShowSumi?(); return }
         if let previous = selected { previous.lastViewedAt = Date() }
         // Choosing a minimized session is asking for it back.
         if let session, session.isMinimized {
@@ -445,9 +485,13 @@ final class SessionStore: ObservableObject {
         selectedID = session?.id
         if let session {
             if session.unread { session.unread = false }
+            if session.finishedUnseen { session.finishedUnseen = false }
             recent.removeAll { $0 == session.id }
             recent.insert(session.id, at: 0)
         }
+        // A detached session is chosen by bringing its window forward. After the selection is
+        // set: its window becoming key reports back as a choice of what is already chosen.
+        if let session, session.isDetached { onShowDetached?(session) }
         onArrangementChange?()
     }
 
@@ -540,15 +584,17 @@ final class SessionStore: ObservableObject {
 
     func sessionStateChanged(_ session: TerminalSession, from previous: AgentState) {
         notifier.updateBadge(count: attentionCount)
+        if previous == .working { markFinished(session) }
         onStatusChange?()
-        reportToOrganizer(session, from: previous)
+        reportToSumi(session, from: previous)
+        adoptIntoPhoneMode(session)
         delegationStateChanged(session, from: previous)
         watchOverlaps(session, from: previous)
-        let isVisible = visibleIDs.contains(session.id) && NSApp.isActive
+        let isVisible = userIsLooking(at: session)
         switch session.state {
         case .needsInput(let reason):
-            // Handed to the organizer: it hears instead, and the user only if it doesn't answer.
-            if organizerTakesWait(session, reason: reason) { break }
+            // Handed to Sumi: it hears instead, and the user only if it doesn't answer.
+            if sumiTakesWait(session, reason: reason) { break }
             if !isVisible { session.unread = true }
             notifier.post(session: session, title: "@\(session.label) needs you", body: reason, foreground: !isVisible)
         case .idle where previous == .working && session.kind.isAgent && raceFinished(session):
@@ -586,13 +632,40 @@ final class SessionStore: ObservableObject {
     }
 
     func sessionWantsAttention(_ session: TerminalSession, title: String, body: String) {
-        guard !visibleIDs.contains(session.id) || !NSApp.isActive else { return }
+        guard !userIsLooking(at: session) else { return }
         session.unread = true
+    }
+
+    /// The user is looking at this session: on the canvas while the app is active, or in a
+    /// detached window that is the key window.
+    func userIsLooking(at session: TerminalSession) -> Bool {
+        (visibleIDs.contains(session.id) && NSApp.isActive)
+            || (session.isDetached && session.surface.window?.isKeyWindow == true)
     }
 
     /// Clicking into a tile's terminal makes it the selected session.
     func sessionFocused(_ session: TerminalSession) {
         if selectedID != session.id { select(session) }
+        else if session.finishedUnseen { session.finishedUnseen = false; onStatusChange?() }
+    }
+
+    /// How long a finished agent stays marked as done before it reads as plain idle.
+    static let finishedMarkDuration: TimeInterval = 180
+
+    /// An agent's work is done: its turn ended and no background subagent is still running. It
+    /// stays marked for a few minutes or until the user clicks into it, unless it is the only
+    /// terminal on screen and they were already looking at it.
+    func markFinished(_ session: TerminalSession) {
+        guard session.kind.isAgent, session.state == .idle, session.runningSubagents.isEmpty,
+              !(selectedID == session.id && NSApp.isActive && visibleIDs.count <= 1) else { return }
+        session.finishedUnseen = true
+        let finishedAt = session.stateChangedAt
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.finishedMarkDuration) { [weak self, weak session] in
+            // A later turn has its own mark and its own timer.
+            guard let session, session.finishedUnseen, session.stateChangedAt == finishedAt else { return }
+            session.finishedUnseen = false
+            self?.onStatusChange?()
+        }
     }
 
     // MARK: - Persistence
@@ -603,19 +676,37 @@ final class SessionStore: ObservableObject {
     /// True when an earlier run left session state: an upgrade rather than a fresh install.
     static var hasSavedState: Bool { FileManager.default.fileExists(atPath: stateFileURL.path) }
 
+    /// Writes run one at a time, so a quit's flush can't be overwritten by an older write.
+    /// Every file the store writes goes through this one queue, so `flushPersist` waits for all of them.
+    static let persistQueue = DispatchQueue(label: "dev.hyperterm.persist", qos: .utility)
+
     func persist() {
+        guard persists else { return }
         persistWork?.cancel()
         let specs = sessions.map(\.spec)
         let url = stateFile
-        let work = DispatchWorkItem {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            encoder.dateEncodingStrategy = .iso8601
-            guard let data = try? encoder.encode(specs) else { return }
-            try? data.write(to: url, options: .atomic)
-        }
+        let work = DispatchWorkItem { Self.write(specs, to: url) }
         persistWork = work
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.3, execute: work)
+        Self.persistQueue.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    /// Quitting: writes the sessions now instead of after persist's debounce, once any write
+    /// already under way has landed.
+    func flushPersist() {
+        guard persists else { return }
+        persistWork?.cancel()
+        persistWork = nil
+        let specs = sessions.map(\.spec)
+        let url = stateFile
+        Self.persistQueue.sync { Self.write(specs, to: url) }
+    }
+
+    nonisolated private static func write(_ specs: [LaunchSpec], to url: URL) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(specs) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 
     func restore() -> Bool {
@@ -627,16 +718,18 @@ final class SessionStore: ObservableObject {
         specs.map { spec -> LaunchSpec in
             var spec = spec
             if spec.summary == spec.label { spec.summary = nil }
-            // An organizer from before it had its own folder starts fresh there; its notes file
+            // Sumi from before it had its own folder starts fresh there; its notes file
             // carries what it knew.
-            if spec.organizer == true, spec.cwd != Self.organizerFolder {
-                spec.cwd = Self.organizerFolder
+            if spec.sumi == true, spec.cwd != Self.sumiFolder {
+                spec.cwd = Self.sumiFolder
                 spec.agentSessionId = nil
             }
+            // Sumi resumes its conversation on the model it's set to now, not the one it last ran on.
+            if spec.sumi == true { spec.options?.model = Self.sumiModel(for: spec.kind) }
             return spec
         }.forEach { create($0, resume: true, select: false) }
-        // Never the organizer: selecting it opens its panel instead.
-        select(sessions.first { !$0.isOrganizer })
+        // Never Sumi: selecting it opens its panel instead.
+        select(sessions.first { !$0.isSumi })
         return true
     }
 

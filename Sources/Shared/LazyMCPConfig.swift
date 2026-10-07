@@ -173,7 +173,10 @@ private struct TOMLScanner {
             var items: [Any] = []
             while skipBlank(), peek != "]" {
                 if peek == "," { advance(); continue }
+                let before = index
                 guard let item = value() else { return items }
+                // A stray `}` (or similar) parses to nothing and consumes nothing: skip it so the loop ends.
+                if index == before { advance(); continue }
                 items.append(item)
             }
             advance()

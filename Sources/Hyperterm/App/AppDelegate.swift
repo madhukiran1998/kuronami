@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let gitInspector = GitInspector()
     private var statusBar: StatusBarController?
     private var pollCount = 0
+    /// When the steward last measured; it runs on the poll, but at most once a minute.
+    private var lastStewardUpdate: Date?
     private var lastRegistryStatus: [UUID: String] = [:]
     private var diffStatsInFlight = false
     private var gitInFlight = false
@@ -47,9 +49,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBar = StatusBarController(store: store)
         startControlServer()
         Steward.shared.start(store: store)
-        Steward.shared.onEscalation = { [weak store] in store?.reportToOrganizer($0) }
+        Steward.shared.onEscalation = { [weak store] in store?.reportToSumi($0) }
         Steward.shared.onSleepCandidate = { [weak store] in
-            if AppSettings.autoSleepEnabled { store?.sleep($0) }
+            guard AppSettings.autoSleepEnabled, let store else { return false }
+            store.sleep($0)
+            return $0.isAsleep
         }
         startInspector()
         store.notifier.onActivate = { [weak self] id in
@@ -89,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.informativeText = "\(busy.map { "@" + $0.label }.joined(separator: ", ")) \(busy.count == 1 ? "is" : "are") still working. Agent conversations resume the next time you open Tako."
             alert.addButton(withTitle: "Quit")
             alert.addButton(withTitle: "Cancel")
-            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+            guard alert.runModal() == .alertFirstButtonReturn else { quitConfirmed = false; return false }
         }
         quitConfirmed = true
         return true
@@ -109,11 +113,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         guard windowController != nil else { return }
-        store.persist()
+        // Written now, not after persist's debounce: the process ends when this returns.
+        store.flushPersist()
         controlServer?.stop()
         hookServer?.stop()
-        // Give the debounced persist a moment to land.
-        Thread.sleep(forTimeInterval: 0.4)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -135,8 +138,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startControlServer() {
         let store = self.store
         let inspector = self.inspector
-        let server = ControlServer(path: ControlPaths.socketPath, identify: { inspector.identify(pid: $0) }) { request, caller, reply in
-            if request.cmd == .heavy { Steward.shared.handleHeavy(request, reply: reply); return }
+        let server = ControlServer(path: ControlPaths.socketPath, identify: { inspector.identify(pid: $0) }) { request, caller, peer, reply in
+            if request.cmd == .heavy { Steward.shared.handleHeavy(request, peer: peer, reply: reply); return }
             ControlHandler(store: store, caller: caller).handle(request, reply: reply)
         }
         do {
@@ -181,10 +184,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     nonisolated private static let activePollInterval: TimeInterval = 2.5
     nonisolated private static let backgroundPollInterval: TimeInterval = 5
+    /// Focus and layout changes, thermal state and memory pressure still rebalance at once.
+    private static let stewardInterval: TimeInterval = 60
 
     private func apply(_ snapshots: [String: ProcessSnapshot]) {
         pollCount += 1
-        Steward.shared.update(snapshots)
+        if lastStewardUpdate.map({ Date().timeIntervalSince($0) >= Self.stewardInterval }) ?? true {
+            lastStewardUpdate = Date()
+            Steward.shared.update(snapshots)
+        } else {
+            Steward.shared.refreshTrees(snapshots)
+            if Steward.shared.queuedLaunches > 0 { Steward.shared.drainLaunches() }
+        }
         refreshGit()
         // Working agents and the one on screen every ~10s; everything else once a minute (idle
         // agents also refresh on their Stop hook).
@@ -199,10 +210,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if session.ports != snapshot.ports { session.ports = snapshot.ports }
             if session.foregroundProcess != snapshot.foreground { session.foregroundProcess = snapshot.foreground }
             session.backgroundShells = snapshot.backgroundShells
+            session.nestedShells = snapshot.nestedShells
             if session.kind == .claude {
                 if let status = snapshot.claudeStatus {
                     lastRegistryStatus[session.id] = status
-                    session.apply(.registryStatus(status), source: "claude registry")
+                    // A "busy" older than the last hook (the Stop that ended the turn) is stale.
+                    if status != "busy" || !registryBusyIsStale(writtenAt: snapshot.claudeStatusAt, lastHookAt: session.lastHookAt) {
+                        session.apply(.registryStatus(status), source: "claude registry")
+                    }
                 }
             }
             if session.kind == .server, case .exited = session.state, snapshot.foreground != nil {
@@ -230,19 +245,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         diffStatsInFlight = true
         let jobs = agents.map { ($0.id, DiffTarget(directory: $0.spec.workPath, base: $0.spec.baseBranch)) }
         let targets = Set(jobs.map { $0.1 })
+        let worktrees = Set(agents.filter { $0.spec.isWorktree }.map { DiffTarget(directory: $0.spec.workPath, base: $0.spec.baseBranch) })
         DispatchQueue.global(qos: .utility).async {
             let stats = Dictionary(uniqueKeysWithValues: targets.map {
                 ($0, Review.diffStat(at: $0.directory, base: $0.base))
+            })
+            let risks = Dictionary(uniqueKeysWithValues: worktrees.map {
+                ($0, WorkAtRisk.evaluate(at: $0.directory, base: $0.base))
             })
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.diffStatsInFlight = false
                     for (id, target) in jobs {
-                        let stat = stats[target] ?? nil
                         guard let session = self.store.sessions.first(where: { $0.id == id }),
-                              session.spec.workPath == target.directory, session.spec.baseBranch == target.base,
-                              session.diffStat != stat else { continue }
-                        session.diffStat = stat
+                              session.spec.workPath == target.directory, session.spec.baseBranch == target.base else { continue }
+                        let stat = stats[target] ?? nil
+                        if session.diffStat != stat { session.diffStat = stat }
+                        if worktrees.contains(target) {
+                            let risk = (risks[target] ?? nil).flatMap { $0.isEmpty ? nil : $0 }
+                            if session.atRisk != risk { session.atRisk = risk }
+                        }
                     }
                 }
             }
@@ -274,10 +296,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the shell stays. Hooks report this for Claude; this covers Codex and crashes.
     private func trackAgentProcess(_ session: TerminalSession, _ snapshot: ProcessSnapshot?) {
         guard let adapter = session.kind.adapter else { return }
-        let name = adapter.command
-        let alive = snapshot?.programs.contains { $0.contains(name) } ?? false
+        let alive = snapshot?.agentCLIs.contains(adapter.command) ?? false
         if session.isAsleep {
             if alive, let since = session.fellAsleepAt, Date().timeIntervalSince(since) > 8 { session.abortSleep() }
+            if !alive { session.cliExitSeen() }
+            return
+        }
+        // Woken while its CLI was still quitting: the resume waits for it to go.
+        if session.resumeAwaitsExit {
+            if !alive {
+                session.cliExitSeen()
+            } else if let since = session.fellAsleepAt, Date().timeIntervalSince(since) > 8 {
+                session.cliStayedRunning()
+            }
             return
         }
         if alive {
@@ -343,7 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func cleanUpWorktrees(_ sender: Any?) { windowController?.presentWorktreeCleanup() }
     @objc func toggleInspectorPane(_ sender: Any?) { windowController?.toggleInspector() }
     @objc func toggleSidebarPane(_ sender: Any?) { windowController?.toggleSidebar() }
-    @objc func toggleOrganizer(_ sender: Any?) { windowController?.toggleOrganizer() }
+    @objc func toggleSumi(_ sender: Any?) { windowController?.toggleSumi() }
     @objc func newBrowser(_ sender: Any?) { store.openBrowser() }
     @objc func minimizeTile(_ sender: Any?) {
         guard let session = store.selected else { NSSound.beep(); return }
@@ -395,6 +426,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func newCodexHere(_ sender: Any?) { windowController?.quickCreate(.codex) }
 
     @objc func closeSession(_ sender: Any?) {
+        // ⌘W in Settings, a preview or any other window closes that window, not a terminal. A
+        // sheet or panel on a terminal window counts as that window.
+        if let key = NSApp.keyWindow {
+            var owner = key
+            while let parent = owner.sheetParent ?? owner.parent { owner = parent }
+            if windowController?.isTerminalWindow(owner) != true {
+                // Borderless panels (Quick Ask) have no close button for performClose to press.
+                if key.styleMask.contains(.closable) { key.performClose(sender) } else { key.close() }
+                return
+            }
+        }
         if let session = store.selected { windowController?.confirmClose(session) }
     }
 

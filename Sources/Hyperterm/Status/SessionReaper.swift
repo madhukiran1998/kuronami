@@ -70,12 +70,33 @@ enum SessionReaper {
     /// SIGTERM now and SIGKILL whatever is left after `grace`, off the main thread.
     static func stop(_ processes: [TrackedProcess], grace: TimeInterval = 2, completion: (@Sendable () -> Void)? = nil) {
         guard !processes.isEmpty else { completion?(); return }
+        let sessions = Set(processes.map(\.session))
         queue.async {
+            for session in sessions { stopping[session, default: 0] += 1 }
             signal(processes, SIGTERM)
             queue.asyncAfter(deadline: .now() + grace) {
                 signal(processes, SIGKILL)
                 completion?()
+                for session in sessions {
+                    stopping[session, default: 1] -= 1
+                    guard stopping[session] == 0 else { continue }
+                    stopping[session] = nil
+                    stopped.removeValue(forKey: session)?.forEach { $0() }
+                }
             }
+        }
+    }
+
+    /// Stops under way per session, and what waits for them to finish. Only touched on `queue`.
+    nonisolated(unsafe) private static var stopping: [String: Int] = [:]
+    nonisolated(unsafe) private static var stopped: [String: [@Sendable () -> Void]] = [:]
+
+    /// Runs `body` (on the reaper's queue) once the stop a session's close began has sent its
+    /// last signal, or right away when none is under way. Call after the close.
+    static func whenStopped(session: String, _ body: @escaping @Sendable () -> Void) {
+        queue.async {
+            guard stopping[session] != nil else { body(); return }
+            stopped[session, default: []].append(body)
         }
     }
 
