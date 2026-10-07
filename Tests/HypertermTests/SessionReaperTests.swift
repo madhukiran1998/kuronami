@@ -112,6 +112,52 @@ final class SessionReaperTests: XCTestCase {
         XCTAssertTrue(waitUntilGone(pids))
     }
 
+    /// Closing a session while a slow poll holds the inspector's queue returns at once; the
+    /// session's processes still arrive once the poll finishes.
+    func testTakingProcessesNeverWaitsOnAPollInFlight() throws {
+        // /bin/sleep hides its environment like every platform binary; a re-signed copy doesn't.
+        let sleep = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: sleep)
+        defer { try? FileManager.default.removeItem(atPath: sleep) }
+        XCTAssertNotNil(runProcess("/usr/bin/codesign", ["-s", "-", "-f", sleep]))
+        let session = UUID().uuidString
+        let shell = Process()
+        shell.executableURL = URL(fileURLWithPath: "/bin/sh")
+        shell.arguments = ["-c", "\"$0\" 30; :", sleep]
+        shell.environment = ["HT_SESSION_ID": session, "PATH": "/bin:/usr/bin"]
+        try shell.run()
+        defer { shell.terminate() }
+        var sleeper: pid_t?
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline, sleeper == nil {
+            sleeper = runProcess("/usr/bin/pgrep", ["-P", "\(shell.processIdentifier)"])
+                .flatMap { pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            if sleeper == nil { usleep(20_000) }
+        }
+        let child = try XCTUnwrap(sleeper)
+        defer { kill(child, SIGKILL) }
+
+        let inspector = ProcessInspector()
+        let polling = expectation(description: "polling")
+        let release = DispatchSemaphore(value: 0)
+        inspector.start(interval: 60) { _ in
+            polling.fulfill()
+            release.wait()
+        }
+        inspector.setInterval(60)
+        wait(for: [polling], timeout: 5)
+
+        let taken = expectation(description: "taken")
+        let started = Date()
+        inspector.takeProcesses(ofSession: session) { processes in
+            XCTAssertEqual(Set(processes.map(\.pid)), [child])
+            taken.fulfill()
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.5)
+        release.signal()
+        wait(for: [taken], timeout: 5)
+    }
+
     func testStopLeavesAProcessWhoseStartTimeDiffers() throws {
         let pids = try spawnOrphans()
         defer { pids.forEach { kill($0, SIGKILL) } }

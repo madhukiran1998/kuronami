@@ -357,9 +357,10 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// Closing the terminal hangs up its shell; this also stops what it started that wouldn't
     /// hang up with it (nohup, setsid, daemons).
     private func destroySurface() {
-        let started = kind == .browser ? [] : ProcessInspector.shared.takeProcesses(ofSession: id.uuidString)
+        if kind != .browser {
+            ProcessInspector.shared.takeProcesses(ofSession: id.uuidString) { SessionReaper.stop($0) }
+        }
         surface.destroy()
-        SessionReaper.stop(started)
     }
 
     // MARK: - Status

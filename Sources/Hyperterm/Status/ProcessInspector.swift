@@ -325,15 +325,18 @@ final class ProcessInspector: @unchecked Sendable {
 
     // MARK: - Session trees for stopping
 
-    /// Removes a session from the record and returns everything it started that still runs:
-    /// what earlier polls saw, a fresh walk of its terminal, and orphans carrying its id. Call
-    /// before the surface is destroyed, while the terminal's tree is still attached.
-    func takeProcesses(ofSession id: String) -> [TrackedProcess] {
-        queue.sync {
-            let processes = listProcesses() ?? []
-            let children = Dictionary(grouping: processes, by: \.ppid)
+    /// Removes a session from the record and hands `completion` everything it started that
+    /// still runs: what earlier polls saw, a fresh walk of its terminal, and orphans carrying
+    /// its id. Call before the surface is destroyed, while the terminal's tree is still
+    /// attached. Only that walk happens on the caller's thread; the rest waits its turn on
+    /// `queue` and calls `completion` there, so closing never waits on a poll in flight.
+    func takeProcesses(ofSession id: String, completion: @escaping @Sendable ([TrackedProcess]) -> Void) {
+        // Listed now, not on `queue`: after a restart the new surface's shell has the same id.
+        let processes = listProcesses() ?? []
+        let children = Dictionary(grouping: processes, by: \.ppid)
+        let fresh = sessionTrees(children: children)[id] ?? []
+        queue.async { [self] in
             let byPID = Dictionary(processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
-            let fresh = sessionTrees(children: children)[id] ?? []
             // Double-forked daemons are launchd's children, but macOS still holds Tako
             // responsible for them and they keep the session's environment.
             let mine = getpid()
@@ -344,8 +347,8 @@ final class ProcessInspector: @unchecked Sendable {
             } + ttyOrphans(of: id, in: processes, mine: mine)
             sessionTTYs[id] = nil
             let previous = recorded.removeValue(forKey: id) ?? []
-            return Self.selectTree(session: id, seeds: (fresh + orphans).map(\.pid), recorded: previous,
-                                   byPID: byPID, children: children, mine: mine)
+            completion(Self.selectTree(session: id, seeds: (fresh + orphans).map(\.pid), recorded: previous,
+                                       byPID: byPID, children: children, mine: mine))
         }
     }
 
