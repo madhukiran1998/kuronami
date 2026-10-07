@@ -25,6 +25,8 @@ final class SafetyAndReviewTests: XCTestCase {
         XCTAssertNil(PromptScreen.keys(for: .approve, screen: idle, kind: .claude))
         // An agent's own text mentioning "Do you want" without numbered options isn't a dialog.
         XCTAssertFalse(PromptScreen.hasDialog("Do you want me to continue with the refactor?"))
+        // Nor is a reply asking it over a numbered list: no option has the selection cursor.
+        XCTAssertFalse(PromptScreen.hasDialog("⏺ Would you like me to:\n  1. Allow it\n  2. Deny it\n───────\n❯ \n───────"))
     }
 
     private let claudeTrust = """

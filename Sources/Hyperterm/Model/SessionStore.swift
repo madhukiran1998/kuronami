@@ -31,6 +31,7 @@ final class SessionStore: ObservableObject {
     /// Terminals Sumi waits on, each with the note it left for when that one finishes.
     var sumiWatches: [UUID: String] = [:]
     var sumiDigest = SumiDigest()
+    var sumiDigestRetryScheduled = false
     /// What Sumi opened in the last few seconds (see showOpenedBySumi).
     var sumiOpened: [(id: UUID, at: Date)] = []
     var overlapWatch = OverlapWatch()

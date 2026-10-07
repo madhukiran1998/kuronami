@@ -873,11 +873,22 @@ enum PromptScreen {
         }
     }
 
+    /// A live dialog draws its selection cursor on one option; an agent's reply that asks "Would you
+    /// like me to…" over a numbered list has none, and must not hold messages back while it's on screen.
     static func hasDialog(_ screen: String) -> Bool {
         let lower = screen.lowercased()
         let asks = lower.contains("do you want") || lower.contains("would you like") || lower.contains("allow command")
             || lower.contains("proceed?") || lower.contains("trust this folder") || lower.contains("enter to confirm")
-        return asks && options(screen).count >= 2
+        return asks && options(screen).count >= 2 && hasSelectedOption(screen)
+    }
+
+    private static func hasSelectedOption(_ screen: String) -> Bool {
+        screen.split(separator: "\n").contains { raw in
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard let marker = ["❯", "›"].first(where: line.hasPrefix) else { return false }
+            let rest = line.dropFirst(marker.count).trimmingCharacters(in: .whitespaces)
+            return rest.first.map { ("1"..."9").contains($0) } == true && rest.dropFirst().hasPrefix(".")
+        }
     }
 
     /// Any agent CLI's folder-trust prompt.
