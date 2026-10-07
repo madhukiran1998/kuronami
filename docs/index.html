@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tako</title>
-<meta name="description" content="A native macOS terminal for running Claude Code and Codex in parallel, with an organizer agent that runs the others and a steward that keeps your Mac fast: live status, approvals, agent-to-agent messaging, a browser per agent, and review.">
+<meta name="description" content="A native macOS terminal for running Claude Code and Codex in parallel, with Sumi, an agent that runs the others (even from your phone), and a steward that keeps your Mac fast: live status, approvals, agent-to-agent messaging, a browser per agent, and review.">
 <meta property="og:title" content="Tako">
-<meta property="og:description" content="A native macOS terminal for running Claude Code and Codex in parallel. An organizer runs your agents; a steward keeps your Mac fast.">
+<meta property="og:description" content="A native macOS terminal for running Claude Code and Codex in parallel. Sumi runs your agents, even from your phone; a steward keeps your Mac fast.">
 <meta property="og:image" content="https://nikshepsvn.com/tako/images/workspace.png">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
@@ -172,7 +172,7 @@
   <header class="top">
     <a class="brand" href="./"><img src="icon.png" alt="">Tako</a>
     <nav>
-      <a href="#organizer">Organizer</a>
+      <a href="#sumi">Sumi</a>
       <a href="#steward">Steward</a>
       <a href="#features">Features</a>
       <a href="#tour">Tour</a>
@@ -184,7 +184,7 @@
 
   <div class="intro">
     <h1>A terminal for running many coding agents at once.</h1>
-    <p>Tako runs Claude Code and Codex side by side in real terminals, and keeps track of them for you: which one needs an answer, which one is done, and what each one changed. An organizer agent runs the rest for you, and a steward keeps your Mac fast while they work.</p>
+    <p>Tako runs Claude Code and Codex side by side in real terminals, and keeps track of them for you: which one needs an answer, which one is done, and what each one changed. Sumi, an agent of its own, runs the rest for you, even from your phone, and a steward keeps your Mac fast while they work.</p>
     <div class="actions">
       <a class="button solid" href="#install">Install</a>
       <a class="button" href="https://github.com/nikshepsvn/tako">View on GitHub</a>
@@ -198,10 +198,10 @@
   </figure>
 
   <div class="duo">
-    <a href="#organizer">
-      <p class="kicker">ORGANIZER</p>
+    <a href="#sumi">
+      <p class="kicker">SUMI</p>
       <h3>An agent that runs your agents</h3>
-      <p>Say what you want in plain words. It starts agents in their own worktrees, arranges the window, chains one agent's result into the next, and answers routine prompts you hand it. Risky ones still come to you.</p>
+      <p>Say what you want in plain words. Sumi starts agents in their own worktrees, passes one agent's result to the next, and takes the easy prompts. From your phone, too.</p>
     </a>
     <a href="#steward">
       <p class="kicker">STEWARD</p>
@@ -217,40 +217,33 @@
       <video controls playsinline preload="none" poster="media/tako-launch-poster.jpg" width="1920" height="1080">
         <source src="media/tako-launch.mp4" type="video/mp4">
       </video>
-      <figcaption class="caption">Eight agents and no idea which one is stuck, then the control room, the organizer and the steward. Sound on for the music; every line is on screen.</figcaption>
+      <figcaption class="caption">Eight agents and no idea which one is stuck, then the control room, Sumi and the steward. Sound on for the music; every line is on screen.</figcaption>
     </figure>
   </section>
 
-  <section id="organizer">
+  <section id="sumi">
     <div class="split">
       <div>
-        <p class="label">Organizer</p>
+        <p class="label">Sumi</p>
         <h2>An agent that runs your agents.</h2>
-        <p class="lead">Click the Tako mark in the window's corner, or press <span class="keys">⌃⌘O</span>, and tell it what you want. It's Claude Code or Codex, your pick, working through Tako's own tools.</p>
+        <p class="lead">Click the Tako mark in the window's corner, or press <span class="keys">⌃⌘O</span>, and say what you want. Sumi (墨, ink) is Claude Code or Codex, working through Tako's own tools.</p>
         <ul class="points">
-          <li><b>Starts and arranges.</b> Agents in any project, each in its own worktree, up to five on one task. They show up side by side, or in the exact shape you describe. Save a layout by name and bring it back.</li>
-          <li><b>Chains work.</b> "When @api is done, have @web use its new endpoint." It watches @api and passes the result on when it finishes.</li>
-          <li><b>Answers for you, within limits.</b> Hand it an agent's prompts for a turn, a count, or an hour. It never picks Always, and leaves pushes, deploys, recursive deletes, <code>sudo</code>, secrets and writes outside the workspace for you. After 90 seconds without an answer, you're notified anyway.</li>
-          <li><b>Picks up old work.</b> "Open my last sessions in ~/Code/shop" resumes their own conversations.</li>
-          <li><b>Remembers.</b> Your projects and preferences live in a notes file it rereads, so it doesn't start from zero.</li>
+          <li><b>Starts and arranges.</b> Agents in any project, each in its own worktree, laid out the way you ask.</li>
+          <li><b>Chains work.</b> When one agent finishes, Sumi hands its result to the next.</li>
+          <li><b>Takes the easy prompts.</b> Pushes, deploys, deletes, <code>sudo</code> and secrets still come to you.</li>
+          <li><b>Phone Mode.</b> Step away and talk to Sumi from the Claude app on your phone. Routine requests are approved; anything that needs you reaches your phone.</li>
         </ul>
       </div>
-<pre class="term"><span class="t-n">›</span> start @api and @web on the orders feature in ~/Code/shop.
-  when @api is done, have @web use its new endpoint.
-<span class="t-o">⏺</span> start_agent     <span class="t-n">@api</span>  ~/Code/shop  <span class="t-c">own worktree</span>
-<span class="t-o">⏺</span> start_agent     <span class="t-n">@web</span>  ~/Code/shop  <span class="t-c">own worktree</span>
-<span class="t-o">⏺</span> watch_terminal  <span class="t-n">@api</span>  "tell @web the endpoint is ready"
-  Started both, side by side. I'll pass the endpoint on.
-<span class="t-c"># later</span>
-<span class="t-w">Tako: @api finished: added GET /orders</span>
-<span class="t-o">⏺</span> send_message    <span class="t-n">@web</span>  "GET /orders is live"
+<pre class="term"><span class="t-n">›</span> start @api and @web on the orders page
+  <span class="t-c">Started both, each in its own worktree.</span>
 
-<span class="t-n">›</span> handle @web's prompts until it's done. prefer pnpm.
-<span class="t-o">⏺</span> handle_waiting  <span class="t-n">@web</span>  <span class="t-c">until it finishes its task</span>
-<span class="t-o">⏺</span> answer_prompt   <span class="t-n">@web</span>  approve  pnpm add zod
-  <span class="t-d">⎿ allowed</span>
-<span class="t-o">⏺</span> answer_prompt   <span class="t-n">@web</span>  approve  git push -u origin feat/orders
-  <span class="t-s">⎿ left for the user: a git push</span></pre>
+<span class="t-n">›</span> when @api is done, tell @web
+  <span class="t-c">Watching @api. I'll pass it on.</span>
+<span class="t-w">  @api finished → told @web: GET /orders is ready</span>
+
+<span class="t-n">›</span> handle @web's prompts. prefer pnpm
+  <span class="t-d">allowed  pnpm add zod</span>
+  <span class="t-s">left for you  git push</span></pre>
     </div>
   </section>
 
@@ -262,10 +255,10 @@
         <p class="lead">The steward has no model behind it. It reads each session's processes from the kernel, shows their memory and CPU in the inspector, and acts on what it sees.</p>
         <ul class="points">
           <li><b>Background priority.</b> Hidden agents that are idle or waiting on you are lowered. Bring one on screen and it's back at full speed. When the Mac runs hot, hidden working agents are lowered too.</li>
-          <li><b>Memory-aware launches.</b> When macOS reports memory pressure, new agents from the organizer wait their turn instead of tipping the Mac into swap.</li>
+          <li><b>Memory-aware launches.</b> When macOS reports memory pressure, new agents from Sumi wait their turn instead of tipping the Mac into swap.</li>
           <li><b>Sleep.</b> An agent idle for 10 minutes quits its CLI to free its memory and keeps its screen. The next message wakes it in the same conversation.</li>
           <li><b>Builds take turns.</b> <code>ht heavy -- &lt;command&gt;</code> waits for a slot: half your performance cores, fewer under pressure or heat.</li>
-          <li><b>Runaways get flagged.</b> An agent over 3 GB, or idle while its processes burn CPU, is reported to the organizer, which tells you. Nothing is closed without your OK.</li>
+          <li><b>Runaways get flagged.</b> An agent over 3 GB, or idle while its processes burn CPU, is reported to Sumi, which tells you. Nothing is closed without your OK.</li>
         </ul>
       </div>
       <div class="stack">
