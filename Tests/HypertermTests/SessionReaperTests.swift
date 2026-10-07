@@ -115,11 +115,16 @@ final class SessionReaperTests: XCTestCase {
     /// Closing a session while a slow poll holds the inspector's queue returns at once; the
     /// session's processes still arrive once the poll finishes.
     func testTakingProcessesNeverWaitsOnAPollInFlight() throws {
-        // /bin/sleep hides its environment like every platform binary; a re-signed copy doesn't.
-        let sleep = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
-        try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: sleep)
-        defer { try? FileManager.default.removeItem(atPath: sleep) }
-        XCTAssertNotNil(runProcess("/usr/bin/codesign", ["-s", "-", "-f", sleep]))
+        // /bin/sleep hides its environment like every platform binary, and a re-signed copy of it
+        // is arm64e, which macOS 15 won't run outside the platform. A helper built here is plain
+        // arm64, signed by the linker, runs everywhere and shows its environment.
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("sleeper.c")
+        try "#include <unistd.h>\nint main(void) { sleep(30); return 0; }\n".write(to: source, atomically: true, encoding: .utf8)
+        let sleep = folder.appendingPathComponent("sleeper").path
+        XCTAssertNotNil(runProcess("/usr/bin/clang", [source.path, "-o", sleep], timeout: 60), "couldn't build the sleeper helper")
         let session = UUID().uuidString
         let shell = Process()
         shell.executableURL = URL(fileURLWithPath: "/bin/sh")
