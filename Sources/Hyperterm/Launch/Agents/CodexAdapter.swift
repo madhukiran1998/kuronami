@@ -60,7 +60,9 @@ struct CodexAdapter: AgentAdapter {
     /// hash, under `hooks.state`), and it reads that trust from `-c` flags as well as from
     /// config.toml. So each hook comes with its own trust: nothing to review in /hooks, no
     /// --dangerously-bypass-hook-trust (which would also run the user's untrusted hooks), and
-    /// nothing written to the user's config.
+    /// nothing written to the user's config. Verified on codex-cli 0.160.1 (`codex exec`): with
+    /// this trust SessionStart, UserPromptSubmit, Pre/PostToolUse and Stop all ran; without it,
+    /// or with a wrong hash, none ran and Codex said nothing.
     static func hookOverrides(ht: String) -> [String] {
         var overrides: [String] = []
         var trust: [String] = []
