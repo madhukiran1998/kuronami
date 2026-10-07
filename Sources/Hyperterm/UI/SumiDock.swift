@@ -152,7 +152,17 @@ final class SumiDock {
     func open() {
         guard let window else { return }
         // The panel is the window's child: with the window hidden it would show nothing.
-        if window.isMiniaturized { window.deminiaturize(nil) }
+        // Coming back from the Dock ends by making the window key, which would take the
+        // keyboard from the panel; so the panel opens once the window is back.
+        if window.isMiniaturized {
+            var token: NSObjectProtocol?
+            token = NotificationCenter.default.addObserver(forName: NSWindow.didDeminiaturizeNotification, object: window, queue: .main) { [weak self] _ in
+                if let token { NotificationCenter.default.removeObserver(token) }
+                MainActor.assumeIsolated { self?.open() }
+            }
+            window.deminiaturize(nil)
+            return
+        }
         if !window.isVisible { window.makeKeyAndOrderFront(nil) }
         store.reconcileSumiKind()
         startIfNeeded()

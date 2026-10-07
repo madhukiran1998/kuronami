@@ -422,14 +422,29 @@ extension SessionStore {
             if !sumiStarting { sumiDigest = SumiDigest() }
             return
         }
-        guard sumiDigest.isDue(at: now), !sumiDigest.clearing, !sumi.isWaking, sumi.state != .starting,
-              sumi.inputIsEmpty, !sumi.dialogOnScreen else { return }
+        guard sumiDigest.isDue(at: now), !sumiDigest.clearing else { return }
+        guard !sumi.isWaking, sumi.state != .starting, sumi.inputIsEmpty, !sumi.dialogOnScreen else {
+            retrySumiDigest()
+            return
+        }
         if sumi.atRest, sumi.usage.contextPercent ?? 0 >= Self.sumiClearPercent, sumi.startFreshConversation() {
             sumiDigest.clearing = true
             deliverDigestAfterClear(attempts: 10)
             return
         }
         if let message = sumiDigest.take() { _ = sumi.deliver(message, from: nil) }
+    }
+
+    /// A digest held back by Sumi's own screen (starting, waking, a dialog, a half-typed draft) is
+    /// tried again shortly, not only on Sumi's next state change: one that sits idle behind a dialog
+    /// would otherwise keep an agent's wait from it indefinitely.
+    private func retrySumiDigest() {
+        guard !sumiDigestRetryScheduled else { return }
+        sumiDigestRetryScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + SumiDigest.retryInterval) { [weak self] in
+            self?.sumiDigestRetryScheduled = false
+            self?.flushSumiDigest()
+        }
     }
 
     /// Waits for Sumi to be back at an empty prompt after clearing, then sends the digest.
@@ -500,6 +515,8 @@ struct SumiDigest {
     static let window: TimeInterval = 1
     /// An agent waiting on the user: barely gathered at all.
     static let urgentWindow: TimeInterval = 0.3
+    /// How soon a digest Sumi couldn't take yet is tried again.
+    static let retryInterval: TimeInterval = 1
 
     private(set) var events: [SumiEvent] = []
     private var since: Date?

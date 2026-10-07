@@ -64,6 +64,9 @@ extension SessionStore {
     }
 
     func applyHook(source: String, session: TerminalSession, json: [String: Any], sentAt: UInt64?) {
+        // The wrapper, not Codex, reports its app-server before Codex is up: no hook has fired
+        // yet as far as the trust and sign-in screens are concerned.
+        if source == CodexAppServer.source { return attachCodexAppServer(session, json: json) }
         // Hook processes race each other to the socket; an event stamped before the newest one
         // already applied is stale and must not roll state back.
         if let sentAt {
@@ -76,6 +79,7 @@ extension SessionStore {
             handleAgentHook(session, json, source: "claude hook")
         case "codex":
             session.reportsTurnsByHook = true
+            followCodexThread(session, json: json)
             handleAgentHook(session, json, source: "codex hook")
         case "codex-notify":
             session.recordAgentSessionId(json["thread-id"] as? String)

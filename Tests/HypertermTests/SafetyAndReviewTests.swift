@@ -25,6 +25,8 @@ final class SafetyAndReviewTests: XCTestCase {
         XCTAssertNil(PromptScreen.keys(for: .approve, screen: idle, kind: .claude))
         // An agent's own text mentioning "Do you want" without numbered options isn't a dialog.
         XCTAssertFalse(PromptScreen.hasDialog("Do you want me to continue with the refactor?"))
+        // Nor is a reply asking it over a numbered list: no option has the selection cursor.
+        XCTAssertFalse(PromptScreen.hasDialog("⏺ Would you like me to:\n  1. Allow it\n  2. Deny it\n───────\n❯ \n───────"))
     }
 
     private let claudeTrust = """
@@ -38,6 +40,21 @@ final class SafetyAndReviewTests: XCTestCase {
        Yes, I trust this folder
      Enter to confirm · Esc to cancel
     """
+
+    func testABlankPromptLineMeansNoDraftButASuggestionDoesNot() {
+        XCTAssertTrue(PromptScreen.promptLineIsBlank("⏺ Done.\n───────\n❯ \n───────", kind: .claude))
+        XCTAssertFalse(PromptScreen.promptLineIsBlank("⏺ Done.\n───────\n❯ Try \"fix lint errors\"\n───────", kind: .claude))
+        XCTAssertFalse(PromptScreen.promptLineIsBlank("⏺ Done.\n───────\n❯ half a mess\n───────", kind: .claude))
+        XCTAssertFalse(PromptScreen.promptLineIsBlank(claudeDialog.replacingOccurrences(of: "❯", with: " "), kind: .claude), "no prompt line, no proof")
+    }
+
+    func testClaudesUnnumberedTrustPromptIsAnsweredWithTheCursor() {
+        XCTAssertEqual(PromptScreen.keys(for: .approve, screen: claudeTrust, kind: .claude), ["down", "enter"])
+        XCTAssertEqual(PromptScreen.keys(for: .deny, screen: claudeTrust, kind: .claude), ["esc"])
+        XCTAssertNil(PromptScreen.keys(for: .always, screen: claudeTrust, kind: .claude))
+        let onYes = claudeTrust.replacingOccurrences(of: "❯ No, exit\n   Yes", with: "  No, exit\n ❯ Yes")
+        XCTAssertEqual(PromptScreen.keys(for: .approve, screen: onYes, kind: .claude), ["enter"])
+    }
 
     func testTrustDialogDetection() {
         XCTAssertTrue(PromptScreen.hasTrustDialog(claudeTrust))

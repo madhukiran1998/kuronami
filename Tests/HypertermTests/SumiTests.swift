@@ -231,6 +231,19 @@ final class SumiTests: XCTestCase {
         XCTAssertEqual(store.sumiDigest.events, [SumiEvent(label: "api", kind: .exited, note: "restart it")])
     }
 
+    func testAHeldBackDigestIsTriedAgainWithoutWaitingForSumisNextChange() {
+        let api = agent("api", state: .exited(0)), sumi = agent("sumi", sumi: true, state: .starting)
+        let store = SessionStore(previewSessions: [api, sumi], previewLayout: .grid)
+        store.sumiWatches[api.id] = "restart it"
+
+        store.reportToSumi(api, from: .working)
+        store.flushSumiDigest(now: Date().addingTimeInterval(SumiDigest.window + 1))
+        XCTAssertFalse(store.sumiDigest.isEmpty)
+        sumi.apply(.processStarted, source: "test", force: .working)
+        RunLoop.main.run(until: Date().addingTimeInterval(SumiDigest.window + SumiDigest.retryInterval + 0.5))
+        XCTAssertTrue(store.sumiDigest.isEmpty, "sent on the retry, though Sumi's state changed without a report")
+    }
+
     func testDigestWindowStartsAtTheFirstEvent() {
         var digest = SumiDigest()
         let start = Date(timeIntervalSince1970: 1000)
