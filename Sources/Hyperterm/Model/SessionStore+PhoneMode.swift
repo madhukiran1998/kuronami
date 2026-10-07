@@ -18,7 +18,13 @@ extension SessionStore {
         if let sumi { sumi.openRemoteControl() } else { remoteControlWhenSumiUp = true }
     }
 
+    /// While Phone Mode is on, Sumi's terminal reads as unfocused to its CLI, so its pushes reach the phone.
+    func syncSumiFocusForPhone() {
+        (sumi?.surface as? TerminalSurfaceView)?.reportsUnfocused = isPhoneModeOn
+    }
+
     func setPhoneMode(_ on: Bool, now: Date = Date()) {
+        defer { syncSumiFocusForPhone() }
         if on {
             guard phoneModeSince == nil else { return }
             phoneModeSince = now

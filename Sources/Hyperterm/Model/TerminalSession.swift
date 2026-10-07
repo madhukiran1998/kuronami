@@ -513,7 +513,9 @@ final class TerminalSession: ObservableObject, Identifiable {
         let screen = surface.readViewport()
         let first = String(question.items[0].options[0].label.prefix(12))
         guard screen.contains(first) else { return .failure(.noPromptOnScreen(label)) }
-        question.keysToPick(option: index).forEach { _ = surface.pressKey(named: $0) }
+        let keys = question.selectsByNumber ? PromptScreen.keys(toOption: index + 1, screen: screen, kind: kind)
+            : question.keysToPick(option: index)
+        keys.forEach { _ = surface.pressKey(named: $0) }
         record(.approval, "Answered \(question.items[0].options[index].label) in Tako")
         pendingQuestion = nil
         // A screen menu (signing in) comes before the CLI is up: back to starting, where the
@@ -532,7 +534,7 @@ final class TerminalSession: ObservableObject, Identifiable {
               let option = PromptScreen.options(screen).first(where: { $0.text.lowercased().contains("device code") }) else {
             return completion(.failure(.noPromptOnScreen(label)))
         }
-        _ = surface.pressKey(named: String(option.number))
+        PromptScreen.keys(toOption: option.number, screen: screen, kind: kind).forEach { _ = surface.pressKey(named: $0) }
         record(.note, "Signing in with a device code from Tako")
         pendingQuestion = nil
         apply(.userSubmitted, source: "approval", force: .starting)
@@ -839,6 +841,27 @@ func isSafeIdentifier(_ value: String) -> Bool {
 /// Reading agent TUIs from their screen text.
 enum PromptScreen {
     /// Numbered option lines like "❯ 1. Yes" or "  2. Yes, and don't ask again".
+    /// The keys that pick option `number`. Claude acts on the digit itself. Codex's menus only
+    /// confirm with Enter, so it walks the highlight there with the arrows first: a digit alone
+    /// does nothing, and Enter alone would take whatever is highlighted.
+    static func keys(toOption number: Int, screen: String, kind: SessionKind) -> [String] {
+        guard kind == .codex else { return [String(number)] }
+        let current = highlighted(screen) ?? 1
+        let step = number > current ? "down" : "up"
+        return Array(repeating: step, count: abs(number - current)) + ["enter"]
+    }
+
+    /// The number of the menu option the cursor marker ("›", "❯" or ">") is on, if any.
+    static func highlighted(_ screen: String) -> Int? {
+        for raw in screen.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard let marker = ["❯", "›", ">"].first(where: line.hasPrefix) else { continue }
+            let rest = line.dropFirst(marker.count).trimmingCharacters(in: .whitespaces)
+            if let dot = rest.firstIndex(of: "."), let number = Int(rest[..<dot]), (1...9).contains(number) { return number }
+        }
+        return nil
+    }
+
     static func options(_ screen: String) -> [(number: Int, text: String)] {
         screen.split(separator: "\n").compactMap { raw in
             var line = raw.trimmingCharacters(in: .whitespaces)
@@ -901,11 +924,12 @@ enum PromptScreen {
         let options = options(screen)
         guard hasDialog(screen) || kind.adapter?.optionsAloneMakeDialog == true, !options.isEmpty else { return nil }
         func pick(_ predicate: (String) -> Bool) -> [String]? {
-            options.first { predicate($0.text.lowercased()) }.map { [String($0.number)] }
+            options.first { predicate($0.text.lowercased()) }.map { keys(toOption: $0.number, screen: screen, kind: kind) }
         }
         switch answer {
         case .approve:
-            return pick { $0.hasPrefix("yes") && !$0.contains("don't ask") && !$0.contains("always") && !$0.contains("auto") }
+            // "Yes, proceed" for a command; "Trust and continue" for Codex's folder prompt.
+            return pick { ($0.hasPrefix("yes") || $0.hasPrefix("trust")) && !$0.contains("don't ask") && !$0.contains("always") && !$0.contains("auto") }
         case .always:
             return pick { $0.contains("don't ask again") || $0.contains("always") }
         case .deny:

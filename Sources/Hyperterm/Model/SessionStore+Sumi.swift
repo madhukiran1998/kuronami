@@ -151,6 +151,7 @@ extension SessionStore {
         Task { @MainActor [spec] in
             await self.launch(spec, select: false, task: task)
             self.sumiStarting = false
+            self.syncSumiFocusForPhone()
             if self.remoteControlWhenSumiUp, let sumi = self.sumi {
                 self.remoteControlWhenSumiUp = false
                 if self.isPhoneModeOn { sumi.openRemoteControl() }

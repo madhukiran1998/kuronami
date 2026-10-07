@@ -296,8 +296,14 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     /// libghostty draws the cursor and reports focus to programs only while this view is the
     /// first responder of the key window, so another window or app taking key unfocuses it.
+    /// Phone Mode: Sumi tells its CLI it isn't focused even while its panel is, so Claude Code
+    /// pushes the user's phone instead of assuming they're watching this terminal.
+    var reportsUnfocused = false {
+        didSet { if reportsUnfocused != oldValue { syncSurfaceFocus() } }
+    }
+
     private func syncSurfaceFocus() {
-        let value = focused && window?.isKeyWindow == true
+        let value = focused && window?.isKeyWindow == true && !reportsUnfocused
         guard let surface, value != surfaceHasFocus else { return }
         surfaceHasFocus = value
         ghostty_surface_set_focus(surface, value)

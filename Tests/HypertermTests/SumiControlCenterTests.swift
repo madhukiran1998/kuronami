@@ -147,6 +147,46 @@ final class SumiControlCenterTests: XCTestCase {
         XCTAssertFalse(digest.isDue(at: start.addingTimeInterval(SumiDigest.urgentWindow)), "urgency ends with the message it was in")
     }
 
+    // MARK: - Codex menus
+
+    /// Codex 0.160's folder prompt, as read from a live session.
+    private let codexTrust = """
+      Trust this folder? Codex can read, edit, and run files here, subject to your permission settings.
+
+    › 1. Trust and continue
+      2. Quit
+
+      enter continue · esc quit
+    """
+
+    func testCodexTrustIsAnsweredWithEnterOnTrustAndContinue() {
+        XCTAssertEqual(PromptScreen.keys(for: .approve, screen: codexTrust, kind: .codex), ["enter"],
+                       "a digit alone does nothing in Codex; Enter confirms the highlighted option")
+        XCTAssertEqual(PromptScreen.keys(for: .deny, screen: codexTrust, kind: .codex), ["esc"],
+                       "deny never presses Enter on whatever is highlighted")
+    }
+
+    func testCodexOptionsAreReachedWithArrowsFromTheHighlight() {
+        let approval = """
+          Allow command?
+          1. Yes, proceed
+        › 2. Yes, and don't ask again for this command
+          3. No, and tell Codex what to do differently
+        """
+        XCTAssertEqual(PromptScreen.highlighted(approval), 2)
+        XCTAssertEqual(PromptScreen.keys(for: .approve, screen: approval, kind: .codex), ["up", "enter"])
+        XCTAssertEqual(PromptScreen.keys(for: .deny, screen: approval, kind: .codex), ["down", "enter"])
+        XCTAssertEqual(PromptScreen.keys(toOption: 3, screen: approval, kind: .claude), ["3"], "Claude acts on the digit")
+    }
+
+    func testPhoneModeReportsSumiUnfocusedSoPushesReachThePhone() {
+        let (store, _, sumi) = fixture()
+        store.setPhoneMode(true)
+        XCTAssertEqual((sumi.surface as? TerminalSurfaceView)?.reportsUnfocused, true)
+        store.setPhoneMode(false)
+        XCTAssertEqual((sumi.surface as? TerminalSurfaceView)?.reportsUnfocused, false)
+    }
+
     // MARK: - Fixtures
 
     private func fixture() -> (SessionStore, TerminalSession, TerminalSession) {
