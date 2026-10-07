@@ -5,6 +5,24 @@ import XCTest
 /// and risky ones need the user's yes from their phone. Preview stores post no banners.
 @MainActor
 final class PhoneModeTests: XCTestCase {
+    /// Sumi's CLI and model are kept in a throwaway suite: the test host shares the dev app's
+    /// preferences, and switching Sumi here must never switch the user's.
+    private var savedDefaults: UserDefaults!
+    private var suiteName = ""
+
+    override func setUp() {
+        super.setUp()
+        suiteName = "PhoneModeTests-\(UUID().uuidString)"
+        savedDefaults = SessionStore.sumiDefaults
+        SessionStore.sumiDefaults = UserDefaults(suiteName: suiteName)!
+    }
+
+    override func tearDown() {
+        SessionStore.sumiDefaults.removePersistentDomain(forName: suiteName)
+        SessionStore.sumiDefaults = savedDefaults
+        super.tearDown()
+    }
+
     func testTurningOnHandsEveryAgentToTheSumiAndOffHandsThemBack() {
         let (store, api, sumi) = fixture(extra: "web")
         let web = store.sessions.first { $0.label == "web" }!
