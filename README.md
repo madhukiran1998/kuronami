@@ -29,7 +29,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/workspace.png" alt="Tako: three agents in a grid, one waiting on an approval with Allow and Deny on its card, a finished agent ready for review, a dev server on the shelf, and the inspector open" width="100%">
+  <img src="docs/images/workspace.png" alt="Tako: three agents in a grid. One waits on an approval with Allow and Deny on its card and a Sumi tag, since its prompts are handed to Sumi; one has finished and is ready for review; a dev server sits on the shelf, and the inspector is open" width="100%">
 </p>
 
 > **蛸 (tako)**: *octopus*. Eight arms, many agents, one calm head. (Formerly Kuronami.)
@@ -130,7 +130,7 @@ Embedded **Chromium**, right next to the terminal. Each agent gets its own (`@ap
 <p align="center">
   <img src="docs/images/panels.png" alt="Three panels: the sidebar with each agent's state and an inline approval; the inspector's Activity tab with a recap and timeline; and its Info tab with tasks, usage and actions" width="100%">
 </p>
-<p align="center"><sub><b>Left:</b> every agent with its live state, and an approval answered in place. <b>Middle:</b> what happened while you were away, and a message box to steer. <b>Right:</b> tasks, context, and everything you can do with the session.</sub></p>
+<p align="center"><sub><b>Left:</b> every agent with its live state, and an approval answered in place (this one is handed to Sumi). <b>Middle:</b> what happened while you were away, and a message box to steer. <b>Right:</b> tasks, context, and everything you can do with the session.</sub></p>
 
 <p align="center">
   <img src="docs/images/diff-split.png" alt="A side-by-side diff of one file, removed lines on the left and added lines on the right" width="100%">
@@ -241,6 +241,8 @@ One agent behind the round Tako mark in the window's bottom-left corner. Click i
 - **Close what's done.** You confirm each close.
 
 #### Phone Mode
+<img src="docs/images/phone-mode.png" alt="The Phone Mode popover: Phone Mode is on, Remote Control since 2:30 PM, ordinary requests are allowed and questions and risky ones come to you, with a Turn Off button" width="300" align="right">
+
 For when you step away. Phone Mode rides on Claude Code's Remote Control, so it's there while Claude runs Sumi. Turn it on from the toolbar's Phone Mode button, or tell Sumi you're heading out; Sumi's session opens to the Claude app on your phone and you talk to it there.
 - **Ordinary requests don't wait.** Tako approves agents' routine permission requests itself, using the same guard as above.
 - **Everything else comes to you, through Sumi.** Questions, plans, and risky requests go to Sumi the moment they happen, by @name, and Sumi asks you on your phone. It can pick a question's option, trust a folder once you say yes, sign a signed-out Codex in with a device code you enter on your phone, or stop an agent.
@@ -258,7 +260,7 @@ Keeps the Mac responsive while agents run, without a model. On every inspector t
 #### Answer approvals from anywhere
 - **Real approvals, not keystrokes.** Tako installs Claude's `PermissionRequest` hook (per launch, never in your global settings). The moment an agent asks, its card shows the exact command with **Allow / Always / Deny**. Always saves the rule Claude suggested, and Deny can carry a reason the agent sees. Claude's own dialog still works in the terminal, and whichever answer comes first wins.
 - **From the notification banner.** Allow or Deny straight from macOS notifications. The menu bar shows the waiting count.
-- **Codex:** approvals from Tako work through Codex's `PermissionRequest` hook, attached per launch with the rest of Tako's hooks (each passed with its own trust hash, so there's nothing to review in `/hooks`). With hooks turned off in your Codex config, prompts are answered by choosing the numbered option on screen.
+- **Codex:** each Codex agent runs a private `codex app-server` on 127.0.0.1 behind a random token, and its terminal attaches to it with `--remote`, so Codex looks the same as ever. Tako follows the conversation as a second client: command and file-change approvals arrive straight from Codex and land on the card, the notification and Sumi like Claude's. Answering in either place closes the other, and **Always** saves Codex's own rule. If the server isn't up within 5 s, Codex starts the old way, and approvals go through its `PermissionRequest` hook instead (or the numbered option on screen, with hooks turned off).
 
 #### Review the work
 - **Ready for review.** When an agent finishes with changes, its card shows *Review +128 −41*. The inspector (⌥⌘R) shows the diff.
@@ -349,7 +351,7 @@ Only you can press keys, answer prompts, type raw text, open shells, or close te
 
 ### Nothing global is modified
 
-Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.hyperterm/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Claude agents also get `--no-chrome` per launch, so they use Tako's browsers rather than your Chrome (App menu → *Let Agents Use My Chrome* drops it). Your Chrome profile is only read when you choose *Import Chrome Logins…*. One opt-in menu item writes config, and asks first: channels (`claude mcp add --scope user hyperterm`). Codex runs with `--no-daemon`, so its hooks and MCP servers stay in the agent's own terminal.
+Hooks, the statusLine, the MCP server and permissions are attached **per launch** through wrappers in `~/.hyperterm/bin` (`claude --settings … --mcp-config …`, `codex -c …`). They merge with your settings; your existing hooks keep running. `~/.claude/settings.json` and `~/.codex/config.toml` are never written. Claude agents also get `--no-chrome` per launch, so they use Tako's browsers rather than your Chrome (App menu → *Let Agents Use My Chrome* drops it). Your Chrome profile is only read when you choose *Import Chrome Logins…*. One opt-in menu item writes config, and asks first: channels (`claude mcp add --scope user hyperterm`). Each Codex agent gets its own private app-server, so its hooks and MCP servers stay with that agent; if that server doesn't start, Codex runs with `--no-daemon` instead.
 
 ### `ht` CLI
 
@@ -440,7 +442,7 @@ Tests/HypertermTests        state machine, layout tree, checkpoints (real Git), 
 
 ### Status
 
-Tako is young and moves fast. On macOS 26 with Claude Code 2.1, it builds from source and passes its 103 tests (pure logic, the status state machine, the layout tree, checkpoints against real Git, Codex log parsing, accounts). These paths are verified live:
+Tako is young and moves fast. On macOS 26 with Claude Code 2.1, it builds from source and passes its 355 tests (pure logic, the status state machine, the layout tree, checkpoints against real Git, Codex log parsing, accounts). These paths are verified live:
 - labels and messaging
 - hook status
 - approvals from cards, notifications and `ht` (Allow / Always / Deny with reason)

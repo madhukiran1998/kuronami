@@ -57,6 +57,8 @@ final class InterfaceSnapshotTests: XCTestCase {
 
         try capture(SettingsView(pane: .general, signIn: { _ in }), size: NSSize(width: 560, height: 360),
                     name: "settings", output: output)
+        try capture(PhoneModePopover(since: Date(timeIntervalSinceReferenceDate: 813_402_000), turnOff: {}),
+                    size: NSSize(width: 300, height: 170), name: "phone-mode", output: output)
 
         var draft = NewSessionDraft()
         draft.kind = .codex
@@ -115,6 +117,8 @@ final class InterfaceSnapshotTests: XCTestCase {
         let waiting = sample("api-contracts", kind: .codex, branch: "feat/api", state: .needsInput("Run the API test suite?"))
         waiting.agentStatus = "Ready to verify the API changes"
         waiting.pendingRequest = "pnpm test --filter api"
+        // Handed to Sumi, so its card shows the Sumi tag.
+        waiting.delegation = Delegation(scope: .turn, note: "prefer pnpm")
         terminalPixels(waiting, lines: [
             ("codex · api-contracts", .accent),
             ("", .normal),
